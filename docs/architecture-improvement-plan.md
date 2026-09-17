@@ -2,7 +2,7 @@
 
 Revised September 17, 2026 against commit `239a16d`.
 
-This backend implementation is complete locally on `codex/architecture-cleanup`. UI work and UI tests are excluded. The sections below retain the implementation requirements; verified results are recorded at the end. Production deployment and its one-time data repair have not been performed.
+This backend implementation is complete, pushed to `master`, and deployed to production with its one-time data repair. UI work and UI tests are excluded. The sections below retain the implementation requirements; implementation and deployment results are recorded at the end.
 
 ## Direction
 
@@ -282,4 +282,25 @@ One local run measured the complete recovery writer transaction, including commi
 
 These are synthetic fixture measurements, not production latency estimates. Both sizes assert matching projection results against independent full-repair copies. The structural guarantee is the absence of historical event/pricing replay on the event-free path; other recovery queries still have their existing costs.
 
-The local `backend/data/auctionscan.sqlite3` predates `rpc_observations` and was inspected read-only, not modified or backfilled. The deployment procedure above still requires a rehearsal on a current production backup, sufficient stored observations, and a full production reproject before resuming indexing with the lifecycle correction. No push, production restart, or production maintenance was performed during implementation.
+The local `backend/data/auctionscan.sqlite3` predates `rpc_observations` and was inspected read-only, not modified or backfilled. Deployment was rehearsed against a fresh production backup instead.
+
+## Production deployment results — September 17, 2026
+
+Application revision `55ee675` was fast-forwarded to `master`, pushed, and deployed to the clean checkout on `electro`. The API and Ethereum indexer restarted successfully at 23:54 UTC after the full production reproject and verification.
+
+- A consistent production backup passed SQLite integrity checks. Its offline rehearsal checked all **10,716** required blocks with **zero missing observations**, then replayed **22,003 events** in **26.80 seconds**. RPC and live header calls were forbidden during rehearsal.
+- The indexer was stopped before taking the final backup and updating production. Production observation checks again found zero missing inputs; full reproject completed in **25.85 seconds** before indexing resumed.
+- Before restarting, row counts and SHA-256 fingerprints confirmed unchanged chain logs, native domain events, both snapshot tables, all four pricing audit tables, RPC observations, indexed blocks, and sync state. SQLite integrity remained `ok`.
+- All **4,716 rounds**, **5,768 takes**, and **266 auctions** were retained. Production round values were already consistent with replay and showed no semantic changes. The rehearsal also confirmed identical pricing projections and other auction/take values, excluding regenerated projection IDs and bookkeeping timestamps.
+- Both services are active. Ethereum health is `ok`, with zero block lag and no reported error. Auction, round, taker, health, OpenAPI, docs, and ReDoc endpoints returned HTTP 200. The public frontend returned HTTP 200 from Vercel. Service logs show indexing advancing normally after restart.
+
+Backups and maintenance logs are retained on `electro` under `/home/wavey/auctionscan-backups/architecture-cleanup-20260917T234828Z/`. `rehearsal-source.sqlite3` is the initial snapshot; `pre-deploy.sqlite3` is the final backup taken with the indexer stopped. The directory also contains the production observation-check log, reproject log, and verification fingerprints.
+
+The server's default `uv 0.12.6` did not satisfy the repository's existing `==0.11.2` requirement. Dependency synchronization used the required version without changing the project or global tooling:
+
+```sh
+cd /tmp
+uv tool run --from uv==0.11.2 uv sync --project /home/wavey/auctionscan/backend
+```
+
+Maintenance then used the synchronized `backend/.venv/bin/python` directly, with a nonfunctional local RPC URL to keep replay independent of a live provider. The dependency lockfile remained unchanged.

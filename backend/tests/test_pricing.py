@@ -12,7 +12,10 @@ from backend.api.app import create_app
 from backend.api import db as api_db
 from backend.api import queries as api_queries
 from backend.indexer import pricing as pricing_module
-from backend.indexer.pricing import PricingApiClient, PricingCaptureRuntime, ProviderCapability, enqueue_pricing_work, rebuild_pricing_projections
+from backend.indexer import prices_api as prices_api_module
+from backend.indexer.prices_api import PricingApiClient, ProviderCapability
+from backend.indexer.pricing import PricingCaptureRuntime, enqueue_pricing_work
+from backend.indexer.pricing_projections import rebuild_pricing_projections
 from backend.indexer.projections import apply_batch, apply_batch_with_results, apply_native_event_projections, clear_projection_state, clear_take_state
 from backend.indexer.writer import Writer
 from backend.indexer.types import TokenMetadata
@@ -88,13 +91,13 @@ def test_pricing_api_client_refreshes_provider_cache_after_ttl(monkeypatch):
         request_paths.append(path)
         return next(responses)
 
-    monkeypatch.setattr(pricing_module.time, "monotonic", lambda: current_time[0])
+    monkeypatch.setattr(prices_api_module.time, "monotonic", lambda: current_time[0])
     client = PricingApiClient(base_url="https://prices.example", api_key="")
     monkeypatch.setattr(client, "_request_json", request_json)
 
     assert [item.id for item in client.supported_providers(chain_id=1, kind="quote")] == ["curve", "odos"]
 
-    current_time[0] += pricing_module.DEFAULT_PROVIDER_CACHE_TTL_SECONDS - 1
+    current_time[0] += prices_api_module.DEFAULT_PROVIDER_CACHE_TTL_SECONDS - 1
     assert [item.id for item in client.supported_providers(chain_id=1, kind="quote")] == ["curve", "odos"]
     assert request_paths == ["/v1/providers"]
 

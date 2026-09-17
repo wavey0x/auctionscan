@@ -21,13 +21,8 @@ from .discovery import FactoryDiscoverer
 from .hydration import Hydrator
 from .polling import chunked, fetch_logs, sort_logs
 from .observations import BlockReader, BranchChanged, MissingObservation
-from .pricing import (
-    PricingCaptureRuntime,
-    delete_orphaned_pricing_queue_rows,
-    enqueue_pricing_work,
-    rebuild_pricing_projections,
-    refresh_event_pricing,
-)
+from .pricing import PricingCaptureRuntime, delete_orphaned_pricing_queue_rows, enqueue_pricing_work, refresh_event_pricing
+from .pricing_projections import rebuild_pricing_projections
 from .projections import (
     apply_batch,
     apply_batch_with_results,

@@ -1306,7 +1306,8 @@ def test_apply_pending_migrations_adds_pricing_source_linkage_to_existing_tables
 
 
 def test_pricing_fact_compaction_preserves_audit_history_projections_and_replay(tmp_path):
-    from backend.indexer.pricing import PricingCaptureRuntime, rebuild_pricing_projections
+    from backend.indexer.pricing import PricingCaptureRuntime
+    from backend.indexer.pricing_projections import rebuild_pricing_projections
 
     from .test_pricing import _FakePricingClient, _seed_pricing_db
 

@@ -2,7 +2,7 @@
 
 Revised September 17, 2026 against commit `239a16d`.
 
-This is a backend implementation plan. UI work and UI tests are excluded. Only this document has changed; the implementation below is still to be done.
+This backend implementation is complete locally on `codex/architecture-cleanup`. UI work and UI tests are excluded. The sections below retain the implementation requirements; verified results are recorded at the end. Production deployment and its one-time data repair have not been performed.
 
 ## Direction
 
@@ -128,7 +128,7 @@ Change only the round update in `_project_swept`:
 
 1. Keep the existing latest-round lookup by chain, auction, and swept token. If there is no matching round, keep the existing auction lifecycle update without changing any round.
 2. If the round already has `settled_at`, preserve its existing closure and end time. Repeated sweeps must not overwrite them.
-3. Otherwise, record `settled_at = event.timestamp` without gating on the current `live`/`expired`/`sold_out` status. Read `remaining_available_raw` in the lookup and choose `sold_out` when it is zero, otherwise `settled`. Do not change inventory or take totals.
+3. Otherwise, record `settled_at = event.timestamp` without gating on the current `live`/`expired`/`sold_out` status. Choose `sold_out` when `remaining_available_raw` is zero, otherwise `settled`, using a `CASE` in the existing update. Do not change inventory or take totals.
 4. Keep the current end-time rule: use the sweep timestamp if `end_at` is absent or later; otherwise retain the earlier end. A prior sellout retains its earlier end time. A take applied later during replay can still establish the earlier sellout end and `sold_out` status through the existing take projector.
 
 Do not change native/take application order or add a lifecycle framework. Merely accepting `expired` alongside `live` is insufficient: it leaves the sold-out timestamp discrepancy.
@@ -244,3 +244,42 @@ Deploying 4a to an existing database requires a one-time **full** `--reproject` 
 The database schema and public API remain unchanged. Rolling code back does not undo repaired projection values; returning to pre-4a behavior requires a deliberate data-recovery decision using the backup and would reintroduce the known inconsistency. If implementation reveals a necessary schema change, handle it explicitly through a new writer-owned migration and the bootstrap helper, rather than quietly expanding a refactor.
 
 Stop when responsibilities are clear, the existing replay guarantees hold, and unnecessary recovery work is removed. Further file splitting, API restructuring, checkpoints, and general recovery machinery require their own demonstrated need.
+
+## Implementation and verification results — September 17, 2026
+
+The implementation uses the four planned source modules, with no database schema, public API, dependency, or configuration changes. Work is separated into reviewable commits:
+
+| Commit | Change |
+| --- | --- |
+| `3d5875c` | Mechanical pricing transport/projection separation. |
+| `f9628b8` | Explicit pricing input loading, observation selection, take/round rebuilding, and taker rebuilding stages. |
+| `69f6fcd` | Fact ownership, explicit maintenance deletion, snapshot write protection, and atomic replacement tests. |
+| `853ce0c` | Collection/replay extraction, shared hydration, and tests at the new function boundaries. |
+| `448ca90` | Sweep closure correction with incremental, combined-batch, and replay comparisons. |
+| `c2a931f` | Reversible expiry, the event-free recovery branch, rollback/equivalence tests, and local timing cases. |
+
+Final validation:
+
+- `uv --project backend run pytest -q`: **209 passed**. The only warning is the existing dependency warning from `websockets.legacy`.
+- `npm --prefix ui run check:api`: passed; generated types remain unchanged.
+- Undefined-name checks on backend source/tests and `git diff --check`: passed.
+- Snapshot replay runs with SQLite writes to both snapshot tables forbidden. Missing observations and snapshots refuse replacement; both maintenance modes roll back failed take regeneration.
+- Event-free recovery tests forbid projection clearing, historical event loading, and pricing rebuilding, and compare against full repair on independent backups. They include actual stored pricing facts, rejected transfer inputs, expiry reversal, terminal/swept rounds, and missing-header/commit failures. Native-event and derived-take removal still exercise full repair. Existing factory-rewind and finality tests pass.
+- Full repair on a backup of a captured fixture restores the legacy expired/swept round to its expected closure and end timestamps. RPC and live header access are disabled during repair; stored facts and the original database remain unchanged.
+
+The repeatable timing comparison is part of the existing recovery tests, without latency assertions or a separate benchmark program:
+
+```sh
+uv --project backend run pytest backend/tests/test_reorg_runtime.py -k recovery_paths_agree -q -s
+```
+
+One local run measured the complete recovery writer transaction, including commit:
+
+| Additional historical takes | Empty suffix, fast path | Empty suffix, forced full repair | Suffix removes a take, full repair |
+| --- | --- | --- | --- |
+| 20 | 0.328 ms | 3.722 ms | 3.895 ms |
+| 1,000 | 0.325 ms | 127.729 ms | 125.442 ms |
+
+These are synthetic fixture measurements, not production latency estimates. Both sizes assert matching projection results against independent full-repair copies. The structural guarantee is the absence of historical event/pricing replay on the event-free path; other recovery queries still have their existing costs.
+
+The local `backend/data/auctionscan.sqlite3` predates `rpc_observations` and was inspected read-only, not modified or backfilled. The deployment procedure above still requires a rehearsal on a current production backup, sufficient stored observations, and a full production reproject before resuming indexing with the lifecycle correction. No push, production restart, or production maintenance was performed during implementation.

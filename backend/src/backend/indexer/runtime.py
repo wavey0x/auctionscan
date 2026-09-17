@@ -23,28 +23,8 @@ from .polling import chunked, fetch_logs, sort_logs
 from .observations import BlockReader, BranchChanged, MissingObservation
 from .pricing import PricingCaptureRuntime, delete_orphaned_pricing_queue_rows, enqueue_pricing_work, refresh_event_pricing
 from .pricing_projections import rebuild_pricing_projections
-from .projections import (
-    apply_batch,
-    apply_batch_with_results,
-    apply_native_event_projections,
-    apply_take_event_projections,
-    backfill_snapshot_fact,
-    chain_start_block,
-    clear_rebuildable_chain_state,
-    clear_projection_state,
-    clear_take_state,
-    delete_fact_blocks_above,
-    ensure_sync_state,
-    load_indexed_blocks,
-    load_tracked_auctions,
-    load_tracked_factories,
-    persist_raw_logs,
-    reconcile_round_statuses,
-    rebuild_token_metadata,
-    update_sync_state,
-    upsert_indexed_blocks,
-    upsert_tracked_factories,
-)
+from .projections import apply_batch, apply_batch_with_results, apply_native_event_projections, apply_take_event_projections, chain_start_block, clear_rebuildable_chain_state, clear_projection_state, clear_take_state, ensure_sync_state, load_tracked_auctions, load_tracked_factories, reconcile_round_statuses, rebuild_token_metadata, update_sync_state, upsert_tracked_factories
+from .facts import delete_derived_take_events, backfill_snapshot_fact, delete_fact_blocks_above, load_indexed_blocks, persist_raw_logs, upsert_indexed_blocks
 from .takes import TRANSFER_TOPIC, TakeDetector
 from .types import (
     AuctionSnapshot,
@@ -497,6 +477,7 @@ class IndexerRuntime:
         take_events = self.take_detector.replay_chain(chain, self.writer.connection)
 
         def replace_projections(conn):
+            delete_derived_take_events(conn, chain.config.chain_id)
             if takes_only:
                 clear_take_state(conn, chain.config.chain_id)
                 rebuild_token_metadata(conn, chain.config.chain_id, native_events)

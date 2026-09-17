@@ -16,6 +16,7 @@ from backend.indexer import prices_api as prices_api_module
 from backend.indexer.prices_api import PricingApiClient, ProviderCapability
 from backend.indexer.pricing import PricingCaptureRuntime, enqueue_pricing_work
 from backend.indexer.pricing_projections import rebuild_pricing_projections
+from backend.indexer.facts import delete_derived_take_events
 from backend.indexer.projections import apply_batch, apply_batch_with_results, apply_native_event_projections, clear_projection_state, clear_take_state
 from backend.indexer.writer import Writer
 from backend.indexer.types import TokenMetadata
@@ -1067,7 +1068,7 @@ def test_pricing_rebuild_uses_stored_facts_only(tmp_path):
         for table, order_by in fact_tables.items()
     }
 
-    writer.transaction(lambda conn: clear_projection_state(conn, 1))
+    writer.transaction(lambda conn: (delete_derived_take_events(conn, 1), clear_projection_state(conn, 1)))
     assert {
         table: _rows_snapshot(writer, table, order_by)
         for table, order_by in fact_tables.items()
@@ -1083,7 +1084,7 @@ def test_pricing_rebuild_uses_stored_facts_only(tmp_path):
     }
     assert projections_after == projections_before
 
-    writer.transaction(lambda conn: clear_take_state(conn, 1))
+    writer.transaction(lambda conn: (delete_derived_take_events(conn, 1), clear_take_state(conn, 1)))
     writer.transaction(lambda conn: apply_batch(conn, [events["take"]]))
     writer.transaction(lambda conn: rebuild_pricing_projections(conn, chain_id=1))
 

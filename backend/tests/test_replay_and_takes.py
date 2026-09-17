@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import backend.indexer.takes as takes_module
+from backend.indexer.facts import delete_derived_take_events
 from backend.indexer.projections import apply_batch, clear_take_state, reconcile_round_statuses
 from backend.indexer.runtime import IndexerRuntime
 from backend.indexer.takes import TRANSFER_TOPIC, TakeDetector
@@ -649,7 +650,7 @@ def test_apply_batch_projects_take_and_clear_take_state(tmp_path):
         "last_take_price_raw": "750000000000",
     }
 
-    writer.transaction(lambda conn: clear_take_state(conn, 1))
+    writer.transaction(lambda conn: (delete_derived_take_events(conn, 1), clear_take_state(conn, 1)))
 
     assert writer.fetchone("SELECT COUNT(*) AS count FROM takes")["count"] == 0
     assert writer.fetchone("SELECT COUNT(*) AS count FROM taker_summary")["count"] == 0
@@ -805,7 +806,7 @@ def test_apply_batch_marks_sold_out_round_and_restores_scheduled_end_on_clear(ca
         "end_at": 1_700_000_103,
     }
 
-    writer.transaction(lambda conn: clear_take_state(conn, 1))
+    writer.transaction(lambda conn: (delete_derived_take_events(conn, 1), clear_take_state(conn, 1)))
 
     reset_round = writer.fetchone(
         """
@@ -1246,7 +1247,7 @@ def test_watch_marks_chain_error_and_continues(monkeypatch, tmp_path):
 def test_multiple_kicks_and_takes_in_one_block_match_batching_and_offline_replay(tmp_path):
     from dataclasses import replace
     from backend.indexer.observations import BlockReader
-    from backend.indexer.projections import persist_raw_logs
+    from backend.indexer.facts import persist_raw_logs
     from backend.indexer.types import IndexedBlockRecord
 
     header = IndexedBlockRecord(1, 103, f"0x{103:064x}", f"0x{102:064x}", 1700000103)
@@ -1289,7 +1290,76 @@ def test_multiple_kicks_and_takes_in_one_block_match_batching_and_offline_replay
         chain.w3.eth.get_transaction = lambda *_: (_ for _ in ()).throw(AssertionError("Replay used RPC"))
         chain.w3.eth.get_transaction_receipt = chain.w3.eth.get_transaction
         replayed = detector.replay_chain(chain, writer.connection)
-        writer.transaction(lambda conn: (clear_take_state(conn, 1), apply_batch(conn, replayed)))
+        writer.transaction(lambda conn: (delete_derived_take_events(conn, 1), clear_take_state(conn, 1), apply_batch(conn, replayed)))
         assert [tuple(row) for row in writer.fetchall(query)] == expected
         assert [tuple(row) for row in writer.fetchall("SELECT round_id, sold_amount_raw, remaining_available_raw, take_count FROM rounds ORDER BY round_id")] == snapshots[-1]
     assert snapshots[0] == snapshots[1]
+
+
+def test_projection_replay_cannot_write_snapshot_facts(tmp_path):
+    import sqlite3
+    from backend.indexer.projections import apply_native_event_projections, clear_rebuildable_chain_state
+
+    writer = Writer(str(tmp_path / "snapshots.sqlite3"))
+    native = _base_native_batch() + [make_prepared(
+        event_name="AuctionKicked", tx_nonce=80 + i, block_number=103, log_index=1 + i * 5,
+        payload={"from": DEFAULT_FROM_TOKEN, "available": 500 + i * 500},
+        snapshot=make_snapshot(block_number=103),
+    ) for i in range(2)]
+    writer.transaction(lambda conn: apply_batch(conn, native))
+    tables = ("auction_snapshot_facts", "round_param_snapshot")
+    before = {table: [tuple(row) for row in writer.fetchall(f"SELECT * FROM {table}")] for table in tables}
+    assert [row[0] for row in writer.fetchall("SELECT round_id FROM round_param_snapshot ORDER BY round_id")] == [1, 2, 3]
+
+    def protect_snapshots(action, table, _column, _database, _trigger):
+        if table in tables and action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    writer.connection.set_authorizer(protect_snapshots)
+    try:
+        writer.transaction(lambda conn: (
+            clear_rebuildable_chain_state(conn, 1), apply_native_event_projections(conn, native),
+        ))
+    finally:
+        writer.connection.set_authorizer(None)
+    assert writer.transaction(lambda conn: apply_batch(conn, native)) == 0
+    assert {table: [tuple(row) for row in writer.fetchall(f"SELECT * FROM {table}")] for table in tables} == before
+
+
+@pytest.mark.parametrize("takes_only", [False, True])
+def test_maintenance_take_replacement_is_atomic_and_preserves_native_facts(tmp_path, monkeypatch, takes_only):
+    import backend.indexer.runtime as runtime_module
+    from .test_reorg_runtime import _base_events, _base_headers, _build_runtime
+
+    events = _base_events()
+    runtime, _ = _build_runtime(
+        tmp_path, latest_heads=[105, 105], headers=_base_headers(),
+        factory_events_by_block={100: [events["deployment"]]},
+        auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
+        take_events_by_block={104: [events["take_old"]]},
+    )
+    runtime.sync_chain_once()
+    runtime.sync_chain_once()
+    runtime.take_detector.replay_chain = lambda _chain, _conn: [events["take_old"]]
+    tables = ("chain_logs", "domain_events", "auction_snapshot_facts", "round_param_snapshot",
+              "takes", "rounds", "pricing_capture_queue")
+    before = {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables}
+    original = runtime_module.apply_batch
+
+    def fail_after_deleting_takes(conn, prepared):
+        assert conn.execute("SELECT COUNT(*) FROM domain_events WHERE event_name = 'Take'").fetchone()[0] == 0
+        original(conn, prepared)
+        raise RuntimeError("replacement failed")
+
+    monkeypatch.setattr(runtime_module, "apply_batch", fail_after_deleting_takes)
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        runtime.reproject_chain(takes_only=takes_only)
+    assert {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables} == before
+    native_before = [tuple(row) for row in runtime.writer.fetchall("SELECT * FROM domain_events WHERE event_name != 'Take'")]
+    monkeypatch.setattr(runtime_module, "apply_batch", original)
+    runtime.reproject_chain(takes_only=takes_only)
+    assert [tuple(row) for row in runtime.writer.fetchall("SELECT * FROM domain_events WHERE event_name != 'Take'")] == native_before
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM domain_events WHERE event_name = 'Take'")[0] == 1
+    for table in ("chain_logs", "auction_snapshot_facts", "round_param_snapshot"):
+        assert [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] == before[table]

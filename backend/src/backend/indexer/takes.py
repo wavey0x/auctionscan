@@ -540,7 +540,7 @@ class TakeDetector:
                 if enabled:
                     token = max(enabled, key=lambda item: (item.block_number, item.tx_index, item.log_index)).payload["from"]
                 else:
-                    from .projections import _resolve_event_from_token
+                    from .facts import _resolve_event_from_token
                     token = _resolve_event_from_token(conn, event)
             kicks[(event.tx_hash, event.log_index)] = {
                 "position": (event.block_number, event.tx_index, event.log_index),

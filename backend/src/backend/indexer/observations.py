@@ -154,7 +154,7 @@ class BlockReader:
             raise ValueError(f"RPC returned a different transaction for {log.tx_hash}")
 
     def persist(self, conn) -> None:
-        from .projections import upsert_indexed_blocks
+        from .facts import upsert_indexed_blocks
 
         upsert_indexed_blocks(conn, list(self.headers.values()))
         conn.executemany(

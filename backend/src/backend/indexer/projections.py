@@ -4,6 +4,7 @@ import json
 import logging
 import time
 
+from .facts import _deterministic_round_id, _resolve_event_from_token, persist_prepared_events, persist_snapshot_facts
 from .auction_params import RawAuctionParams, decode_params, param_schema_for_version
 from .types import AuctionSnapshot, ChainConfig, FactorySeed, IndexedBlockRecord, PreparedEvent, decimal_text
 
@@ -127,66 +128,6 @@ def load_tracked_auctions(conn, chain_id: int):
             (chain_id,),
         ).fetchall()
     )
-
-
-def _insert_raw_log(conn, prepared: PreparedEvent) -> None:
-    raw = prepared.raw_log
-    _insert_raw_log_record(conn, raw)
-
-
-def _insert_raw_log_record(conn, raw) -> None:
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO chain_logs (
-            chain_id, block_number, block_hash, tx_hash, tx_index, log_index,
-            address, topic0, topic1, topic2, topic3, data, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            raw.chain_id,
-            raw.block_number,
-            raw.block_hash,
-            raw.tx_hash,
-            raw.tx_index,
-            raw.log_index,
-            raw.address,
-            raw.topic0,
-            raw.topic1,
-            raw.topic2,
-            raw.topic3,
-            raw.data,
-            raw.timestamp,
-        ),
-    )
-
-
-def _insert_domain_event(conn, prepared: PreparedEvent) -> bool:
-    event = prepared.domain_event
-    cursor = conn.execute(
-        """
-        INSERT OR IGNORE INTO domain_events (
-            chain_id, block_number, block_hash, tx_hash, tx_index, log_index,
-            event_name, address, auction_address, version, capability_family,
-            payload_json, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event.chain_id,
-            event.block_number,
-            event.block_hash,
-            event.tx_hash,
-            event.tx_index,
-            event.log_index,
-            event.event_name,
-            event.address,
-            event.auction_address,
-            event.version,
-            event.capability_family,
-            _json_dumps(event.payload),
-            event.timestamp,
-        ),
-    )
-    return cursor.rowcount > 0
 
 
 def _upsert_token_metadata(conn, prepared: PreparedEvent) -> None:
@@ -316,67 +257,6 @@ def _persist_current_params(
     )
 
 
-def _persist_deploy_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> None:
-    param_schema = param_schema_for_version(event.version)
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO auction_snapshot_facts (
-            chain_id, auction_address, snapshot_kind, round_id, version, param_schema,
-            block_number, tx_hash, log_index, block_hash, want_token, governance, receiver,
-            minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
-            auction_length_raw, extra_params_json, created_at
-        ) VALUES (?, ?, 'deploy', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event.chain_id,
-            event.auction_address,
-            event.version,
-            param_schema,
-            event.block_number,
-            event.tx_hash,
-            event.log_index,
-            event.block_hash,
-            snapshot.want_token,
-            snapshot.governance,
-            snapshot.receiver,
-            snapshot.minimum_price_raw,
-            snapshot.starting_price_raw,
-            snapshot.step_decay_rate_raw,
-            snapshot.step_duration_raw,
-            snapshot.auction_length_raw,
-            _json_dumps(snapshot.extra_params),
-            _now(),
-        ),
-    )
-
-
-def backfill_snapshot_fact(conn, prepared: PreparedEvent) -> None:
-    """Attach fresh canonical provenance to legacy, potentially partial captures."""
-    event, snapshot = prepared.domain_event, prepared.snapshot
-    if snapshot is None:
-        return
-    if event.event_name == "DeployedNewAuction":
-        _persist_deploy_snapshot_fact(conn, event, snapshot)
-        table, tx, log = "auction_snapshot_facts", "tx_hash", "log_index"
-    elif event.event_name == "AuctionKicked":
-        _persist_kick_snapshot_fact(conn, event, snapshot, _deterministic_round_id(conn, event), _resolve_event_from_token(conn, event))
-        table, tx, log = "round_param_snapshot", "snapshot_tx_hash", "snapshot_log_index"
-    else:
-        return
-    fields = {"block_hash": event.block_hash, "want_token": snapshot.want_token,
-              "receiver": snapshot.receiver, "minimum_price_raw": snapshot.minimum_price_raw,
-              "starting_price_raw": snapshot.starting_price_raw, "step_decay_rate_raw": snapshot.step_decay_rate_raw,
-              "step_duration_raw": snapshot.step_duration_raw, "auction_length_raw": snapshot.auction_length_raw,
-              "extra_params_json": _json_dumps(snapshot.extra_params)}
-    if table == "auction_snapshot_facts":
-        fields["governance"] = snapshot.governance
-    conn.execute(
-        f"UPDATE {table} SET {', '.join(key + ' = ?' for key in fields)} "
-        f"WHERE chain_id = ? AND {tx} = ? AND {log} = ? AND block_hash IS NULL",
-        (*fields.values(), event.chain_id, event.tx_hash, event.log_index),
-    )
-
-
 def _upsert_current_params(conn, event, snapshot: AuctionSnapshot | None, *, block_number: int) -> None:
     current_row = conn.execute(
         """
@@ -484,76 +364,6 @@ def _recompute_enabled_tokens(conn, chain_id: int, auction_address: str) -> None
     )
 
 
-def _deterministic_round_id(conn, event) -> int:
-    row = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-          FROM domain_events
-         WHERE chain_id = ?
-           AND auction_address = ?
-           AND event_name = 'AuctionKicked'
-           AND (
-                block_number < ?
-                OR (block_number = ? AND tx_index < ?)
-                OR (block_number = ? AND tx_index = ? AND log_index <= ?)
-           )
-        """,
-        (
-            event.chain_id,
-            event.auction_address,
-            event.block_number,
-            event.block_number,
-            event.tx_index,
-            event.block_number,
-            event.tx_index,
-            event.log_index,
-        ),
-    ).fetchone()
-    return int(row["count"])
-
-
-def _resolve_event_from_token(conn, event) -> str:
-    direct = event.payload.get("from")
-    if direct:
-        return direct
-
-    auction_id = event.payload.get("auctionId")
-    if not auction_id:
-        raise KeyError("from")
-
-    rows = conn.execute(
-        """
-        SELECT payload_json
-          FROM domain_events
-         WHERE chain_id = ?
-           AND auction_address = ?
-           AND event_name = 'AuctionEnabled'
-           AND (
-                block_number < ?
-                OR (block_number = ? AND tx_index < ?)
-                OR (block_number = ? AND tx_index = ? AND log_index < ?)
-           )
-         ORDER BY block_number DESC, tx_index DESC, log_index DESC
-        """,
-        (
-            event.chain_id,
-            event.auction_address,
-            event.block_number,
-            event.block_number,
-            event.tx_index,
-            event.block_number,
-            event.tx_index,
-            event.log_index,
-        ),
-    ).fetchall()
-    for row in rows:
-        payload = json.loads(row["payload_json"])
-        if payload.get("auctionId") == auction_id and payload.get("from"):
-            return payload["from"]
-
-    raise KeyError("from")
-
-
 def _project_deployment(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     snapshot = prepared.snapshot
@@ -623,7 +433,6 @@ def _project_deployment(conn, prepared: PreparedEvent) -> None:
         ),
     )
     if snapshot is not None:
-        _persist_deploy_snapshot_fact(conn, event, snapshot)
         _upsert_current_params(conn, event, snapshot, block_number=event.block_number)
 
 
@@ -717,42 +526,6 @@ def _project_auction_disabled(conn, prepared: PreparedEvent) -> None:
     _recompute_enabled_tokens(conn, event.chain_id, event.auction_address)
 
 
-def _persist_kick_snapshot_fact(conn, event, snapshot, round_id, from_token) -> None:
-    param_schema = param_schema_for_version(event.version)
-    conn.execute(
-        """
-        INSERT INTO round_param_snapshot (
-            chain_id, auction_address, round_id, from_token, want_token, version,
-            snapshot_block, snapshot_tx_hash, snapshot_log_index, block_hash, param_schema, receiver,
-            minimum_price_raw, starting_price_raw, step_decay_rate_raw,
-            step_duration_raw, auction_length_raw, extra_params_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(chain_id, auction_address, round_id) DO NOTHING
-        """,
-        (
-            event.chain_id,
-            event.auction_address,
-            round_id,
-            from_token,
-            snapshot.want_token,
-            event.version,
-            event.block_number,
-            event.tx_hash,
-            event.log_index,
-            event.block_hash,
-            param_schema,
-            snapshot.receiver,
-            snapshot.minimum_price_raw,
-            snapshot.starting_price_raw,
-            snapshot.step_decay_rate_raw,
-            snapshot.step_duration_raw,
-            snapshot.auction_length_raw,
-            _json_dumps(snapshot.extra_params),
-            _now(),
-        ),
-    )
-
-
 def _project_kick(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     snapshot = prepared.snapshot
@@ -764,7 +537,6 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
     initial_available_raw = decimal_text(event.payload.get("available")) or "0"
     param_schema = param_schema_for_version(event.version)
 
-    _persist_kick_snapshot_fact(conn, event, snapshot, round_id, from_token)
     snapshot_params = _raw_params_from_snapshot(snapshot)
     decoded = decode_params(param_schema, snapshot_params)
     auction_length = decoded.auction_length_seconds
@@ -1220,46 +992,6 @@ def _project_take(conn, prepared: PreparedEvent) -> None:
     )
 
 
-def persist_raw_logs(conn, raw_logs) -> int:
-    inserted = 0
-    for raw in raw_logs:
-        cursor = conn.execute(
-            """
-            INSERT OR IGNORE INTO chain_logs (
-                chain_id, block_number, block_hash, tx_hash, tx_index, log_index,
-                address, topic0, topic1, topic2, topic3, data, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                raw.chain_id,
-                raw.block_number,
-                raw.block_hash,
-                raw.tx_hash,
-                raw.tx_index,
-                raw.log_index,
-                raw.address,
-                raw.topic0,
-                raw.topic1,
-                raw.topic2,
-                raw.topic3,
-                raw.data,
-                raw.timestamp,
-            ),
-        )
-        inserted += cursor.rowcount
-    return inserted
-
-
-def persist_prepared_events(conn, prepared_events: list[PreparedEvent]) -> list[PreparedEvent]:
-    inserted: list[PreparedEvent] = []
-    for prepared in prepared_events:
-        _insert_raw_log(conn, prepared)
-        if not _insert_domain_event(conn, prepared):
-            continue
-        inserted.append(prepared)
-    return inserted
-
-
 def apply_native_event_projections(conn, prepared_events: list[PreparedEvent]) -> None:
     for prepared in prepared_events:
         _upsert_token_metadata(conn, prepared)
@@ -1291,6 +1023,7 @@ def apply_take_event_projections(conn, prepared_events: list[PreparedEvent]) -> 
 
 def apply_batch_with_results(conn, prepared_events: list[PreparedEvent]) -> list[PreparedEvent]:
     inserted_events = persist_prepared_events(conn, prepared_events)
+    persist_snapshot_facts(conn, inserted_events)
     native_events = [event for event in inserted_events if event.domain_event.event_name != "Take"]
     take_events = [event for event in inserted_events if event.domain_event.event_name == "Take"]
     apply_native_event_projections(conn, native_events)
@@ -1302,89 +1035,6 @@ def apply_batch(conn, prepared_events: list[PreparedEvent]) -> int:
     return len(apply_batch_with_results(conn, prepared_events))
 
 
-def upsert_indexed_blocks(conn, blocks: list[IndexedBlockRecord]) -> None:
-    if not blocks:
-        return
-    conn.executemany(
-        """
-        INSERT INTO indexed_blocks (
-            chain_id, block_number, block_hash, parent_hash, timestamp
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(chain_id, block_number) DO UPDATE SET
-            block_hash = excluded.block_hash,
-            parent_hash = excluded.parent_hash,
-            timestamp = excluded.timestamp
-        """,
-        [
-            (
-                block.chain_id,
-                block.block_number,
-                block.block_hash,
-                block.parent_hash,
-                block.timestamp,
-            )
-            for block in blocks
-        ],
-    )
-
-
-def load_indexed_blocks(
-    conn,
-    *,
-    chain_id: int,
-    from_block: int | None = None,
-    to_block: int | None = None,
-    descending: bool = False,
-):
-    clauses = ["chain_id = ?"]
-    params: list[int] = [chain_id]
-    if from_block is not None:
-        clauses.append("block_number >= ?")
-        params.append(from_block)
-    if to_block is not None:
-        clauses.append("block_number <= ?")
-        params.append(to_block)
-    order = "DESC" if descending else "ASC"
-    sql = f"""
-        SELECT chain_id, block_number, block_hash, parent_hash, timestamp
-          FROM indexed_blocks
-         WHERE {" AND ".join(clauses)}
-         ORDER BY block_number {order}
-    """
-    return list(conn.execute(sql, tuple(params)).fetchall())
-
-
-def prune_indexed_blocks_through(conn, *, chain_id: int, block_number: int) -> None:
-    conn.execute(
-        "DELETE FROM indexed_blocks WHERE chain_id = ? AND block_number <= ?",
-        (chain_id, block_number),
-    )
-
-
-def delete_fact_blocks_above(conn, *, chain_id: int, ancestor_block: int) -> None:
-    conn.execute("DELETE FROM rpc_observations WHERE chain_id = ? AND block_number > ?", (chain_id, ancestor_block))
-    conn.execute(
-        "DELETE FROM chain_logs WHERE chain_id = ? AND block_number > ?",
-        (chain_id, ancestor_block),
-    )
-    conn.execute(
-        "DELETE FROM domain_events WHERE chain_id = ? AND block_number > ?",
-        (chain_id, ancestor_block),
-    )
-    conn.execute(
-        "DELETE FROM round_param_snapshot WHERE chain_id = ? AND snapshot_block > ?",
-        (chain_id, ancestor_block),
-    )
-    conn.execute(
-        "DELETE FROM auction_snapshot_facts WHERE chain_id = ? AND block_number > ?",
-        (chain_id, ancestor_block),
-    )
-    conn.execute(
-        "DELETE FROM indexed_blocks WHERE chain_id = ? AND block_number > ?",
-        (chain_id, ancestor_block),
-    )
-
-
 def clear_take_state(conn, chain_id: int) -> None:
     conn.execute("DELETE FROM pricing_capture_queue WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM taker_pricing_summary WHERE chain_id = ?", (chain_id,))
@@ -1392,10 +1042,6 @@ def clear_take_state(conn, chain_id: int) -> None:
     conn.execute("DELETE FROM round_pricing_source WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM take_pricing WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM round_pricing WHERE chain_id = ?", (chain_id,))
-    conn.execute(
-        "DELETE FROM domain_events WHERE chain_id = ? AND event_name = 'Take'",
-        (chain_id,),
-    )
     conn.execute("DELETE FROM takes WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM taker_summary WHERE chain_id = ?", (chain_id,))
     conn.execute(

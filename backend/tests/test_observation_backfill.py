@@ -76,15 +76,23 @@ def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path):
 
 
 @pytest.mark.parametrize("takes_only", [False, True])
-def test_incomplete_metadata_refuses_replay_without_replacing_projections(tmp_path, takes_only):
+@pytest.mark.parametrize("missing_input, message", [
+    ("metadata", "Missing call"),
+    ("auction_snapshot_facts", "Missing DeployedNewAuction snapshot"),
+    ("round_param_snapshot", "Missing AuctionKicked snapshot"),
+])
+def test_incomplete_inputs_refuse_replay_without_replacing_projections(tmp_path, takes_only, missing_input, message):
     runtime, chain, provider = _legacy_runtime(tmp_path)
     runtime.backfill_observations()
-    runtime.writer.transaction(lambda conn: conn.execute(
-        "DELETE FROM rpc_observations WHERE block_number = 101 AND subject LIKE ?", (DEFAULT_WANT_TOKEN + ':%',),
-    ))
+    if missing_input == "metadata":
+        runtime.writer.transaction(lambda conn: conn.execute(
+            "DELETE FROM rpc_observations WHERE block_number = 101 AND subject LIKE ?", (DEFAULT_WANT_TOKEN + ':%',),
+        ))
+    else:
+        runtime.writer.transaction(lambda conn: conn.execute(f"DELETE FROM {missing_input}"))
     before = list(runtime.writer.fetchall("SELECT * FROM rounds"))
     provider.failure = AssertionError("Replay must not repair its inputs through RPC")
-    with pytest.raises(MissingObservation, match="Missing call"):
+    with pytest.raises(MissingObservation, match=message):
         runtime.reproject_chain(takes_only=takes_only)
     assert list(runtime.writer.fetchall("SELECT * FROM rounds")) == before
 

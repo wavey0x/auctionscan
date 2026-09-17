@@ -6,7 +6,8 @@ import pytest
 from backend.indexer.chains import ChainState
 from backend.indexer.observations import BlockReader, BranchChanged
 from backend.indexer.polling import fetch_logs
-from backend.indexer.projections import apply_batch, persist_raw_logs
+from backend.indexer.projections import apply_batch
+from backend.indexer.facts import persist_raw_logs
 from backend.indexer.takes import SWEEP_SELECTOR, TRANSFER_TOPIC, TakeDetector
 from backend.indexer.writer import Writer
 from .helpers import DEFAULT_AUCTION, DEFAULT_FROM_TOKEN, DEFAULT_RECEIVER, DEFAULT_WANT_TOKEN

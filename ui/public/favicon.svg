@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <text
+    x="50%"
+    y="51%"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    font-family="monospace"
+    font-size="54"
+    font-weight="900"
+    fill="#6a6a6a"
+    stroke="#6a6a6a"
+    stroke-width="1.4"
+    paint-order="stroke fill"
+    transform="translate(-1 0) scale(1.12 1.02)"
+  >
+    A
+  </text>
+</svg>

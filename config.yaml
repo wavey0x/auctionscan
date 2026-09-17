@@ -1,0 +1,187 @@
+# Network configuration shared by the indexer and API.
+# RPC URLs support ${ENV_VAR} and ${ENV_VAR:default} interpolation.
+
+indexer:
+  poll_interval: 180 # Default watch-mode poll interval in seconds
+
+networks:
+  ethereum:
+    chain_id: 1
+    rpc_url: ${ETHEREUM_RPC_URL}
+    finality_depth: 12
+    poll_interval: 2 # Follow Ethereum head promptly
+    name: "Ethereum"
+    short_name: "Ethereum"
+    emoji: "⛓️"
+    explorer: "https://etherscan.io"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg"
+    block_batch_size: 50000
+    disabled: false
+    # Block lag tolerances for health monitoring
+    block_lag_warn: 20 # show "degraded" in api when 20 blocks behind
+    block_lag_critical: 50 # show "down" in api at 50 blocks behind
+    # AuctionRegistry - primary source for factory discovery
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 23498416
+    # Explicit factories not covered by registry discovery
+    factories:
+      - address: "0xd8e03d6d24d43c46c0f7f61327e391316e4f3c15"
+        start_block: 23320499
+        version: 1.0.3
+      - address: "0xE87AF17aCBa165686E5AA7De2ceC523864c25712"
+        start_block: 23406405
+        version: 1.0.3cc
+
+  polygon:
+    chain_id: 137
+    rpc_url: ${POLYGON_RPC_URL}
+    name: "Polygon"
+    short_name: "Polygon"
+    emoji: "🟣"
+    explorer: "https://polygonscan.com"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_polygon.jpg"
+    block_batch_size: 50000
+    poa: true
+    disabled: false
+    block_lag_warn: 100 # "degraded" at 100 blocks behind
+    block_lag_critical: 200 # "down" at 200 blocks behind
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 77215119
+    factories:
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 67859213
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 76488294
+        version: 1.0.3
+
+  arbitrum:
+    chain_id: 42161
+    rpc_url: ${ARBITRUM_RPC_URL}
+    name: "Arbitrum One"
+    short_name: "Arbitrum"
+    emoji: "🧊"
+    explorer: "https://arbiscan.io"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_arbitrum.jpg"
+    block_batch_size: 50000
+    block_lag_warn: 750 # "degraded" threshold
+    block_lag_critical: 1500 # "down" threshold
+    disabled: false
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 385690411
+    factories:
+      - address: "0xCd1E4c17A5485f2a6DF1C01cC65EFDe25c951dBB"
+        start_block: 358466772
+        version: legacy
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 305508425
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 379483701
+        version: 1.0.3
+
+  optimism:
+    chain_id: 10
+    rpc_url: ${OPTIMISM_RPC_URL}
+    name: "Optimism"
+    short_name: "Optimism"
+    emoji: "🔴"
+    explorer: "https://optimistic.etherscan.io"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_optimism.jpg"
+    block_batch_size: 50000
+    disabled: false
+    block_lag_warn: 100 # "degraded" threshold
+    block_lag_critical: 200 # "down" threshold
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 141955023
+    factories:
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 131910143
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 141180062
+        version: 1.0.3
+
+  base:
+    chain_id: 8453
+    rpc_url: ${BASE_RPC_URL}
+    name: "Base"
+    short_name: "Base"
+    emoji: "🟦"
+    explorer: "https://basescan.org"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_base.jpg"
+    block_batch_size: 50000
+    disabled: false
+    block_lag_warn: 100 # "degraded" threshold
+    block_lag_critical: 200 # "down" threshold
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 36359570
+    factories:
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 26314893
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 35584896
+        version: 1.0.3
+      - address: "0xbA7FCb508c7195eE5AE823F37eE2c11D7ED52F8e"
+        start_block: 41711242
+        version: 1.0.4
+
+  berachain:
+    chain_id: 80094
+    rpc_url: ${BERACHAIN_RPC_URL}
+    disabled: true
+    name: "Berachain"
+    short_name: "Berachain"
+    emoji: "🐻"
+    explorer: "https://berascan.com"
+    block_batch_size: 50000
+    block_lag_warn: 50 # "degraded" threshold
+    block_lag_critical: 200 # "down" threshold
+    registry:
+      address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
+      start_block: 11299976
+    factories:
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 1070705
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 10525389
+        version: 1.0.3
+
+  katana:
+    chain_id: 747474
+    rpc_url: ${KATANA_RPC_URL}
+    name: "Katana"
+    short_name: "Katana"
+    emoji: "🟪"
+    explorer: "https://katanascan.com"
+    block_batch_size: 50000
+    block_lag_warn: 75 # "degraded" threshold
+    block_lag_critical: 300 # "down" threshold
+    factories:
+      - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
+        start_block: 2237117
+        version: legacy
+      - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
+        start_block: 11216721
+        version: 1.0.3
+
+  local:
+    chain_id: 31337
+    rpc_url: ${ANVIL_RPC_URL:http://localhost:8545}
+    name: "Anvil Local"
+    short_name: "Anvil"
+    emoji: "🧪"
+    explorer: "#"
+    icon: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg"
+    disabled: true
+    factories:
+      - address: "${LOCAL_FACTORY_ADDRESS}"
+        start_block: 0
+        version: legacy

@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "auctionscan-telegram-bot-token"
+description = "Telegram bot credential"
+regex = '''\b[0-9]{8,12}:[A-Za-z0-9_-]{35}'''
+
+[[rules]]
+id = "auctionscan-authenticated-url"
+description = "Credentials embedded in a service URL"
+regex = '''(?i)(?:postgres(?:ql)?|mysql|redis|https?)://[^/\s:@]+:[^/\s@]+@'''

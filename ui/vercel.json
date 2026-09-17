@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/round/:chainId/:auctionAddress/:occurrence",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!api/|.*\\..*).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

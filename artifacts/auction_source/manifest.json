@@ -1,0 +1,93 @@
+[
+  {
+    "auction_address": "0x27A4D71DBF3537caa8247BE7FE33a52C40A3920A",
+    "capability_family": "0.0.1",
+    "chain_id": 1,
+    "deployment_block": 19490953,
+    "deployment_log_index": 379,
+    "deployment_tx_hash": "0xdc3eafcbcb32df03883dab07ec8c4eaa6772bb15edafd2631be035a38ba05f5f",
+    "factory_address": "0xE6aB098E8582178A76DC80d55ca304d1Dec11AD8",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 0.0.1 factory.",
+    "version": "0.0.1"
+  },
+  {
+    "auction_address": "0xb89e40bBb7B6f00C35a0452a0B243ECD37e453a0",
+    "capability_family": "1.0.x",
+    "chain_id": 1,
+    "deployment_block": 21177011,
+    "deployment_log_index": 325,
+    "deployment_tx_hash": "0xc35ca62c61f35ad871cd4004c66307fd3049549028612d73308ff10e3c6f22c6",
+    "factory_address": "0xa076c247AfA44f8F006CA7f21A4EF59f7e4dc605",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 1.0.1 factory.",
+    "version": "1.0.1"
+  },
+  {
+    "auction_address": "0x3dD8a7385931c127A853B167E1a595e3f2Bd520C",
+    "capability_family": "1.0.x",
+    "chain_id": 1,
+    "deployment_block": 22047617,
+    "deployment_log_index": 232,
+    "deployment_tx_hash": "0x61d9bc9e72d210879c01c4a1b7fe7f632feb92ae554b522b96a4354a0cef53bf",
+    "factory_address": "0xCfA510188884F199fcC6e750764FAAbE6e56ec40",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 1.0.2 factory.",
+    "version": "1.0.2"
+  },
+  {
+    "auction_address": "0x898CB2E403b0a39A5bA89F74FACd5f5C5Ef161FE",
+    "capability_family": "1.0.3",
+    "chain_id": 1,
+    "deployment_block": 23377255,
+    "deployment_log_index": 299,
+    "deployment_tx_hash": "0x4d8a8b4618b1c8e5cdf216aa8114bdf50066a92fa46da44b27869c22567b9ce0",
+    "factory_address": "0xbC587a495420aBB71Bbd40A0e291B64e80117526",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 1.0.3 factory.",
+    "version": "1.0.3"
+  },
+  {
+    "auction_address": "0x46B45Bd498776Aa9ba10FB362B754953E9b48f7B",
+    "capability_family": "1.0.4",
+    "chain_id": 1,
+    "deployment_block": 24491736,
+    "deployment_log_index": 678,
+    "deployment_tx_hash": "0xbf6afbed158cb1d5d27a8ed7402c201aef0f629f5179c3a07be9a1623b4e4237",
+    "factory_address": "0xbA7FCb508c7195eE5AE823F37eE2c11D7ED52F8e",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 1.0.4 factory.",
+    "version": "1.0.4"
+  },
+  {
+    "auction_address": "0x282B9392C437AA34E6107092D3c5205E1F59681E",
+    "capability_family": "1.0.5",
+    "chain_id": 1,
+    "deployment_block": 25483822,
+    "deployment_log_index": 757,
+    "deployment_tx_hash": "0x6d6c4aab1e0394ccc0e311f8f16ed49d8009d870a4de93f3b9b25fe60bed6599",
+    "factory_address": "0x55B3830B4D85e6868c73f00A2e857e9AdbF89568",
+    "factory_source": "registry",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the official 1.0.5 factory.",
+    "version": "1.0.5"
+  },
+  {
+    "auction_address": "0x4DEfBDf33f69031d8a302ccE6F84Db1B5874a37b",
+    "capability_family": "1.0.3",
+    "chain_id": 1,
+    "deployment_block": 23499270,
+    "deployment_log_index": 522,
+    "deployment_tx_hash": "0x64dcd80bbba6152e99a5f830968fb2bb3323b0919e3741c0be68982f6b3b94ca",
+    "factory_address": "0xE87AF17aCBa165686E5AA7De2ceC523864c25712",
+    "factory_source": "override",
+    "network": "ethereum",
+    "reference_reason": "First deployed auction emitted by the explicit 1.0.3cc override factory.",
+    "version": "1.0.3cc"
+  }
+]

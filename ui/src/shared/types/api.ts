@@ -1,0 +1,38 @@
+import type { components } from "./generated";
+
+export type IndexedCheckpoint = components["schemas"]["IndexedCheckpoint"];
+export type ChainInfo = components["schemas"]["ChainInfo"];
+export type ChainsResponse = components["schemas"]["ChainsResponse"];
+export type HealthChain = components["schemas"]["HealthChain"];
+export type HealthResponse = components["schemas"]["HealthResponse"];
+export type Token = components["schemas"]["TokenModel"];
+export type PriceSourceOption = components["schemas"]["PriceSourceOption"];
+export type TakePricingBySource = components["schemas"]["TakePricingBySource"];
+export type RoundPricingBySource = components["schemas"]["RoundPricingBySource"];
+export type RoundListItem = components["schemas"]["RoundListItem"];
+export type RoundsResponse = components["schemas"]["RoundsResponse"];
+export type RoundDetailResponse = components["schemas"]["RoundDetailResponse"];
+export type RoundLivePrice = components["schemas"]["RoundLivePrice"];
+export type AuctionRound = components["schemas"]["AuctionRound"];
+export type AuctionRoundsResponse = components["schemas"]["AuctionRoundsResponse"];
+export type AuctionParameters = components["schemas"]["AuctionParameters"];
+export type AuctionDetails = components["schemas"]["AuctionDetails"];
+export type AuctionListItem = components["schemas"]["AuctionListItem"];
+export type AuctionsResponse = components["schemas"]["AuctionsResponse"];
+export type AuctionVersionOption = components["schemas"]["AuctionVersionOption"];
+export type AuctionVersionsResponse = components["schemas"]["AuctionVersionsResponse"];
+export type TakeListItem = components["schemas"]["TakeListItem"];
+export type TakeDetail = components["schemas"]["TakeDetail"];
+export type TakerSummary = components["schemas"]["TakerSummary"];
+export type TakerListResponse = components["schemas"]["TakerListResponse"];
+export type TakerDetail = components["schemas"]["TakerDetail"];
+export type TakerTake = components["schemas"]["TakerTake"];
+export type AuctionTakesResponse = components["schemas"]["AuctionTakesResponse"];
+export type TakerTakesResponse = components["schemas"]["TakerTakesResponse"];
+export type SearchResult = components["schemas"]["SearchResult"];
+export type SearchResponse = components["schemas"]["SearchResponse"];
+export type TxResolveDestination = components["schemas"]["TxResolveDestination"];
+export type TxResolveResponse = components["schemas"]["TxResolveResponse"];
+export type TokensResponse = components["schemas"]["TokensResponse"];
+
+export type SourceOccurrence = components["schemas"]["SourceOccurrence"];

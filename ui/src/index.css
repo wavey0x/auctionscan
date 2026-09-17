@@ -1,0 +1,280 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --color-background: #ffffff;
+  --color-surface: #f9fafb;
+  --color-primary: #111111;
+  --color-secondary: #6a6a6a;
+  --color-tertiary: #9a9a9a;
+  --color-divider-strong: #cccccc;
+  --color-divider-subtle: #e6e7eb;
+  --color-active: #059669;
+  --color-progress-marker: #065f46;
+  --color-complete: #2563eb;
+  --color-settled: #7c3aed;
+  --color-kickable: #d97706;
+  --color-positive: #15803d;
+  --color-negative: #b91c1c;
+  --color-warning: #ca8a04;
+  --color-skeleton-base: #eceff3;
+  --color-skeleton-highlight: rgba(255, 255, 255, 0.62);
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-background: #1a1a1a;
+  --color-surface: #1e1e1e;
+  --color-primary: #fafafa;
+  --color-secondary: #d8d8d8;
+  --color-tertiary: #a0a0a0;
+  --color-divider-strong: #404040;
+  --color-divider-subtle: #2a2a2a;
+  --color-active: #10b981;
+  --color-progress-marker: #047857;
+  --color-complete: #60a5fa;
+  --color-settled: #c084fc;
+  --color-kickable: #f59e0b;
+  --color-positive: #22c55e;
+  --color-negative: #ef4444;
+  --color-warning: #eab308;
+  --color-skeleton-base: #232427;
+  --color-skeleton-highlight: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@layer base {
+  html {
+    overflow-y: scroll;
+  }
+
+  body {
+    @apply bg-background text-primary font-sans text-body antialiased;
+    margin: 0;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  code {
+    @apply font-mono text-data;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-md border border-divider-subtle bg-surface;
+  }
+
+  .panel-strong {
+    @apply rounded-md border border-divider-strong bg-background;
+  }
+
+  .filter-input {
+    @apply h-9 w-full rounded-md border border-divider-strong bg-background px-3 text-data text-primary outline-none transition-colors placeholder:text-tertiary focus:border-primary;
+  }
+
+  .filter-select {
+    @apply h-9 rounded-md border border-divider-strong bg-background px-3 text-data text-primary outline-none transition-colors focus:border-primary;
+  }
+
+  .plain-button {
+    @apply inline-flex items-center justify-center rounded-md border border-divider-strong bg-background px-3 py-2 text-data text-primary transition-colors hover:bg-surface;
+  }
+
+  .plain-button:disabled {
+    @apply cursor-not-allowed text-tertiary hover:bg-background;
+  }
+
+  .nav-link {
+    @apply border-b border-transparent pb-1 text-meta text-secondary transition-colors hover:text-primary;
+  }
+
+  .nav-link-active {
+    @apply border-primary text-primary;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto;
+  }
+
+  .data-table {
+    @apply min-w-full border-collapse;
+  }
+
+  .data-table thead th {
+    @apply sticky top-0 border-b border-divider-strong bg-background px-2 py-2 text-left text-table-header uppercase text-tertiary;
+  }
+
+  .data-table tbody td {
+    @apply border-b border-divider-subtle px-2 py-2 align-middle text-data text-secondary;
+  }
+
+  .data-row {
+    @apply cursor-pointer transition-colors hover:bg-background;
+  }
+
+  .metric-label {
+    @apply text-table-header uppercase text-tertiary;
+  }
+
+  .metric-value {
+    @apply text-heading text-primary;
+  }
+
+  .identity-inline {
+    @apply inline-flex min-w-0 items-center gap-4 text-secondary;
+  }
+
+  .hover-match-target {
+    @apply rounded-[4px] border border-transparent px-1 py-0.5;
+  }
+
+  .hover-match-active {
+    border-color: #4169e1;
+    border-style: dashed;
+  }
+
+  .identity-link {
+    @apply text-secondary underline-offset-4 transition-colors hover:text-primary hover:underline;
+  }
+
+  .auction-address-value .identity-link:hover {
+    text-decoration-color: var(--color-tertiary);
+  }
+
+  .copy-trigger {
+    @apply inline-flex h-5 w-5 items-center justify-center border-0 bg-transparent p-1 text-tertiary transition-colors hover:text-primary md:h-3 md:w-3 md:p-0;
+  }
+
+  .icon-link-trigger {
+    @apply inline-flex h-5 w-5 items-center justify-center p-1 text-tertiary transition-colors hover:text-primary md:h-3 md:w-3 md:p-0;
+  }
+
+  .copy-icon {
+    @apply relative h-3 w-3;
+  }
+
+  .copy-glyph,
+  .check-glyph {
+    @apply absolute inset-0 transition-all;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .copy-glyph .copy-front {
+    fill: var(--color-background);
+  }
+
+  .copy-glyph .copy-back {
+    fill: none;
+  }
+
+  .check-glyph {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+
+  .copy-trigger.is-copied {
+    @apply text-positive;
+  }
+
+  .copy-trigger.is-copied .copy-glyph {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+
+  .copy-trigger.is-copied .check-glyph {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .token-logo-slot {
+    width: var(--token-logo-size, 0.875rem);
+    height: var(--token-logo-size, 0.875rem);
+    @apply inline-flex shrink-0;
+  }
+
+  .token-logo {
+    width: var(--token-logo-size, 0.875rem);
+    height: var(--token-logo-size, 0.875rem);
+    @apply rounded-full object-contain;
+  }
+
+  .version-badge {
+    @apply inline-flex items-center rounded-[3px] border border-divider-strong px-1 py-[1px] text-[10px] leading-none text-tertiary;
+  }
+
+  .progress-marker {
+    background-color: var(--color-progress-marker);
+    border-color: var(--color-progress-marker);
+  }
+
+  .skeleton-block {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-skeleton-base);
+  }
+
+  .skeleton-block::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--color-skeleton-highlight) 48%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: skeleton-shimmer 2.4s ease-in-out infinite;
+  }
+
+  [data-tooltip] {
+    position: relative;
+  }
+
+  [data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    @apply rounded-md bg-primary px-2 py-1 font-mono text-[11px] leading-tight text-background;
+    z-index: 80;
+  }
+
+  [data-tooltip]:hover::after {
+    opacity: 1;
+  }
+}

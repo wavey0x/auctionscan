@@ -1,0 +1,52 @@
+[
+  {
+    "inputs": [],
+    "name": "getAllFactories",
+    "outputs": [{"internalType": "address[]", "name": "", "type": "address[]"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "address", "name": "_factory", "type": "address"}],
+    "name": "factoryInfo",
+    "outputs": [
+      {"internalType": "string", "name": "version", "type": "string"},
+      {"internalType": "uint256", "name": "index", "type": "uint256"},
+      {"internalType": "bool", "name": "isRetired", "type": "bool"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "governance",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "string", "name": "_version", "type": "string"}],
+    "name": "versionToFactory",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": false, "internalType": "address", "name": "factory", "type": "address"},
+      {"indexed": false, "internalType": "string", "name": "version", "type": "string"}
+    ],
+    "name": "FactoryRegistered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": false, "internalType": "address", "name": "factory", "type": "address"},
+      {"indexed": false, "internalType": "string", "name": "version", "type": "string"}
+    ],
+    "name": "FactoryRetired",
+    "type": "event"
+  }
+]

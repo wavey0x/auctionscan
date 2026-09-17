@@ -1,0 +1,767 @@
+[
+  {
+    "inputs": [],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "auctionId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "auctionAddress",
+        "type": "address"
+      }
+    ],
+    "name": "AuctionDisabled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "auctionId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "auctionAddress",
+        "type": "address"
+      }
+    ],
+    "name": "AuctionEnabled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "auctionId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "available",
+        "type": "uint256"
+      }
+    ],
+    "name": "AuctionKicked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "auctionId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amountTaken",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amountLeft",
+        "type": "uint256"
+      }
+    ],
+    "name": "AuctionTaken",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousGovernance",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newGovernance",
+        "type": "address"
+      }
+    ],
+    "name": "GovernanceTransferred",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "auctionCooldown",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "auctionInfo",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_to",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_kicked",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_available",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "auctionLength",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "auctions",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "tokenAddress",
+            "type": "address"
+          },
+          {
+            "internalType": "uint96",
+            "name": "scaler",
+            "type": "uint96"
+          }
+        ],
+        "internalType": "struct Auction.TokenInfo",
+        "name": "fromInfo",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint96",
+        "name": "kicked",
+        "type": "uint96"
+      },
+      {
+        "internalType": "address",
+        "name": "receiver",
+        "type": "address"
+      },
+      {
+        "internalType": "uint128",
+        "name": "initialAvailable",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "currentAvailable",
+        "type": "uint128"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "name": "disable",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_index",
+        "type": "uint256"
+      }
+    ],
+    "name": "disable",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_receiver",
+        "type": "address"
+      }
+    ],
+    "name": "enable",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "name": "enable",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "enabledAuctions",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_amountToTake",
+        "type": "uint256"
+      }
+    ],
+    "name": "getAmountNeeded",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_amountToTake",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "getAmountNeeded",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "name": "getAuctionId",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getHookFlags",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "governance",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "hook",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_want",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_hook",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_governance",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_auctionLength",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_auctionCooldown",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_startingPrice",
+        "type": "uint256"
+      }
+    ],
+    "name": "initialize",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "kick",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "available",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "kickable",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "numberOfEnabledAuctions",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "price",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "price",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bool",
+        "name": "_kickable",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "_kick",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "_preTake",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "_postTake",
+        "type": "bool"
+      }
+    ],
+    "name": "setHookFlags",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "startingPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_maxAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_receiver",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes",
+        "name": "_data",
+        "type": "bytes"
+      }
+    ],
+    "name": "take",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_maxAmount",
+        "type": "uint256"
+      }
+    ],
+    "name": "take",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "take",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_auctionId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_maxAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_receiver",
+        "type": "address"
+      }
+    ],
+    "name": "take",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_newGovernance",
+        "type": "address"
+      }
+    ],
+    "name": "transferGovernance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "want",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

@@ -1178,6 +1178,20 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
         """,
         (_now(), chain_id, confirmed_timestamp),
     )
+    # A reorg can move indexed time back across the deadline. Event closures
+    # and sold-out inventory remain terminal regardless of that timestamp.
+    conn.execute(
+        """
+        UPDATE rounds
+           SET status = 'live', updated_at = ?
+         WHERE chain_id = ?
+           AND status = 'expired'
+           AND settled_at IS NULL
+           AND remaining_available_raw <> '0'
+           AND end_at >= ?
+        """,
+        (_now(), chain_id, confirmed_timestamp),
+    )
     for row in expired_rows:
         logger.info(
             "round expired chain_id=%d auction=%s round_id=%d end_at=%d confirmed_timestamp=%d",

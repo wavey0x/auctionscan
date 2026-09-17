@@ -705,26 +705,48 @@ class IndexerRuntime:
         last_confirmed_processed: int,
         record_reorg: bool = True,
     ) -> None:
+        started = time.perf_counter()
+        # Maintenance must repair the prefix even when its removed suffix is empty.
+        replay_skipped = (
+            record_reorg
+            and conn.execute(
+                "SELECT 1 FROM domain_events WHERE chain_id = ? AND block_number > ? LIMIT 1",
+                (self.chain.config.chain_id, ancestor_block),
+            ).fetchone()
+            is None
+        )
         delete_fact_blocks_above(
             conn,
             chain_id=self.chain.config.chain_id,
             ancestor_block=ancestor_block,
         )
-        self.chain.reader = BlockReader(conn, chain_id=self.chain.config.chain_id,
-                                        w3=getattr(self.chain, "w3", None), header_reader=None, offline=True)
-        clear_rebuildable_chain_state(conn, self.chain.config.chain_id)
-        native_events = replay.load_native_events(conn, self.chain, self.hydrator)
-        apply_native_event_projections(conn, native_events)
-        take_events = replay.load_take_events(conn, self.chain, self.hydrator)
-        apply_take_event_projections(conn, take_events)
+        self.chain.reader = BlockReader(
+            conn,
+            chain_id=self.chain.config.chain_id,
+            w3=getattr(self.chain, "w3", None),
+            header_reader=None,
+            offline=True,
+        )
+        if not replay_skipped:
+            clear_rebuildable_chain_state(conn, self.chain.config.chain_id)
+            native_events = replay.load_native_events(conn, self.chain, self.hydrator)
+            apply_native_event_projections(conn, native_events)
+            take_events = replay.load_take_events(conn, self.chain, self.hydrator)
+            apply_take_event_projections(conn, take_events)
         delete_orphaned_pricing_queue_rows(conn, chain_id=self.chain.config.chain_id)
         if ancestor_block >= 0:
-            header = conn.execute("SELECT timestamp FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
-                                  (self.chain.config.chain_id, ancestor_block)).fetchone()
+            header = conn.execute(
+                "SELECT timestamp FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
+                (self.chain.config.chain_id, ancestor_block),
+            ).fetchone()
             if header is None:
                 raise MissingObservation(f"Missing ancestor timestamp at {ancestor_block}")
             reconcile_round_statuses(conn, self.chain.config.chain_id, int(header["timestamp"]))
-        rebuild_pricing_projections(conn, chain_id=self.chain.config.chain_id)
+        pricing_seconds = 0.0
+        if not replay_skipped:
+            pricing_started = time.perf_counter()
+            rebuild_pricing_projections(conn, chain_id=self.chain.config.chain_id)
+            pricing_seconds = time.perf_counter() - pricing_started
         state_row = conn.execute(
             "SELECT reorg_count FROM sync_state WHERE chain_id = ?",
             (self.chain.config.chain_id,),
@@ -743,6 +765,15 @@ class IndexerRuntime:
             health="ok",
             last_error=None,
         )
+        logger.info(
+            "live-tail recovery prepared network=%s ancestor=%d replay_skipped=%s "
+            "elapsed_seconds=%.6f pricing_rebuild_seconds=%.6f",
+            self.network_name,
+            ancestor_block,
+            replay_skipped,
+            time.perf_counter() - started,
+            pricing_seconds,
+        )
 
     def _promote_confirmed_blocks(
         self,
@@ -757,8 +788,10 @@ class IndexerRuntime:
         if new_confirmed <= old_confirmed:
             return 0
 
-        stored = self.writer.fetchone("SELECT * FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
-                                      (self.chain.config.chain_id, new_confirmed))
+        stored = self.writer.fetchone(
+            "SELECT * FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
+            (self.chain.config.chain_id, new_confirmed),
+        )
         if stored is None or self.chain.block_header(new_confirmed).block_hash != stored["block_hash"]:
             raise BranchChanged("Cannot finalize an unverified indexed block")
 

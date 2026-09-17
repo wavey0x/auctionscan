@@ -782,3 +782,377 @@ def test_replay_failure_preserves_all_projections_and_sync_metadata(tmp_path, mo
         runtime.reproject_chain(takes_only=takes_only)
     after = {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables}
     assert after == before
+
+
+RECOVERY_PROJECTIONS = (
+    "auctions",
+    "tracked_auctions",
+    "tokens",
+    "auction_tokens",
+    "auction_current_params",
+    "auction_param_history",
+    "rounds",
+    "takes",
+    "taker_summary",
+    "take_pricing",
+    "round_pricing",
+    "take_pricing_source",
+    "round_pricing_source",
+    "taker_pricing_summary",
+)
+
+
+def _projection_values(writer):
+    result = {}
+    for table in RECOVERY_PROJECTIONS:
+        rows = []
+        for row in writer.fetchall(f"SELECT * FROM {table}"):
+            values = dict(row)
+            for key in ("created_at", "updated_at", "metadata_updated_at"):
+                values.pop(key, None)
+            if table in {"auction_param_history", "takes"}:
+                values.pop("id", None)
+            rows.append(values)
+        result[table] = rows
+    return result
+
+
+def _event_free_recovery_runtime(tmp_path, monkeypatch, scenario="live", *, available=500):
+    from backend.indexer.facts import persist_raw_logs
+    from backend.indexer.pricing import PricingCaptureRuntime
+    from .helpers import capture_due_pricing
+    from .test_pricing import _FakePricingClient
+
+    events = _base_events()
+    events["kicked"] = replace(
+        events["kicked"],
+        domain_event=replace(
+            events["kicked"].domain_event, payload={"from": DEFAULT_FROM_TOKEN, "available": available}
+        ),
+    )
+    if scenario in {"expiry", "swept_expired"}:
+        events["kicked"] = replace(
+            events["kicked"],
+            snapshot=replace(
+                events["kicked"].snapshot,
+                auction_length_raw="3" if scenario == "expiry" else "1",
+            ),
+        )
+    if scenario in {"sold_out", "swept_sold_out"}:
+        take = events["take_old"]
+        events["take_old"] = replace(
+            take,
+            domain_event=replace(
+                take.domain_event,
+                payload={
+                    **take.domain_event.payload,
+                    "amountTaken": 500,
+                },
+            ),
+        )
+    factories = {100: [events["deployment"]]}
+    auctions = {101: [events["enabled"]], 102: [events["kicked"]]}
+    takes = {} if scenario == "swept_expired" else {104: [events["take_old"]]}
+    if scenario.startswith("swept"):
+        auctions[105] = [
+            make_prepared(
+                event_name="AuctionSwept",
+                tx_nonce=77,
+                block_number=105,
+                payload={"token": DEFAULT_FROM_TOKEN},
+            )
+        ]
+    elif scenario == "settled":
+        auctions[105] = [
+            make_prepared(
+                event_name="AuctionSettled",
+                tx_nonce=77,
+                block_number=105,
+                payload={"from": DEFAULT_FROM_TOKEN},
+            )
+        ]
+    headers = {**_base_headers(), 106: _header(106, "old-106", "old-105")}
+    runtime, chain = _build_runtime(
+        tmp_path,
+        latest_heads=[104, 104, 105, 106, 106],
+        headers=headers,
+        factory_events_by_block=factories,
+        auction_events_by_block=auctions,
+        take_events_by_block=takes,
+        monkeypatch=monkeypatch,
+    )
+    # Match the real collector: token observations must exist before comparing
+    # preserved projections to metadata reconstructed by offline replay.
+    for mapping in (factories, auctions, takes):
+        for number, batch in mapping.items():
+            mapping[number] = [
+                replace(event, token_metadata=runtime.hydrator.read_event_token_metadata(chain, event))
+                for event in batch
+            ]
+    for _ in range(4):
+        runtime.sync_chain_once()
+    pricing = PricingCaptureRuntime(client=_FakePricingClient(), max_capture_lag_seconds=10**9)
+    capture_due_pricing(pricing, runtime.writer, chain_id=1)
+    pricing.discard()
+    from backend.indexer.takes import TRANSFER_TOPIC
+
+    rejected = replace(
+        make_prepared(event_name="Take", tx_nonce=999, block_number=106).raw_log, topic0=TRANSFER_TOPIC
+    )
+    runtime.writer.transaction(
+        lambda conn: (
+            persist_raw_logs(conn, [rejected]),
+            conn.execute(
+                """INSERT INTO rpc_observations
+            (chain_id, block_number, block_hash, kind, subject, status, result_json)
+            VALUES (1, 106, ?, 'transaction', ?, 'ok', '{}')""",
+                (rejected.block_hash, rejected.tx_hash),
+            ),
+        )
+    )
+    return runtime, chain
+
+
+def _recover_at_105(runtime, *, record_reorg=True):
+    runtime.writer.transaction(
+        lambda conn: runtime._recover_live_tail_reorg(
+            conn,
+            ancestor_block=105,
+            latest_rpc_head=106,
+            confirmed_head=104,
+            last_confirmed_processed=104,
+            record_reorg=record_reorg,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario,status,end,settled",
+    [
+        ("live", "live", 86502, None),
+        ("expiry", "live", 105, None),
+        ("sold_out", "sold_out", 104, None),
+        ("settled", "settled", 86502, 105),
+        ("swept_expired", "settled", 103, 105),
+        ("swept_sold_out", "sold_out", 104, 105),
+    ],
+)
+def test_event_free_recovery_matches_full_repair_without_replay(
+    tmp_path, monkeypatch, scenario, status, end, settled, caplog
+):
+    import copy
+    import sqlite3
+    from unittest.mock import patch
+
+    runtime, chain = _event_free_recovery_runtime(tmp_path, monkeypatch, scenario)
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM domain_events WHERE block_number > 105")[0] == 0
+    if scenario == "expiry":
+        assert runtime.writer.fetchone("SELECT status FROM rounds")[0] == "expired"
+    price_tables = (
+        "pricing_quote_facts",
+        "pricing_quote_provider_facts",
+        "pricing_price_facts",
+        "pricing_price_provider_facts",
+    )
+    facts = {
+        table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")]
+        for table in price_tables
+    }
+    assert facts["pricing_quote_facts"]
+    copy_path = tmp_path / "reference.sqlite3"
+    with sqlite3.connect(copy_path) as destination:
+        runtime.writer.connection.backup(destination)
+    reference = copy.copy(runtime)
+    reference.writer = Writer(str(copy_path))
+    reference.chain = copy.copy(chain)
+    # Maintenance deliberately forces full repair on the independent copy.
+    with patch.object(
+        runtime_module.replay, "load_native_events", wraps=runtime_module.replay.load_native_events
+    ) as native:
+        _recover_at_105(reference, record_reorg=False)
+        assert native.call_count == 1
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("Event-free recovery attempted historical replay")
+
+    with monkeypatch.context() as guard, caplog.at_level("INFO"):
+        guard.setattr(runtime_module, "clear_rebuildable_chain_state", unexpected)
+        guard.setattr(runtime_module.replay, "load_native_events", unexpected)
+        guard.setattr(runtime_module.replay, "load_take_events", unexpected)
+        guard.setattr(runtime_module, "rebuild_pricing_projections", unexpected)
+        _recover_at_105(runtime)
+    assert _projection_values(runtime.writer) == _projection_values(reference.writer)
+    assert tuple(runtime.writer.fetchone("SELECT status, end_at, settled_at FROM rounds")) == (
+        status,
+        1700000000 + end,
+        None if settled is None else 1700000000 + settled,
+    )
+    for table in (
+        "chain_logs",
+        "domain_events",
+        "indexed_blocks",
+        "rpc_observations",
+        "round_param_snapshot",
+        "auction_snapshot_facts",
+    ):
+        assert [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] == [
+            tuple(row) for row in reference.writer.fetchall(f"SELECT * FROM {table}")
+        ]
+    for table in price_tables:
+        for writer in (runtime.writer, reference.writer):
+            assert [tuple(row) for row in writer.fetchall(f"SELECT * FROM {table}")] == facts[table]
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM chain_logs WHERE block_number > 105")[0] == 0
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM rpc_observations WHERE block_number > 105")[0] == 0
+    state = runtime._load_sync_state_row()
+    assert (
+        state["last_confirmed_processed"],
+        state["last_live_processed"],
+        state["reorg_count"],
+        state["health"],
+    ) == (104, 105, 1, "ok")
+    assert state["last_confirmed_hash"] == chain.headers[104].block_hash
+    assert reference._load_sync_state_row()["reorg_count"] == 0
+    assert "replay_skipped=True" in caplog.text and "pricing_rebuild_seconds=0.000000" in caplog.text
+    if scenario == "expiry":
+        chain.headers[106] = _header(106, "replacement-106", "old-105")
+        runtime.sync_chain_once()
+        assert runtime.writer.fetchone("SELECT status FROM rounds")[0] == "expired"
+        assert runtime._load_sync_state_row()["last_live_processed"] == 106
+
+
+@pytest.mark.parametrize("failure", ["before_commit", "missing_header"])
+def test_event_free_recovery_rolls_back_every_mutation(tmp_path, monkeypatch, failure):
+    from backend.indexer.observations import MissingObservation
+
+    runtime, _ = _event_free_recovery_runtime(tmp_path, monkeypatch, "expiry")
+    if failure == "missing_header":
+        runtime.writer.transaction(
+            lambda conn: conn.execute("DELETE FROM indexed_blocks WHERE block_number = 105")
+        )
+    else:
+        original = runtime._update_state
+
+        def fail(conn, **kwargs):
+            original(conn, **kwargs)
+            raise RuntimeError("failed before commit")
+
+        monkeypatch.setattr(runtime, "_update_state", fail)
+    before = list(runtime.writer.connection.iterdump())
+    with pytest.raises(
+        (MissingObservation, RuntimeError), match="Missing ancestor timestamp|failed before commit"
+    ):
+        _recover_at_105(runtime)
+    assert list(runtime.writer.connection.iterdump()) == before
+
+
+@pytest.mark.parametrize("event_name", ["Take", "UpdatedStartingPrice"])
+def test_any_removed_domain_event_requires_full_recovery(tmp_path, monkeypatch, event_name):
+    from unittest.mock import patch
+    from backend.indexer.projections import apply_batch
+
+    runtime, _ = _event_free_recovery_runtime(tmp_path, monkeypatch)
+    expected = _projection_values(runtime.writer)
+    if event_name == "Take":
+        take = _base_events()["take_new"]
+        removed = replace(
+            take,
+            raw_log=replace(take.raw_log, block_number=106, block_hash=_hash("old-106")),
+            domain_event=replace(
+                take.domain_event, block_number=106, block_hash=_hash("old-106"), timestamp=1700000106
+            ),
+        )
+    else:
+        removed = make_prepared(
+            event_name=event_name, tx_nonce=98, block_number=106, payload={"startingPrice": 999}
+        )
+    runtime.writer.transaction(lambda conn: apply_batch(conn, [removed]))
+    assert [
+        row[0]
+        for row in runtime.writer.fetchall("SELECT event_name FROM domain_events WHERE block_number > 105")
+    ] == [event_name]
+    with patch.object(
+        runtime_module.replay, "load_native_events", wraps=runtime_module.replay.load_native_events
+    ) as native:
+        _recover_at_105(runtime)
+        assert native.call_count == 1
+    assert _projection_values(runtime.writer) == expected
+
+
+@pytest.mark.parametrize("history_size", [20, 1000])
+def test_recovery_paths_agree_as_take_history_grows(tmp_path, monkeypatch, history_size):
+    """Also provides a repeatable local timing sample with pytest -s; no latency gate."""
+    import copy
+    import sqlite3
+    import time
+    from backend.indexer.facts import upsert_indexed_blocks
+    from backend.indexer.projections import apply_batch
+    from backend.indexer.pricing_projections import rebuild_pricing_projections
+
+    runtime, chain = _event_free_recovery_runtime(tmp_path, monkeypatch, available=history_size + 500)
+    template = _base_events()["take_old"]
+    takes = []
+    headers = []
+    for i in range(history_size):
+        number = 107 + i
+        header = _header(number, f"old-{number}", f"old-{number - 1}")
+        headers.append(header)
+        event = make_prepared(
+            event_name="Take",
+            tx_nonce=10000 + i,
+            block_number=number,
+            log_index=4,
+            payload={
+                **template.domain_event.payload,
+                "amountTaken": 1,
+                "amountPaid": 1,
+                "expectedAmountPaid": 1,
+            },
+        )
+        takes.append(replace(event, token_metadata=runtime.hydrator.read_event_token_metadata(chain, event)))
+    tip = 107 + history_size
+    headers.append(_header(tip, f"old-{tip}", f"old-{tip - 1}"))
+    runtime.writer.transaction(
+        lambda conn: (
+            upsert_indexed_blocks(conn, headers),
+            apply_batch(conn, takes),
+            rebuild_pricing_projections(conn, chain_id=1),
+            conn.execute("UPDATE sync_state SET last_live_processed = ?", (tip,)),
+        )
+    )
+
+    def clone(name):
+        destination_path = tmp_path / f"{name}.sqlite3"
+        with sqlite3.connect(destination_path) as destination:
+            runtime.writer.connection.backup(destination)
+        result = copy.copy(runtime)
+        result.writer = Writer(str(destination_path))
+        result.chain = copy.copy(chain)
+        return result
+
+    empty_reference, removed, removed_reference = (
+        clone(name) for name in ("empty-full", "removed", "removed-full")
+    )
+    for label, target, ancestor, recorded in (
+        ("empty-fast", runtime, tip - 1, True),
+        ("empty-full", empty_reference, tip - 1, False),
+        ("take-full", removed, tip - 2, True),
+        ("take-reference", removed_reference, tip - 2, False),
+    ):
+        started = time.perf_counter()
+        target.writer.transaction(
+            lambda conn: target._recover_live_tail_reorg(
+                conn,
+                ancestor_block=ancestor,
+                latest_rpc_head=tip,
+                confirmed_head=104,
+                last_confirmed_processed=104,
+                record_reorg=recorded,
+            )
+        )
+        print(
+            f"recovery sample added_takes={history_size} path={label} seconds={time.perf_counter() - started:.6f}"
+        )
+    assert _projection_values(runtime.writer) == _projection_values(empty_reference.writer)
+    assert _projection_values(removed.writer) == _projection_values(removed_reference.writer)
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM takes")[0] == history_size + 1
+    assert removed.writer.fetchone("SELECT COUNT(*) FROM takes")[0] == history_size

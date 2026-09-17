@@ -130,3 +130,60 @@ def test_backfill_transport_failure_does_not_mark_partial_block_complete(tmp_pat
     with pytest.raises(TimeoutError):
         runtime.backfill_observations()
     assert runtime.backfill_observations(check_only=True)["complete"] == 1
+
+
+def test_full_reproject_repairs_legacy_sweep_on_a_backup_offline(tmp_path, monkeypatch):
+    import sqlite3
+    from dataclasses import replace
+    from backend.indexer.facts import upsert_indexed_blocks
+    from backend.indexer.projections import apply_batch
+    from backend.indexer.writer import Writer
+    from .helpers import DEFAULT_FROM_TOKEN, make_prepared
+
+    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
+    original = runtime.hydrator.read_auction_snapshot
+    runtime.hydrator.read_auction_snapshot = lambda *args, **kwargs: replace(
+        original(*args, **kwargs), auction_length_raw="1"
+    )
+    runtime.backfill_observations()
+    sweep = make_prepared(
+        event_name="AuctionSwept", tx_nonce=77, block_number=105, payload={"token": DEFAULT_FROM_TOKEN}
+    )
+    runtime.writer.transaction(
+        lambda conn: (
+            upsert_indexed_blocks(conn, [chain.headers[105]]),
+            apply_batch(conn, [sweep]),
+            # Reproduce the projection left by the old incremental sweep guard.
+            conn.execute("UPDATE rounds SET status = 'expired', settled_at = NULL"),
+            conn.execute("UPDATE sync_state SET last_live_processed = 105"),
+        )
+    )
+    original_writer = runtime.writer
+    backup = tmp_path / "repair.sqlite3"
+    with sqlite3.connect(backup) as destination:
+        original_writer.connection.backup(destination)
+    runtime.writer = Writer(str(backup))
+    tables = (
+        "chain_logs",
+        "domain_events",
+        "rpc_observations",
+        "indexed_blocks",
+        "auction_snapshot_facts",
+        "round_param_snapshot",
+    )
+    before = {
+        table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables
+    }
+    provider.failure = AssertionError("Repair attempted live RPC")
+    chain.block_header = lambda _number: pytest.fail("Repair requested a live header")
+    assert runtime.backfill_observations(check_only=True)["missing"] == 0
+    runtime.reproject_chain()
+    assert tuple(runtime.writer.fetchone("SELECT status, settled_at, end_at FROM rounds")) == (
+        "settled",
+        1700000105,
+        1700000103,
+    )
+    assert {
+        table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables
+    } == before
+    assert tuple(original_writer.fetchone("SELECT status, settled_at FROM rounds")) == ("expired", None)

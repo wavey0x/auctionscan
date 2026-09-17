@@ -1371,3 +1371,25 @@ def test_maintenance_take_replacement_is_atomic_and_preserves_native_facts(tmp_p
     assert runtime.writer.fetchone("SELECT COUNT(*) FROM domain_events WHERE event_name = 'Take'")[0] == 1
     for table in ("chain_logs", "auction_snapshot_facts", "round_param_snapshot"):
         assert [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] == before[table]
+
+
+def test_expiry_reconciliation_is_reversible_and_does_not_repeat_writes(tmp_path):
+    writer = Writer(str(tmp_path / "expiry.sqlite3"))
+    _seed_native_state(writer)
+    end = writer.fetchone("SELECT end_at FROM rounds")[0]
+    for timestamp, status in (
+        (end - 1, "live"),
+        (end, "live"),
+        (end + 1, "expired"),
+        (end, "live"),
+        (end - 1, "live"),
+        (end + 1, "expired"),
+    ):
+        writer.transaction(lambda conn: reconcile_round_statuses(conn, 1, timestamp))
+        assert writer.fetchone("SELECT status FROM rounds")[0] == status
+        before = writer.connection.total_changes
+        writer.transaction(lambda conn: reconcile_round_statuses(conn, 1, timestamp))
+        assert writer.connection.total_changes == before
+    writer.transaction(lambda conn: conn.execute("UPDATE rounds SET end_at = NULL"))
+    writer.transaction(lambda conn: reconcile_round_statuses(conn, 1, end - 1))
+    assert writer.fetchone("SELECT status FROM rounds")[0] == "expired"

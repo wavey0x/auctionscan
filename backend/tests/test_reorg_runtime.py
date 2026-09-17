@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from backend.indexer import collection as collection_module
+from .helpers import make_hydrator
+
 from backend.indexer.discovery import DiscoveryResult
 
 import hashlib
@@ -97,6 +100,7 @@ def _build_runtime(
     factory_events_by_block: dict[int, list] | None = None,
     auction_events_by_block: dict[int, list] | None = None,
     take_events_by_block: dict[int, list] | None = None,
+    monkeypatch,
 ) -> tuple[IndexerRuntime, _MutableChain]:
     config = ChainConfig(
         name="ethereum",
@@ -118,22 +122,31 @@ def _build_runtime(
     runtime.discovery_chain = chain
     runtime.pricing = None
     runtime.abi_registry = object()
-    runtime.hydrator = SimpleNamespace(read_token_metadata=lambda chain, token, block_number: TokenMetadata(
-        chain_id=chain.config.chain_id, token_address=token,
-        symbol=None, name=None, decimals=6 if token == DEFAULT_WANT_TOKEN else 18,
-    ))
+    runtime.hydrator = make_hydrator(
+        read_token_metadata=lambda chain, token, block_number: TokenMetadata(
+            chain_id=chain.config.chain_id,
+            token_address=token,
+            symbol=None,
+            name=None,
+            decimals=6 if token == DEFAULT_WANT_TOKEN else 18,
+        )
+    )
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed()], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: _window_events(
-        factory_events_by_block or {},
-        from_block,
-        to_block, _chain,
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: _window_events(
+            factory_events_by_block or {}, from_block, to_block, _chain
+        ),
     )
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: _window_events(
-        auction_events_by_block or {},
-        from_block,
-        to_block, _chain,
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: _window_events(
+            auction_events_by_block or {}, from_block, to_block, _chain
+        ),
     )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): (
@@ -235,7 +248,7 @@ def _base_headers() -> dict[int, IndexedBlockRecord]:
     }
 
 
-def test_near_tip_continues_without_reorg_and_stores_gapless_live_tail(tmp_path):
+def test_near_tip_continues_without_reorg_and_stores_gapless_live_tail(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, _chain = _build_runtime(
@@ -245,6 +258,7 @@ def test_near_tip_continues_without_reorg_and_stores_gapless_live_tail(tmp_path)
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={103: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     assert runtime.sync_chain_once() == 2
@@ -279,7 +293,7 @@ def test_near_tip_continues_without_reorg_and_stores_gapless_live_tail(tmp_path)
     ]
 
 
-def test_short_reorg_rolls_back_live_tip_and_replays_new_branch(tmp_path):
+def test_short_reorg_rolls_back_live_tip_and_replays_new_branch(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, chain = _build_runtime(
@@ -289,6 +303,7 @@ def test_short_reorg_rolls_back_live_tip_and_replays_new_branch(tmp_path):
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -339,7 +354,7 @@ def test_short_reorg_rolls_back_live_tip_and_replays_new_branch(tmp_path):
     ]
 
 
-def test_full_live_tail_reorg_recovers_at_confirmed_boundary(tmp_path):
+def test_full_live_tail_reorg_recovers_at_confirmed_boundary(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, chain = _build_runtime(
@@ -348,6 +363,7 @@ def test_full_live_tail_reorg_recovers_at_confirmed_boundary(tmp_path):
         headers=headers,
         factory_events_by_block={100: [events["deployment"]], 103: [events["orphan_deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -355,7 +371,11 @@ def test_full_live_tail_reorg_recovers_at_confirmed_boundary(tmp_path):
 
     chain.headers[103] = _header(103, "new-103", "old-102")
     chain.headers[104] = _header(104, "new-104", "new-103")
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: []
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [],
+    )
 
     runtime.sync_chain_once()
 
@@ -376,7 +396,7 @@ def test_full_live_tail_reorg_recovers_at_confirmed_boundary(tmp_path):
     ]
 
 
-def test_orphan_live_tail_deployment_is_removed_after_rebuild(tmp_path):
+def test_orphan_live_tail_deployment_is_removed_after_rebuild(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, chain = _build_runtime(
@@ -385,6 +405,7 @@ def test_orphan_live_tail_deployment_is_removed_after_rebuild(tmp_path):
         headers=headers,
         factory_events_by_block={100: [events["deployment"]], 103: [events["orphan_deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -396,7 +417,11 @@ def test_orphan_live_tail_deployment_is_removed_after_rebuild(tmp_path):
 
     chain.headers[103] = _header(103, "new-103", "old-102")
     chain.headers[104] = _header(104, "new-104", "new-103")
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: []
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [],
+    )
 
     runtime.sync_chain_once()
 
@@ -410,7 +435,7 @@ def test_orphan_live_tail_deployment_is_removed_after_rebuild(tmp_path):
     ) is None
 
 
-def test_divergence_below_confirmed_boundary_raises_fatal_error(tmp_path):
+def test_divergence_below_confirmed_boundary_raises_fatal_error(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, chain = _build_runtime(
@@ -420,6 +445,7 @@ def test_divergence_below_confirmed_boundary_raises_fatal_error(tmp_path):
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={103: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -433,7 +459,7 @@ def test_divergence_below_confirmed_boundary_raises_fatal_error(tmp_path):
         runtime.sync_chain_once()
 
 
-def test_live_pricing_is_enqueued_immediately_and_promotion_does_not_duplicate_rows(tmp_path):
+def test_live_pricing_is_enqueued_immediately_and_promotion_does_not_duplicate_rows(tmp_path, *, monkeypatch):
     events = _base_events()
     take_on_103 = make_prepared(
         event_name="Take",
@@ -461,6 +487,7 @@ def test_live_pricing_is_enqueued_immediately_and_promotion_does_not_duplicate_r
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={103: [take_on_103]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -487,7 +514,7 @@ def test_live_pricing_is_enqueued_immediately_and_promotion_does_not_duplicate_r
     ]
 
 
-def test_promotion_does_not_duplicate_live_pricing_rows(tmp_path):
+def test_promotion_does_not_duplicate_live_pricing_rows(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, _chain = _build_runtime(
@@ -497,6 +524,7 @@ def test_promotion_does_not_duplicate_live_pricing_rows(tmp_path):
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={103: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -525,7 +553,7 @@ def test_promotion_does_not_duplicate_live_pricing_rows(tmp_path):
     ]
 
 
-def test_reorg_recovery_deletes_orphaned_take_queue_rows(tmp_path):
+def test_reorg_recovery_deletes_orphaned_take_queue_rows(tmp_path, *, monkeypatch):
     events = _base_events()
     headers = _base_headers()
     runtime, chain = _build_runtime(
@@ -535,6 +563,7 @@ def test_reorg_recovery_deletes_orphaned_take_queue_rows(tmp_path):
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -608,6 +637,7 @@ def test_reorg_recovery_retry_after_transaction_failure_replays_cleanly(tmp_path
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     runtime.sync_chain_once()
@@ -674,15 +704,18 @@ def test_reorg_recovery_retry_after_transaction_failure_replays_cleanly(tmp_path
     ]
 
 
-def test_real_chain_adapter_observes_changed_header(tmp_path):
+def test_real_chain_adapter_observes_changed_header(tmp_path, *, monkeypatch):
     from backend.indexer.chains import ChainState
 
     events = _base_events()
     runtime, mutable = _build_runtime(
-        tmp_path, latest_heads=[104, 104, 104], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[104, 104, 104],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
 
     class Eth:
@@ -707,13 +740,16 @@ def test_real_chain_adapter_observes_changed_header(tmp_path):
     assert runtime.writer.fetchone("SELECT reorg_count FROM sync_state")[0] == 1
 
 
-def test_shorter_replacement_chain_removes_missing_tip(tmp_path):
+def test_shorter_replacement_chain_removes_missing_tip(tmp_path, *, monkeypatch):
     events = _base_events()
     runtime, chain = _build_runtime(
-        tmp_path, latest_heads=[104, 104, 103], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[104, 104, 103],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
     runtime.sync_chain_once()
     runtime.sync_chain_once()
@@ -727,10 +763,13 @@ def test_shorter_replacement_chain_removes_missing_tip(tmp_path):
 def test_replay_failure_preserves_all_projections_and_sync_metadata(tmp_path, monkeypatch, takes_only):
     events = _base_events()
     runtime, _chain = _build_runtime(
-        tmp_path, latest_heads=[104, 104], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[104, 104],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
     runtime.sync_chain_once()
     runtime.sync_chain_once()

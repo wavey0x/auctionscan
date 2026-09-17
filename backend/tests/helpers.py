@@ -127,3 +127,12 @@ def make_prepared(
         ),
         snapshot=snapshot,
     )
+
+
+def make_hydrator(**readers):
+    from backend.indexer.hydration import Hydrator
+
+    hydrator = Hydrator(None)
+    for name, reader in readers.items():
+        setattr(hydrator, name, reader)
+    return hydrator

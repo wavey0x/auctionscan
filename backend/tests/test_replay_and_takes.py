@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from backend.indexer import replay as replay_module
+from .helpers import make_hydrator
+
 import logging
 import time
 from types import SimpleNamespace
@@ -1052,7 +1055,7 @@ def test_reconcile_round_statuses_repairs_sold_out_settled_round_end_at(tmp_path
     }
 
 
-def test_reproject_chain_rebuilds_native_projections(tmp_path):
+def test_reproject_chain_rebuilds_native_projections(tmp_path, *, monkeypatch):
     runtime = IndexerRuntime.__new__(IndexerRuntime)
     runtime.writer = Writer(str(tmp_path / "auctionscan.sqlite3"))
     config = ChainConfig(
@@ -1074,8 +1077,9 @@ def test_reproject_chain_rebuilds_native_projections(tmp_path):
     runtime.network_name = "ethereum"
     runtime.chain_config = config
     runtime.chain = chain
+    runtime.hydrator = object()
     runtime.take_detector = SimpleNamespace(replay_chain=lambda _chain, _conn: [])
-    runtime._load_replay_native_events = lambda: _base_native_batch()
+    monkeypatch.setattr(replay_module, "load_native_events", lambda *_args: _base_native_batch())
 
     runtime.writer.transaction(
         lambda conn: conn.execute(
@@ -1156,6 +1160,7 @@ def test_replay_native_events_uses_persisted_snapshots_before_rpc(tmp_path):
     runtime.network_name = "ethereum"
     runtime.chain_config = config
     runtime.chain = chain
+    runtime.hydrator = object()
     runtime.take_detector = SimpleNamespace(replay_chain=lambda _chain, _conn: [])
 
     def _unexpected_snapshot(*_args, **_kwargs):
@@ -1170,7 +1175,7 @@ def test_replay_native_events_uses_persisted_snapshots_before_rpc(tmp_path):
             decimals=18 if token_address == DEFAULT_FROM_TOKEN else 6,
         )
 
-    runtime.hydrator = SimpleNamespace(
+    runtime.hydrator = make_hydrator(
         read_auction_snapshot=_unexpected_snapshot,
         read_token_metadata=_token_metadata,
     )
@@ -1183,7 +1188,7 @@ def test_replay_native_events_uses_persisted_snapshots_before_rpc(tmp_path):
                                                            "0x" + "00" * 32, event.raw_log.timestamp)
                                         for event in _base_native_batch()])
 
-    replayed = runtime._load_replay_native_events()
+    replayed = replay_module.load_native_events(runtime.writer.connection, runtime.chain, runtime.hydrator)
 
     assert len(replayed) == 3
     deployment = next(item for item in replayed if item.domain_event.event_name == "DeployedNewAuction")
@@ -1334,10 +1339,13 @@ def test_maintenance_take_replacement_is_atomic_and_preserves_native_facts(tmp_p
 
     events = _base_events()
     runtime, _ = _build_runtime(
-        tmp_path, latest_heads=[105, 105], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[105, 105],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
     runtime.sync_chain_once()
     runtime.sync_chain_once()

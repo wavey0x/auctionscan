@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.indexer import collection as collection_module
+
 from backend.indexer.discovery import DiscoveryResult
 
 import logging
@@ -8,6 +10,7 @@ from types import SimpleNamespace
 import backend.indexer.runtime as runtime_module
 import pytest
 from backend.indexer.address_aliases import AddressAliasUpdate
+from backend.indexer.hydration import Hydrator
 from backend.indexer.runtime import IndexerRuntime
 from backend.indexer.types import (
     ChainConfig,
@@ -70,7 +73,7 @@ def _factory_seed(start_block: int, source: str = "config") -> FactorySeed:
     )
 
 
-def _build_runtime(tmp_path, *, latest_heads: list[int]) -> tuple[IndexerRuntime, _FakeChain]:
+def _build_runtime(tmp_path, *, latest_heads: list[int], monkeypatch) -> tuple[IndexerRuntime, _FakeChain]:
     config = ChainConfig(
         name="ethereum",
         chain_id=1,
@@ -143,7 +146,7 @@ class _AuctionScanRegistry:
         )
 
 
-class _AuctionScanHydrator:
+class _AuctionScanHydrator(Hydrator):
     def __init__(self) -> None:
         self.snapshot_calls: list[tuple[str, str, int]] = []
         self.metadata_calls: list[tuple[str, int]] = []
@@ -234,10 +237,12 @@ def test_auction_scan_combines_topics_filters_false_positives_and_preserves_orde
             ),
         ]
 
-    monkeypatch.setattr(runtime_module, "fetch_logs", fake_fetch_logs)
+    monkeypatch.setattr(collection_module, "fetch_logs", fake_fetch_logs)
 
-    prepared = runtime._scan_auction_events(
+    prepared = collection_module.scan_auction_events(
         chain,
+        runtime.abi_registry,
+        runtime.hydrator,
         [
             {"auction_address": first_auction.upper(), "version": "v1"},
             {"auction_address": second_auction, "version": "v2"},
@@ -286,15 +291,18 @@ def test_auction_scan_uses_three_filters_for_production_shaped_addresses(monkeyp
         fetch_calls.append(kwargs)
         return []
 
-    monkeypatch.setattr(runtime_module, "fetch_logs", fake_fetch_logs)
+    monkeypatch.setattr(collection_module, "fetch_logs", fake_fetch_logs)
 
-    assert runtime._scan_auction_events(chain, tracked, 1, 100) == []
+    assert (
+        collection_module.scan_auction_events(chain, runtime.abi_registry, runtime.hydrator, tracked, 1, 100)
+        == []
+    )
     assert [len(call["address"]) for call in fetch_calls] == [100, 100, 61]
     assert {tuple(call["topics"][0]) for call in fetch_calls} == {("0x01", "0x02")}
 
 
-def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path):
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[101, 101])
+def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path, *, monkeypatch):
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[101, 101], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -315,16 +323,16 @@ def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path):
     )
     scan_ranges = []
 
-    def scan_factory_events(_chain, _tracked_factories, from_block, to_block):
+    def scan_factory_events(_chain, _registry, _hydrator, _tracked_factories, from_block, to_block):
         scan_ranges.append(("factory", from_block, to_block))
         return [deployment]
 
-    def scan_auction_events(_chain, tracked_auctions, from_block, to_block):
+    def scan_auction_events(_chain, _registry, _hydrator, tracked_auctions, from_block, to_block):
         scan_ranges.append(("auction", from_block, to_block, len(tracked_auctions)))
         return [enabled]
 
-    runtime._scan_factory_events = scan_factory_events
-    runtime._scan_auction_events = scan_auction_events
+    monkeypatch.setattr(collection_module, "scan_factory_events", scan_factory_events)
+    monkeypatch.setattr(collection_module, "scan_auction_events", scan_auction_events)
 
     inserted = runtime.sync_chain_once()
     idle_inserted = runtime.sync_chain_once()
@@ -352,8 +360,8 @@ def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path):
     assert event_count["count"] == 2
 
 
-def test_sync_chain_once_rewinds_when_factory_start_moves_earlier(tmp_path):
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[100, 105])
+def test_sync_chain_once_rewinds_when_factory_start_moves_earlier(tmp_path, *, monkeypatch):
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[100, 105], monkeypatch=monkeypatch)
     runtime._factory_refresh_interval_seconds = 0
     factory_sequences = iter([[_factory_seed(100)], [_factory_seed(80, source="binary_search")]])
     runtime.discoverer = SimpleNamespace(
@@ -361,12 +369,16 @@ def test_sync_chain_once_rewinds_when_factory_start_moves_earlier(tmp_path):
     )
     scan_ranges = []
 
-    def scan_factory_events(_chain, _tracked_factories, from_block, to_block):
+    def scan_factory_events(_chain, _registry, _hydrator, _tracked_factories, from_block, to_block):
         scan_ranges.append((from_block, to_block))
         return []
 
-    runtime._scan_factory_events = scan_factory_events
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: []
+    monkeypatch.setattr(collection_module, "scan_factory_events", scan_factory_events)
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [],
+    )
 
     first = runtime.sync_chain_once()
     second = runtime.sync_chain_once()
@@ -400,7 +412,8 @@ def test_sync_chain_once_rewinds_when_factory_start_moves_earlier(tmp_path):
 
 def test_factory_refresh_uses_attempt_cadence_and_preserves_success_on_failure(tmp_path, monkeypatch):
     import json
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[100])
+
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[100], monkeypatch=monkeypatch)
     clock = [1000]
     monkeypatch.setattr(runtime_module.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(runtime_module.time, "time", lambda: clock[0])
@@ -425,8 +438,8 @@ def test_factory_refresh_uses_attempt_cadence_and_preserves_success_on_failure(t
     assert saved["problems"] == [problem]
 
 
-def test_sync_chain_once_logs_inserted_entities(caplog, tmp_path):
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[103])
+def test_sync_chain_once_logs_inserted_entities(caplog, tmp_path, *, monkeypatch):
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[103], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -470,13 +483,16 @@ def test_sync_chain_once_logs_inserted_entities(caplog, tmp_path):
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed(100)], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: [
-        deployment
-    ]
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: [
-        enabled,
-        kicked,
-    ]
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [deployment],
+    )
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+    )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
         replay_chain=lambda _chain, _conn: [],
@@ -496,8 +512,8 @@ def test_sync_chain_once_logs_inserted_entities(caplog, tmp_path):
     assert f"take detected network=ethereum block=103 auction={DEFAULT_AUCTION} round_id=1" in messages
 
 
-def test_confirmed_batches_enqueue_pricing_before_advancing_confirmed_cursor(tmp_path):
-    runtime, _chain = _build_runtime(tmp_path, latest_heads=[103])
+def test_confirmed_batches_enqueue_pricing_before_advancing_confirmed_cursor(tmp_path, *, monkeypatch):
+    runtime, _chain = _build_runtime(tmp_path, latest_heads=[103], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -541,13 +557,16 @@ def test_confirmed_batches_enqueue_pricing_before_advancing_confirmed_cursor(tmp
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed(100)], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: [
-        deployment
-    ]
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: [
-        enabled,
-        kicked,
-    ]
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [deployment],
+    )
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+    )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
         replay_chain=lambda _chain, _conn: [],
@@ -578,7 +597,7 @@ def test_confirmed_batch_retry_after_transaction_failure_does_not_advance_cursor
     tmp_path,
     monkeypatch,
 ):
-    runtime, _chain = _build_runtime(tmp_path, latest_heads=[103, 103])
+    runtime, _chain = _build_runtime(tmp_path, latest_heads=[103, 103], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -622,13 +641,16 @@ def test_confirmed_batch_retry_after_transaction_failure_does_not_advance_cursor
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed(100)], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: [
-        deployment
-    ]
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: [
-        enabled,
-        kicked,
-    ]
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [deployment],
+    )
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+    )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
         replay_chain=lambda _chain, _conn: [],
@@ -708,7 +730,7 @@ def test_watch_only_syncs_chain_before_sleep(monkeypatch):
 
 
 def test_sync_does_not_wait_for_receiver_alias_lookup(tmp_path, monkeypatch):
-    runtime, _chain = _build_runtime(tmp_path, latest_heads=[101])
+    runtime, _chain = _build_runtime(tmp_path, latest_heads=[101], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -727,10 +749,16 @@ def test_sync_does_not_wait_for_receiver_alias_lookup(tmp_path, monkeypatch):
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed(100)], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: [
-        deployment
-    ]
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: [enabled]
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [deployment],
+    )
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled],
+    )
 
     def unexpected_lookup(*_args, **_kwargs):
         raise AssertionError("Alias I/O must stay out of live indexing")
@@ -752,7 +780,7 @@ def test_sync_does_not_wait_for_receiver_alias_lookup(tmp_path, monkeypatch):
 
 
 def test_sync_chain_once_ignores_receiver_alias_transport_failures(tmp_path, monkeypatch):
-    runtime, _chain = _build_runtime(tmp_path, latest_heads=[101])
+    runtime, _chain = _build_runtime(tmp_path, latest_heads=[101], monkeypatch=monkeypatch)
     deployment = make_prepared(
         event_name="DeployedNewAuction",
         tx_nonce=1,
@@ -771,10 +799,16 @@ def test_sync_chain_once_ignores_receiver_alias_transport_failures(tmp_path, mon
     runtime.discoverer = SimpleNamespace(
         refresh_factories=lambda _chain, confirmed_head, known_factories: DiscoveryResult([_factory_seed(100)], [])
     )
-    runtime._scan_factory_events = lambda _chain, _tracked_factories, from_block, to_block: [
-        deployment
-    ]
-    runtime._scan_auction_events = lambda _chain, _tracked_auctions, from_block, to_block: [enabled]
+    monkeypatch.setattr(
+        collection_module,
+        "scan_factory_events",
+        lambda _chain, _registry, _hydrator, _tracked_factories, from_block, to_block: [deployment],
+    )
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled],
+    )
 
     monkeypatch.setattr(
         "backend.indexer.runtime.resolve_address_alias_updates_multicall",
@@ -796,7 +830,7 @@ def test_sync_chain_once_ignores_receiver_alias_transport_failures(tmp_path, mon
 
 
 def test_backfill_receiver_aliases_updates_missing_rows(tmp_path, monkeypatch):
-    runtime, _chain = _build_runtime(tmp_path, latest_heads=[100])
+    runtime, _chain = _build_runtime(tmp_path, latest_heads=[100], monkeypatch=monkeypatch)
     runtime.writer.transaction(
         lambda conn: conn.execute(
             """

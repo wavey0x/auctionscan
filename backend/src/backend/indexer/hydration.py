@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from .chains import ChainState
 from .decode import AbiRegistry
-from .types import AuctionSnapshot, TokenMetadata, decimal_text, normalize_address
+from .types import AuctionSnapshot, PreparedEvent, TokenMetadata, decimal_text, normalize_address
 from .versioning import uses_legacy_auction_id
 
 
@@ -128,4 +128,16 @@ class Hydrator:
             symbol=read("0x95d89b41", "string", optional=True),
             name=read("0x06fdde03", "string", optional=True),
             decimals=read("0x313ce567", "uint8"),
+        )
+
+    def read_event_token_metadata(self, chain: ChainState, prepared: PreparedEvent):
+        event, snapshot = prepared.domain_event, prepared.snapshot
+        tokens = set()
+        if event.event_name in {"DeployedNewAuction", "AuctionKicked"} and snapshot and snapshot.want_token:
+            tokens.add(snapshot.want_token)
+        if event.event_name in {"AuctionEnabled", "AuctionKicked", "Take"}:
+            tokens.update(event.payload[key] for key in ("from", "to") if event.payload.get(key))
+        return tuple(
+            self.read_token_metadata(chain, token, block_number=event.block_number)
+            for token in sorted(tokens)
         )

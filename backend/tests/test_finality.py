@@ -1,3 +1,4 @@
+from backend.indexer import collection as collection_module
 from dataclasses import replace
 
 import pytest
@@ -5,13 +6,16 @@ import pytest
 from .test_reorg_runtime import _base_events, _base_headers, _build_runtime, _header
 
 
-def _runtime(tmp_path, heads, finality=101, **kwargs):
+def _runtime(tmp_path, heads, finality=101, *, monkeypatch, **kwargs):
     events = _base_events()
     runtime, chain = _build_runtime(
-        tmp_path, latest_heads=heads, headers=_base_headers(),
+        tmp_path,
+        latest_heads=heads,
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         **kwargs,
+        monkeypatch=monkeypatch,
     )
     chain.finality_mode = "finalized"
     chain.finalized_number = finality
@@ -19,8 +23,8 @@ def _runtime(tmp_path, heads, finality=101, **kwargs):
     return runtime, chain
 
 
-def test_finalized_indexed_checkpoint_has_its_own_height_and_hash(tmp_path):
-    runtime, chain = _runtime(tmp_path, [104], finality=103)
+def test_finalized_indexed_checkpoint_has_its_own_height_and_hash(tmp_path, *, monkeypatch):
+    runtime, chain = _runtime(tmp_path, [104], finality=103, monkeypatch=monkeypatch)
     runtime.sync_chain_once(max_blocks=1)
     state = runtime._load_sync_state_row()
     assert state["confirmed_head"] == 103
@@ -29,8 +33,8 @@ def test_finalized_indexed_checkpoint_has_its_own_height_and_hash(tmp_path):
     assert state["last_confirmed_hash"] == chain.headers[100].block_hash
 
 
-def test_stalled_and_regressed_finality_keep_following_live_head(tmp_path):
-    runtime, chain = _runtime(tmp_path, [104, 104, 105, 105])
+def test_stalled_and_regressed_finality_keep_following_live_head(tmp_path, *, monkeypatch):
+    runtime, chain = _runtime(tmp_path, [104, 104, 105, 105], monkeypatch=monkeypatch)
     runtime.sync_chain_once()
     runtime.sync_chain_once()
     runtime.sync_chain_once()
@@ -44,8 +48,8 @@ def test_stalled_and_regressed_finality_keep_following_live_head(tmp_path):
     assert "regressed" in state["finality_warning"]
 
 
-def test_conflicting_finalized_observation_stops_before_indexing(tmp_path):
-    runtime, chain = _runtime(tmp_path, [104, 104], finality=103)
+def test_conflicting_finalized_observation_stops_before_indexing(tmp_path, *, monkeypatch):
+    runtime, chain = _runtime(tmp_path, [104, 104], finality=103, monkeypatch=monkeypatch)
     runtime.sync_chain_once(max_blocks=1)
     chain.headers[103] = _header(103, "conflict-103", "old-102")
     with pytest.raises(RuntimeError, match="Conflicting finalized anchor"):
@@ -53,13 +57,19 @@ def test_conflicting_finalized_observation_stops_before_indexing(tmp_path):
     assert runtime._load_sync_state_row()["last_live_processed"] == 100
 
 
-def test_expiry_advances_with_empty_live_blocks_during_finality_stall(tmp_path):
+def test_expiry_advances_with_empty_live_blocks_during_finality_stall(tmp_path, *, monkeypatch):
     events = _base_events()
     kicked = replace(events["kicked"], snapshot=replace(events["kicked"].snapshot, auction_length_raw="2"))
-    runtime, chain = _runtime(tmp_path, [104, 104, 105])
-    runtime._scan_auction_events = lambda _chain, _auctions, from_block, to_block: [
-        item for item in [events["enabled"], kicked] if from_block <= item.domain_event.block_number <= to_block
-    ]
+    runtime, chain = _runtime(tmp_path, [104, 104, 105], monkeypatch=monkeypatch)
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda _chain, _registry, _hydrator, _auctions, from_block, to_block: [
+            item
+            for item in [events["enabled"], kicked]
+            if from_block <= item.domain_event.block_number <= to_block
+        ],
+    )
     runtime.sync_chain_once()
     runtime.sync_chain_once()
     assert runtime.writer.fetchone("SELECT status FROM rounds")[0] == "live"
@@ -69,8 +79,8 @@ def test_expiry_advances_with_empty_live_blocks_during_finality_stall(tmp_path):
     assert runtime._load_sync_state_row()["last_live_processed"] == 105
 
 
-def test_live_indexing_requires_explicit_backfill_for_unverified_database(tmp_path):
-    runtime, chain = _runtime(tmp_path, [104, 104, 104], finality=102)
+def test_live_indexing_requires_explicit_backfill_for_unverified_database(tmp_path, *, monkeypatch):
+    runtime, chain = _runtime(tmp_path, [104, 104, 104], finality=102, monkeypatch=monkeypatch)
     runtime.sync_chain_once()
     runtime.sync_chain_once()
     runtime.writer.transaction(lambda conn: (

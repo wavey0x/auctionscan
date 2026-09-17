@@ -1,3 +1,4 @@
+from backend.indexer import collection as collection_module
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -13,22 +14,29 @@ from .test_discovery_refresh import _FakeAbiRegistry, _FakeRegistryContract, _Fa
 from .test_runtime import _build_runtime, _factory_seed
 
 
-def prepare(runtime, chain, *, configured, registry):
+def prepare(runtime, chain, *, configured, registry, monkeypatch):
     chain.config = replace(chain.config, factories=tuple(configured), registry=RegistryConfig(address='0x0000000000000000000000000000000000000abc', start_block=100))
     chain.w3 = _FakeWeb3()
     runtime.chain_config = chain.config
     runtime.discovery_chain = chain
     runtime.discoverer = FactoryDiscoverer(_FakeAbiRegistry(registry))
-    runtime._scan_factory_events = lambda *args: []
-    runtime._scan_auction_events = lambda *args: []
+    monkeypatch.setattr(collection_module, "scan_factory_events", lambda *args: [])
+    monkeypatch.setattr(collection_module, "scan_auction_events", lambda *args: [])
 
 
 def test_registry_outage_after_restart_keeps_factories_indexing_and_old_findings(tmp_path, monkeypatch):
     clock = [1000]
     monkeypatch.setattr('backend.indexer.runtime.time.time', lambda: clock[0])
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[100])
-    prepare(runtime, chain, configured=[_factory_seed(100)], registry=_FakeRegistryContract(
-        [DISCOVERED_FACTORY], {DISCOVERED_FACTORY: ('9.9.9', 'ignored', False)}))
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[100], monkeypatch=monkeypatch)
+    prepare(
+        runtime,
+        chain,
+        configured=[_factory_seed(100)],
+        registry=_FakeRegistryContract(
+            [DISCOVERED_FACTORY], {DISCOVERED_FACTORY: ("9.9.9", "ignored", False)}
+        ),
+        monkeypatch=monkeypatch,
+    )
     runtime.sync_once()
     assert runtime._load_sync_state_row()['last_live_processed'] == 100
     before = json.loads(runtime._load_sync_state_row()['discovery_status_json'])
@@ -36,8 +44,14 @@ def test_registry_outage_after_restart_keeps_factories_indexing_and_old_findings
     runtime.writer.connection.close()
 
     clock[0] = 1301
-    restarted, new_chain = _build_runtime(tmp_path, latest_heads=[101])
-    prepare(restarted, new_chain, configured=[], registry=_FakeRegistryContract(RuntimeError('offline'), {}))
+    restarted, new_chain = _build_runtime(tmp_path, latest_heads=[101], monkeypatch=monkeypatch)
+    prepare(
+        restarted,
+        new_chain,
+        configured=[],
+        registry=_FakeRegistryContract(RuntimeError("offline"), {}),
+        monkeypatch=monkeypatch,
+    )
     restarted.sync_once()
     row = restarted._load_sync_state_row()
     after = json.loads(row['discovery_status_json'])
@@ -55,8 +69,14 @@ def test_registry_outage_after_restart_keeps_factories_indexing_and_old_findings
 
 
 def test_first_startup_without_discovery_does_not_advance_or_busy_loop(tmp_path, monkeypatch):
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[105, 106])
-    prepare(runtime, chain, configured=[], registry=_FakeRegistryContract(RuntimeError('offline'), {}))
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[105, 106], monkeypatch=monkeypatch)
+    prepare(
+        runtime,
+        chain,
+        configured=[],
+        registry=_FakeRegistryContract(RuntimeError("offline"), {}),
+        monkeypatch=monkeypatch,
+    )
     runtime.sync_once()
     row = runtime._load_sync_state_row()
     assert row['last_live_processed'] == 99
@@ -70,10 +90,18 @@ def test_first_startup_without_discovery_does_not_advance_or_busy_loop(tmp_path,
 
 
 @pytest.mark.parametrize('failure, expected', [('lookup', 'lookup_failed'), ('deployment', 'deployment_unresolved')])
-def test_factory_failures_are_structured_and_preserve_configured_indexing(tmp_path, failure, expected):
-    runtime, chain = _build_runtime(tmp_path, latest_heads=[100])
+def test_factory_failures_are_structured_and_preserve_configured_indexing(
+    tmp_path, failure, expected, *, monkeypatch
+):
+    runtime, chain = _build_runtime(tmp_path, latest_heads=[100], monkeypatch=monkeypatch)
     info = RuntimeError('offline') if failure == 'lookup' else ('1.0.4', 'ignored', False)
-    prepare(runtime, chain, configured=[_factory_seed(100)], registry=_FakeRegistryContract([DISCOVERED_FACTORY], {DISCOVERED_FACTORY: info}))
+    prepare(
+        runtime,
+        chain,
+        configured=[_factory_seed(100)],
+        registry=_FakeRegistryContract([DISCOVERED_FACTORY], {DISCOVERED_FACTORY: info}),
+        monkeypatch=monkeypatch,
+    )
     runtime.discoverer.resolve_contract_deploy_block = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('offline'))
     runtime.sync_once()
     row = runtime._load_sync_state_row()

@@ -1,3 +1,4 @@
+from backend.indexer import collection as collection_module
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -18,12 +19,15 @@ from .test_replay_and_takes import (
 )
 
 
-def test_empty_hash_bound_scan_rechecks_canonical_tip_before_committing(tmp_path):
+def test_empty_hash_bound_scan_rechecks_canonical_tip_before_committing(tmp_path, *, monkeypatch):
     events = _base_events()
     runtime, mutable = _build_runtime(
-        tmp_path, latest_heads=[104, 104], headers=_base_headers(),
-        factory_events_by_block={100: [events['deployment']]},
-        auction_events_by_block={101: [events['enabled']], 102: [events['kicked']]},
+        tmp_path,
+        latest_heads=[104, 104],
+        headers=_base_headers(),
+        factory_events_by_block={100: [events["deployment"]]},
+        auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
+        monkeypatch=monkeypatch,
     )
     runtime.sync_once()
     before = {table: [tuple(row) for row in runtime.writer.fetchall(f'SELECT * FROM {table}')]
@@ -49,8 +53,12 @@ def test_empty_hash_bound_scan_rechecks_canonical_tip_before_committing(tmp_path
             return []
 
     runtime.chain = ChainState(mutable.config, SimpleNamespace(eth=Eth()))
-    runtime._scan_auction_events = lambda chain, _auctions, start, end: fetch_logs(
-        chain.w3, from_block=start, to_block=end, block_hashes=chain.reader.log_hashes,
+    monkeypatch.setattr(
+        collection_module,
+        "scan_auction_events",
+        lambda chain, _registry, _hydrator, _auctions, start, end: fetch_logs(
+            chain.w3, from_block=start, to_block=end, block_hashes=chain.reader.log_hashes
+        ),
     )
     with pytest.raises(BranchChanged, match='Canonical branch changed during collection'):
         runtime.sync_once()

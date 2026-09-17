@@ -1,3 +1,4 @@
+from .helpers import make_hydrator
 from types import SimpleNamespace
 
 import pytest
@@ -11,12 +12,15 @@ from .test_observations import _Provider
 from .test_reorg_runtime import _base_events, _base_headers, _build_runtime
 
 
-def _legacy_runtime(tmp_path):
+def _legacy_runtime(tmp_path, *, monkeypatch):
     events = _base_events()
     runtime, chain = _build_runtime(
-        tmp_path, latest_heads=[104, 104, 104], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[104, 104, 104],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
+        monkeypatch=monkeypatch,
     )
     runtime.sync_chain_once()
     runtime.sync_chain_once()
@@ -41,10 +45,13 @@ def _legacy_runtime(tmp_path):
         read_value(address, number)
         return make_snapshot(auction_address=address, block_number=number)
 
-    runtime.hydrator = SimpleNamespace(
+    runtime.hydrator = make_hydrator(
         read_auction_snapshot=snapshot,
         read_token_metadata=lambda _chain, token, block_number: TokenMetadata(
-            chain_id=1, token_address=token, symbol=None, name=None,
+            chain_id=1,
+            token_address=token,
+            symbol=None,
+            name=None,
             decimals=read_value(token, block_number),
         ),
     )
@@ -52,8 +59,8 @@ def _legacy_runtime(tmp_path):
     return runtime, chain, provider
 
 
-def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path):
-    runtime, chain, provider = _legacy_runtime(tmp_path)
+def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path, *, monkeypatch):
+    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
     coverage = runtime.backfill_observations(check_only=True)
     assert coverage["blocks"] == coverage["missing"] == 4
     assert provider.calls == []
@@ -81,8 +88,10 @@ def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path):
     ("auction_snapshot_facts", "Missing DeployedNewAuction snapshot"),
     ("round_param_snapshot", "Missing AuctionKicked snapshot"),
 ])
-def test_incomplete_inputs_refuse_replay_without_replacing_projections(tmp_path, takes_only, missing_input, message):
-    runtime, chain, provider = _legacy_runtime(tmp_path)
+def test_incomplete_inputs_refuse_replay_without_replacing_projections(
+    tmp_path, takes_only, missing_input, message, *, monkeypatch
+):
+    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
     runtime.backfill_observations()
     if missing_input == "metadata":
         runtime.writer.transaction(lambda conn: conn.execute(
@@ -97,8 +106,8 @@ def test_incomplete_inputs_refuse_replay_without_replacing_projections(tmp_path,
     assert list(runtime.writer.fetchall("SELECT * FROM rounds")) == before
 
 
-def test_legacy_orphan_during_backfill_adopts_only_the_completed_prefix(tmp_path):
-    runtime, chain, provider = _legacy_runtime(tmp_path)
+def test_legacy_orphan_during_backfill_adopts_only_the_completed_prefix(tmp_path, *, monkeypatch):
+    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
     runtime.writer.transaction(lambda conn: (
         conn.execute("UPDATE chain_logs SET block_hash = ? WHERE block_number = 102", ('0x' + 'ee' * 32,)),
         conn.execute("UPDATE domain_events SET block_hash = ? WHERE block_number = 102", ('0x' + 'ee' * 32,)),
@@ -114,8 +123,8 @@ def test_legacy_orphan_during_backfill_adopts_only_the_completed_prefix(tmp_path
     assert runtime.writer.fetchone("SELECT COUNT(*) FROM rpc_observations WHERE block_number > 101")[0] == 0
 
 
-def test_backfill_transport_failure_does_not_mark_partial_block_complete(tmp_path):
-    runtime, chain, provider = _legacy_runtime(tmp_path)
+def test_backfill_transport_failure_does_not_mark_partial_block_complete(tmp_path, *, monkeypatch):
+    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
     runtime.backfill_observations(max_blocks=1)
     provider.failure = TimeoutError("Node offline")
     with pytest.raises(TimeoutError):

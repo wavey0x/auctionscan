@@ -7,13 +7,16 @@ from .test_reorg_runtime import _base_events, _base_headers, _build_runtime, _he
 
 
 @pytest.mark.parametrize("replacement_head", [103, 104])
-def test_rpc_recovery_handles_a_changed_or_missing_tip(tmp_path, replacement_head):
+def test_rpc_recovery_handles_a_changed_or_missing_tip(tmp_path, replacement_head, *, monkeypatch):
     events = _base_events()
     runtime, mutable = _build_runtime(
-        tmp_path, latest_heads=[104, 104, replacement_head], headers=_base_headers(),
+        tmp_path,
+        latest_heads=[104, 104, replacement_head],
+        headers=_base_headers(),
         factory_events_by_block={100: [events["deployment"]]},
         auction_events_by_block={101: [events["enabled"]], 102: [events["kicked"]]},
         take_events_by_block={104: [events["take_old"]]},
+        monkeypatch=monkeypatch,
     )
     requested_blocks = []
 

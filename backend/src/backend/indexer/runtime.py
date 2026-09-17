@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 import logging
 import time
 from typing import Any
@@ -14,27 +13,51 @@ from .address_aliases import (
     load_address_alias_backfill_candidates,
     resolve_address_alias_updates_multicall,
 )
+from . import collection, replay
 from .chains import ChainState
 from .config import load_settings
-from .decode import AbiRegistry, normalize_raw_log
+from .decode import AbiRegistry
 from .discovery import FactoryDiscoverer
 from .hydration import Hydrator
-from .polling import chunked, fetch_logs, sort_logs
 from .observations import BlockReader, BranchChanged, MissingObservation
-from .pricing import PricingCaptureRuntime, delete_orphaned_pricing_queue_rows, enqueue_pricing_work, refresh_event_pricing
+from .pricing import (
+    PricingCaptureRuntime,
+    delete_orphaned_pricing_queue_rows,
+    enqueue_pricing_work,
+    refresh_event_pricing,
+)
 from .pricing_projections import rebuild_pricing_projections
-from .projections import apply_batch, apply_batch_with_results, apply_native_event_projections, apply_take_event_projections, chain_start_block, clear_rebuildable_chain_state, clear_projection_state, clear_take_state, ensure_sync_state, load_tracked_auctions, load_tracked_factories, reconcile_round_statuses, rebuild_token_metadata, update_sync_state, upsert_tracked_factories
-from .facts import delete_derived_take_events, backfill_snapshot_fact, delete_fact_blocks_above, load_indexed_blocks, persist_raw_logs, upsert_indexed_blocks
+from .projections import (
+    apply_batch,
+    apply_batch_with_results,
+    apply_native_event_projections,
+    apply_take_event_projections,
+    chain_start_block,
+    clear_rebuildable_chain_state,
+    clear_projection_state,
+    clear_take_state,
+    ensure_sync_state,
+    load_tracked_auctions,
+    load_tracked_factories,
+    reconcile_round_statuses,
+    rebuild_token_metadata,
+    update_sync_state,
+    upsert_tracked_factories,
+)
+from .facts import (
+    delete_derived_take_events,
+    backfill_snapshot_fact,
+    delete_fact_blocks_above,
+    load_indexed_blocks,
+    persist_raw_logs,
+    upsert_indexed_blocks,
+)
 from .takes import TRANSFER_TOPIC, TakeDetector
 from .types import (
-    AuctionSnapshot,
-    DomainEventRecord,
     FactorySeed,
     IndexedBlockRecord,
     PreparedEvent,
     RawLogRecord,
-    normalize_address,
-    normalize_hex,
     prepared_event_from_domain_row,
 )
 from .writer import ProcessLock, Writer
@@ -259,7 +282,9 @@ class IndexerRuntime:
                     previous = header
 
             tracked_factories = load_tracked_factories(self.writer.connection, chain.config.chain_id)
-            factory_events = self._scan_factory_events(chain, tracked_factories, next_block, to_block)
+            factory_events = collection.scan_factory_events(
+                chain, self.abi_registry, self.hydrator, tracked_factories, next_block, to_block
+            )
             tracked_auctions = load_tracked_auctions(self.writer.connection, chain.config.chain_id)
             for prepared in factory_events:
                 if prepared.domain_event.event_name == "DeployedNewAuction":
@@ -269,7 +294,9 @@ class IndexerRuntime:
                             "version": prepared.domain_event.version,
                         }
                     )
-            auction_events = self._scan_auction_events(chain, tracked_auctions, next_block, to_block)
+            auction_events = collection.scan_auction_events(
+                chain, self.abi_registry, self.hydrator, tracked_auctions, next_block, to_block
+            )
             prepared_events = sorted(
                 factory_events + auction_events,
                 key=lambda item: (
@@ -473,7 +500,7 @@ class IndexerRuntime:
         checkpoint = int(state["last_live_processed"]) if state and state["last_live_processed"] is not None else -1
         checkpoint_timestamp = reader.header(checkpoint).timestamp if checkpoint >= 0 else None
         # Prepare and validate every required input before touching the current projections.
-        native_events = self._load_replay_native_events()
+        native_events = replay.load_native_events(self.writer.connection, chain, self.hydrator)
         take_events = self.take_detector.replay_chain(chain, self.writer.connection)
 
         def replace_projections(conn):
@@ -686,9 +713,9 @@ class IndexerRuntime:
         self.chain.reader = BlockReader(conn, chain_id=self.chain.config.chain_id,
                                         w3=getattr(self.chain, "w3", None), header_reader=None, offline=True)
         clear_rebuildable_chain_state(conn, self.chain.config.chain_id)
-        native_events = self._load_replay_native_events(conn=conn)
+        native_events = replay.load_native_events(conn, self.chain, self.hydrator)
         apply_native_event_projections(conn, native_events)
-        take_events = self._load_replay_take_events(conn=conn)
+        take_events = replay.load_take_events(conn, self.chain, self.hydrator)
         apply_take_event_projections(conn, take_events)
         delete_orphaned_pricing_queue_rows(conn, chain_id=self.chain.config.chain_id)
         if ancestor_block >= 0:
@@ -751,134 +778,6 @@ class IndexerRuntime:
         self.writer.transaction(promote)
         return new_confirmed - old_confirmed
 
-    def _scan_factory_events(
-        self,
-        chain: ChainState,
-        tracked_factories: list[Any],
-        from_block: int,
-        to_block: int,
-    ) -> list[PreparedEvent]:
-        if not tracked_factories:
-            return []
-        by_address = {normalize_address(row["factory_address"]): row for row in tracked_factories}
-        addresses = list(by_address)
-        deploy_topic = self.abi_registry.factory_event_topic(str(tracked_factories[0]["version"]))
-        prepared: list[PreparedEvent] = []
-        for address_chunk in chunked(addresses, 100):
-            logs = sort_logs(
-                fetch_logs(
-                    chain.w3,
-                    block_hashes=getattr(getattr(chain, "reader", None), "log_hashes", None),
-                    from_block=from_block,
-                    to_block=to_block,
-                    address=address_chunk,
-                    topics=[deploy_topic],
-                )
-            )
-            for log in logs:
-                normalized_address = normalize_address(log["address"])
-                row = by_address[normalized_address]
-                if getattr(chain, "reader", None) is not None:
-                    chain.reader.header(int(log["blockNumber"]), expected_hash=normalize_hex(log["blockHash"]))
-                timestamp = chain.block_timestamp(int(log["blockNumber"]))
-                raw_log = normalize_raw_log(chain.config.chain_id, log, timestamp)
-                domain_event = self.abi_registry.decode_factory_log(
-                    chain.w3,
-                    str(row["version"]),
-                    log,
-                    chain_id=chain.config.chain_id,
-                    timestamp=timestamp,
-                )
-                prepared.append(self._hydrate_native_event(chain, PreparedEvent(raw_log=raw_log, domain_event=domain_event)))
-        return prepared
-
-    def _scan_auction_events(
-        self,
-        chain: ChainState,
-        tracked_auctions: list[Any],
-        from_block: int,
-        to_block: int,
-    ) -> list[PreparedEvent]:
-        if not tracked_auctions:
-            return []
-
-        address_to_version: dict[str, str] = {}
-        for row in tracked_auctions:
-            address = normalize_address(row["auction_address"])
-            version = str(row["version"])
-            address_to_version[address] = version
-
-        topics_by_version: dict[str, set[str]] = {}
-        for version in set(address_to_version.values()):
-            definition = self.abi_registry.version_definition(version)
-            topics_by_version[version] = {
-                self.abi_registry.auction_event_topic(version, event_name)
-                for event_name in definition.supported_events
-            }
-        all_topics = sorted({
-            topic
-            for version_topics in topics_by_version.values()
-            for topic in version_topics
-        })
-        if not all_topics:
-            return []
-
-        logs: list[dict[str, Any]] = []
-        for address_chunk in chunked(sorted(address_to_version), 100):
-            logs.extend(
-                fetch_logs(
-                    chain.w3,
-                    block_hashes=getattr(getattr(chain, "reader", None), "log_hashes", None),
-                    from_block=from_block,
-                    to_block=to_block,
-                    address=address_chunk,
-                    topics=[all_topics],
-                )
-            )
-
-        prepared: list[PreparedEvent] = []
-        for log in sort_logs(logs):
-            normalized_address = normalize_address(log["address"])
-            version = address_to_version.get(normalized_address)
-            if version is None or not log.get("topics"):
-                continue
-            topic0 = normalize_hex(log["topics"][0])
-            if topic0 not in topics_by_version[version]:
-                continue
-
-            if getattr(chain, "reader", None) is not None:
-                chain.reader.header(int(log["blockNumber"]), expected_hash=normalize_hex(log["blockHash"]))
-            timestamp = chain.block_timestamp(int(log["blockNumber"]))
-            raw_log = normalize_raw_log(chain.config.chain_id, log, timestamp)
-            domain_event = self.abi_registry.decode_auction_log(
-                chain.w3,
-                version,
-                log,
-                chain_id=chain.config.chain_id,
-                timestamp=timestamp,
-            )
-            prepared.append(self._hydrate_native_event(chain, PreparedEvent(raw_log=raw_log, domain_event=domain_event)))
-        return prepared
-
-    def _event_token_metadata(self, chain: ChainState, prepared: PreparedEvent):
-        event, snapshot = prepared.domain_event, prepared.snapshot
-        tokens = set()
-        if event.event_name in {"DeployedNewAuction", "AuctionKicked"} and snapshot and snapshot.want_token:
-            tokens.add(snapshot.want_token)
-        if event.event_name in {"AuctionEnabled", "AuctionKicked", "Take"}:
-            tokens.update(event.payload[key] for key in ("from", "to") if event.payload.get(key))
-        return tuple(self.hydrator.read_token_metadata(chain, token, block_number=event.block_number)
-                     for token in sorted(tokens))
-
-    def _hydrate_native_event(self, chain: ChainState, base: PreparedEvent) -> PreparedEvent:
-        event = base.domain_event
-        snapshot = None
-        if event.event_name in {"DeployedNewAuction", "AuctionKicked"}:
-            snapshot = self.hydrator.read_auction_snapshot(
-                chain, event.version, event.auction_address, event.block_number, event_payload=event.payload,
-            )
-        prepared = replace(base, snapshot=snapshot)
-        return replace(prepared, token_metadata=self._event_token_metadata(chain, prepared))
 
     def backfill_observations(self, *, check_only: bool = False, max_blocks: int | None = None) -> dict:
         """Resume from missing facts; no separate job or coverage state is needed."""
@@ -908,8 +807,13 @@ class IndexerRuntime:
                 native = []
                 for row in native_rows:
                     reader.header(number, expected_hash=row["block_hash"])
-                    native.append(self._replay_prepared_from_domain_event_row(conn, row) if offline
-                                  else self._hydrate_native_event(chain, prepared_event_from_domain_row(row)))
+                    native.append(
+                        replay.prepared_from_domain_event_row(conn, chain, self.hydrator, row)
+                        if offline
+                        else collection.hydrate_native_event(
+                            chain, self.hydrator, prepared_event_from_domain_row(row)
+                        )
+                    )
                 self.take_detector._token_metadata_cache.clear()
                 self.take_detector._derive_take_events(chain, conn, raw_logs, native_events=native)
                 return reader, native
@@ -968,120 +872,6 @@ class IndexerRuntime:
         return {"blocks": len(blocks), "complete": complete, "missing": len(blocks) - complete,
                 "captured": captured, "first_missing": first_missing if complete < len(blocks) else None}
 
-    def _load_replay_native_events(self, *, conn=None) -> list[PreparedEvent]:
-        connection = conn or self.writer.connection
-        rows = list(
-            connection.execute(
-                """
-                SELECT *
-                  FROM domain_events
-                 WHERE chain_id = ? AND event_name != 'Take'
-                 ORDER BY block_number ASC, tx_index ASC, log_index ASC
-                """,
-                (self.chain.config.chain_id,),
-            ).fetchall()
-        )
-        total = len(rows)
-        logger.info(
-            "reproject native replay start network=%s chain_id=%d events=%d",
-            self.network_name,
-            self.chain.config.chain_id,
-            total,
-        )
-        prepared: list[PreparedEvent] = []
-        for index, row in enumerate(rows, start=1):
-            prepared.append(self._replay_prepared_from_domain_event_row(connection, row))
-            if index == total or index % 250 == 0:
-                logger.info(
-                    "reproject native replay progress network=%s chain_id=%d processed=%d/%d progress=%.1f%%",
-                    self.network_name,
-                    self.chain.config.chain_id,
-                    index,
-                    total,
-                    100.0 if total == 0 else (index * 100.0) / total,
-                )
-        return prepared
-
-    def _load_replay_take_events(self, *, conn) -> list[PreparedEvent]:
-        rows = list(
-            conn.execute(
-                """
-                SELECT *
-                  FROM domain_events
-                 WHERE chain_id = ? AND event_name = 'Take'
-                 ORDER BY block_number ASC, tx_index ASC, log_index ASC
-                """,
-                (self.chain.config.chain_id,),
-            ).fetchall()
-        )
-        return [self._replay_prepared_from_domain_event_row(conn, row) for row in rows]
-
-    def _snapshot_from_fact_row(self, row) -> AuctionSnapshot | None:
-        if row is None:
-            return None
-        extra_params = json.loads(row["extra_params_json"]) if row["extra_params_json"] else {}
-        return AuctionSnapshot(
-            chain_id=int(row["chain_id"]),
-            auction_address=normalize_address(row["auction_address"]),
-            block_number=int(row["block_number"]),
-            want_token=normalize_address(row["want_token"]) if row["want_token"] else None,
-            governance=normalize_address(row["governance"]) if "governance" in row.keys() and row["governance"] else None,
-            receiver=normalize_address(row["receiver"]) if row["receiver"] else None,
-            starting_price_raw=row["starting_price_raw"],
-            minimum_price_raw=row["minimum_price_raw"],
-            step_decay_rate_raw=row["step_decay_rate_raw"],
-            step_duration_raw=row["step_duration_raw"],
-            auction_length_raw=row["auction_length_raw"],
-            extra_params=extra_params,
-        )
-
-    def _load_persisted_deploy_snapshot(self, domain_event: DomainEventRecord, *, conn=None) -> AuctionSnapshot | None:
-        connection = conn or self.writer.connection
-        row = connection.execute(
-            """
-            SELECT chain_id, auction_address, block_number, want_token, governance, receiver,
-                   minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
-                   auction_length_raw, extra_params_json
-              FROM auction_snapshot_facts
-             WHERE chain_id = ?
-               AND tx_hash = ?
-               AND log_index = ?
-               AND snapshot_kind = 'deploy' AND block_hash = ?
-            """,
-            (domain_event.chain_id, domain_event.tx_hash, domain_event.log_index, domain_event.block_hash),
-        ).fetchone()
-        return self._snapshot_from_fact_row(row)
-
-    def _load_persisted_round_snapshot(self, domain_event: DomainEventRecord, *, conn=None) -> AuctionSnapshot | None:
-        connection = conn or self.writer.connection
-        row = connection.execute(
-            """
-            SELECT chain_id, auction_address, snapshot_block AS block_number, want_token, receiver,
-                   minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
-                   auction_length_raw, extra_params_json
-              FROM round_param_snapshot
-             WHERE chain_id = ?
-               AND snapshot_tx_hash = ?
-               AND snapshot_log_index = ? AND block_hash = ?
-            """,
-            (domain_event.chain_id, domain_event.tx_hash, domain_event.log_index, domain_event.block_hash),
-        ).fetchone()
-        return self._snapshot_from_fact_row(row)
-
-    def _replay_prepared_from_domain_event_row(self, conn, row) -> PreparedEvent:
-        base = prepared_event_from_domain_row(row)
-        event = base.domain_event
-        self.chain.reader.header(event.block_number, expected_hash=event.block_hash)
-        snapshot = None
-        if event.event_name in {"DeployedNewAuction", "AuctionKicked"}:
-            if event.event_name == "DeployedNewAuction":
-                snapshot = self._load_persisted_deploy_snapshot(event, conn=conn)
-            else:
-                snapshot = self._load_persisted_round_snapshot(event, conn=conn)
-            if snapshot is None:
-                raise MissingObservation(f"Missing {event.event_name} snapshot for {event.tx_hash}:{event.log_index}; run observation backfill")
-        prepared = replace(base, snapshot=snapshot)
-        return replace(prepared, token_metadata=self._event_token_metadata(self.chain, prepared))
 
     def _mark_chain_error(self, exc: Exception) -> None:
         chain = self.chain

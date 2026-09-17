@@ -320,3 +320,80 @@ def test_apply_batch_merges_updated_let_cow_peek_extra_params(tmp_path):
         "value_text": "1",
         "value_json": '{"letCowPeek":true,"origin":"snapshot"}',
     }
+
+
+def test_sweep_closure_is_independent_of_batch_timing(tmp_path):
+    from dataclasses import replace
+    from backend.indexer.projections import (
+        apply_native_event_projections,
+        apply_take_event_projections,
+        clear_rebuildable_chain_state,
+        reconcile_round_statuses,
+    )
+    from .test_reorg_runtime import _base_events
+
+    for scenario, expected in (
+        ("expired", ("settled", 105, 103, "500")),
+        ("sold_out", ("sold_out", 105, 104, "0")),
+        ("live", ("settled", 105, 105, "500")),
+        ("settled", ("settled", 104, 86502, "500")),
+        ("unmatched", ("live", None, 86502, "500")),
+    ):
+        events = _base_events()
+        if scenario == "expired":
+            events["kicked"] = replace(
+                events["kicked"], snapshot=replace(events["kicked"].snapshot, auction_length_raw="1")
+            )
+        prefix = [events["deployment"], events["enabled"], events["kicked"]]
+        takes = []
+        if scenario == "sold_out":
+            take = events["take_old"]
+            takes = [
+                replace(
+                    take,
+                    domain_event=replace(
+                        take.domain_event, payload={**take.domain_event.payload, "amountTaken": 500}
+                    ),
+                )
+            ]
+        if scenario == "settled":
+            prefix.append(
+                make_prepared(
+                    event_name="AuctionSettled",
+                    tx_nonce=66,
+                    block_number=104,
+                    payload={"from": DEFAULT_FROM_TOKEN},
+                )
+            )
+        token = DEFAULT_WANT_TOKEN if scenario == "unmatched" else DEFAULT_FROM_TOKEN
+        sweeps = [
+            make_prepared(
+                event_name="AuctionSwept", tx_nonce=77 + i, block_number=105 + i, payload={"token": token}
+            )
+            for i in range(2)
+        ]
+        wanted = (
+            expected[0],
+            None if expected[1] is None else 1700000000 + expected[1],
+            1700000000 + expected[2],
+            expected[3],
+        )
+        query = "SELECT status, settled_at, end_at, remaining_available_raw FROM rounds"
+        for mode in ("split", "combined", "replay"):
+            writer = Writer(str(tmp_path / f"{scenario}-{mode}.sqlite3"))
+            if mode == "combined":
+                writer.transaction(lambda conn: apply_batch(conn, prefix + takes + sweeps))
+            else:
+                writer.transaction(lambda conn: apply_batch(conn, prefix + takes))
+                writer.transaction(lambda conn: reconcile_round_statuses(conn, 1, 1700000104))
+                writer.transaction(lambda conn: apply_batch(conn, sweeps))
+                if mode == "replay":
+                    writer.transaction(
+                        lambda conn: (
+                            clear_rebuildable_chain_state(conn, 1),
+                            apply_native_event_projections(conn, prefix + sweeps),
+                            apply_take_event_projections(conn, takes),
+                        )
+                    )
+            writer.transaction(lambda conn: reconcile_round_statuses(conn, 1, 1700000106))
+            assert tuple(writer.fetchone(query)) == wanted, (scenario, mode)

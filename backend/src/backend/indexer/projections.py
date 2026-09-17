@@ -809,11 +809,16 @@ def _project_swept(conn, prepared: PreparedEvent) -> None:
                 from_token,
             ),
         ).fetchone()
-        if round_row is not None and str(round_row["status"]) == "live" and round_row["settled_at"] is None:
+        # A sweep records closure even when expiry or takes were projected first.
+        # Replay applies native events before takes, so status cannot gate this fact.
+        if round_row is not None and round_row["settled_at"] is None:
             conn.execute(
                 """
                 UPDATE rounds
-                   SET status = 'settled',
+                   SET status = CASE
+                           WHEN remaining_available_raw = '0' THEN 'sold_out'
+                           ELSE 'settled'
+                       END,
                        settled_at = ?,
                        end_at = CASE
                            WHEN end_at IS NULL OR end_at > ? THEN ?

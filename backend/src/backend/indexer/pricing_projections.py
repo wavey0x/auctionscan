@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from typing import Any
 
@@ -215,6 +216,17 @@ def _resolved_price_fact_key(
     return None
 
 
+@dataclass(frozen=True)
+class _PricingObservations:
+    quote_providers_by_fact: dict[int, list[Any]]
+    take_quote_rows: dict[tuple[str, int, int], list[Any]]
+    take_price_rows: dict[tuple[str, int, int], list[Any]]
+    take_quote_selection: dict[tuple[str, int, int], QuoteSelection]
+    take_price_selection: dict[tuple[str, int, int], PriceSelection]
+    round_quote_selection: dict[tuple[str, int], QuoteSelection]
+    round_price_selection: dict[tuple[str, int], PriceSelection]
+
+
 def rebuild_pricing_projections(
     conn, *, chain_id: int, rounds: set[tuple[str, int]] | None = None,
     previous_takers: set[str] = frozenset(),
@@ -227,6 +239,19 @@ def rebuild_pricing_projections(
     for table in ("take_pricing_source", "round_pricing_source", "take_pricing", "round_pricing"):
         scope, params = _round_filter(table, rounds)
         conn.execute(f"DELETE FROM {table} WHERE chain_id = ? {scope}", (chain_id, *params))
+    observations = _load_pricing_observations(conn, chain_id=chain_id, rounds=rounds)
+    take_count, take_rollups, provider_round_rollups = _rebuild_take_pricing(
+        conn, chain_id=chain_id, rounds=rounds, observations=observations,
+    )
+    round_count = _rebuild_round_pricing(
+        conn, chain_id=chain_id, rounds=rounds, observations=observations,
+        take_rollups=take_rollups, provider_round_rollups=provider_round_rollups,
+    )
+    taker_count = _rebuild_taker_pricing_summaries(conn, chain_id=chain_id, takers=affected_takers)
+    return take_count + round_count + taker_count
+
+
+def _load_pricing_observations(conn, *, chain_id: int, rounds) -> _PricingObservations:
     take_sources = _load_surviving_take_sources(conn, chain_id=chain_id, rounds=rounds)
     kick_sources = _load_surviving_kick_sources(conn, chain_id=chain_id, rounds=rounds)
     # Match canonical source occurrences, not fact-time round IDs (which replay can change).
@@ -306,6 +331,15 @@ def rebuild_pricing_projections(
         ).fetchall()
     )
 
+    return _select_pricing_observations(
+        quote_facts, quote_provider_rows, price_facts, price_provider_rows,
+        take_sources=take_sources, kick_sources=kick_sources,
+    )
+
+
+def _select_pricing_observations(
+    quote_facts, quote_provider_rows, price_facts, price_provider_rows, *, take_sources, kick_sources,
+) -> _PricingObservations:
     quote_providers_by_fact: dict[int, list[Any]] = {}
     for row in quote_provider_rows:
         quote_providers_by_fact.setdefault(int(row["quote_fact_id"]), []).append(row)
@@ -315,7 +349,6 @@ def rebuild_pricing_projections(
         price_providers_by_fact.setdefault(int(row["price_fact_id"]), []).append(row)
 
     take_quote_rows: dict[tuple[str, int, int], list[Any]] = {}
-    round_quote_rows: dict[tuple[str, int], list[Any]] = {}
     take_quote_selection: dict[tuple[str, int, int], QuoteSelection] = {}
     round_quote_selection: dict[tuple[str, int], QuoteSelection] = {}
     for row in quote_facts:
@@ -333,13 +366,11 @@ def rebuild_pricing_projections(
             if selection is not None and key not in take_quote_selection:
                 take_quote_selection[key] = selection
         elif context_kind == "round_kick":
-            round_quote_rows.setdefault(key, []).insert(0, row)
             selection = summarize_quote(row, quote_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
             if selection is not None and key not in round_quote_selection:
                 round_quote_selection[key] = selection
 
     take_price_rows: dict[tuple[str, int, int], list[Any]] = {}
-    round_price_rows: dict[tuple[str, int], list[Any]] = {}
     take_price_selection: dict[tuple[str, int, int], PriceSelection] = {}
     round_price_selection: dict[tuple[str, int], PriceSelection] = {}
     for row in price_facts:
@@ -357,11 +388,22 @@ def rebuild_pricing_projections(
             if selection is not None and key not in take_price_selection:
                 take_price_selection[key] = selection
         elif context_kind == "round_kick":
-            round_price_rows.setdefault(key, []).insert(0, row)
             selection = summarize_price(row, price_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
             if selection is not None and key not in round_price_selection:
                 round_price_selection[key] = selection
 
+    return _PricingObservations(
+        quote_providers_by_fact=quote_providers_by_fact,
+        take_quote_rows=take_quote_rows,
+        take_price_rows=take_price_rows,
+        take_quote_selection=take_quote_selection,
+        take_price_selection=take_price_selection,
+        round_quote_selection=round_quote_selection,
+        round_price_selection=round_price_selection,
+    )
+
+
+def _rebuild_take_pricing(conn, *, chain_id: int, rounds, observations: _PricingObservations):
     scope, params = _round_filter("t", rounds)
     take_rows = list(
         conn.execute(
@@ -396,8 +438,8 @@ def rebuild_pricing_projections(
 
     for row in take_rows:
         key = (str(row["auction_address"]), int(row["round_id"]), int(row["take_seq"]))
-        quote_selection = take_quote_selection.get(key)
-        price_selection = take_price_selection.get(key)
+        quote_selection = observations.take_quote_selection.get(key)
+        price_selection = observations.take_price_selection.get(key)
         want_decimals = int(row["want_token_decimals"]) if row["want_token_decimals"] is not None else None
         actual_paid_raw = row["amount_paid_raw"]
         market_quote_out_raw = quote_selection.amount_out_raw if quote_selection else None
@@ -415,8 +457,8 @@ def rebuild_pricing_projections(
         pricing_status = _take_pricing_status(
             quote_selection=quote_selection,
             price_selection=price_selection,
-            quote_rows=take_quote_rows.get(key, []),
-            price_rows=take_price_rows.get(key, []),
+            quote_rows=observations.take_quote_rows.get(key, []),
+            price_rows=observations.take_price_rows.get(key, []),
         )
         take_pricing_rows.append(
             (
@@ -448,7 +490,7 @@ def rebuild_pricing_projections(
         )
 
         selected_provider_rows = (
-            quote_providers_by_fact.get(quote_selection.fact_id, [])
+            observations.quote_providers_by_fact.get(quote_selection.fact_id, [])
             if quote_selection is not None
             else []
         )
@@ -606,6 +648,12 @@ def rebuild_pricing_projections(
             take_pricing_source_rows,
         )
 
+    return len(take_pricing_rows) + len(take_pricing_source_rows), take_rollups, provider_round_rollups
+
+
+def _rebuild_round_pricing(
+    conn, *, chain_id: int, rounds, observations: _PricingObservations, take_rollups, provider_round_rollups,
+) -> int:
     scope, params = _round_filter("r", rounds)
     round_rows = list(
         conn.execute(
@@ -633,8 +681,8 @@ def rebuild_pricing_projections(
     round_pricing_source_rows: list[tuple[Any, ...]] = []
     for row in round_rows:
         key = (str(row["auction_address"]), int(row["round_id"]))
-        quote_selection = round_quote_selection.get(key)
-        price_selection = round_price_selection.get(key)
+        quote_selection = observations.round_quote_selection.get(key)
+        price_selection = observations.round_price_selection.get(key)
         want_decimals = int(row["want_token_decimals"]) if row["want_token_decimals"] is not None else None
         rollup = take_rollups.get(
             key,
@@ -760,14 +808,7 @@ def rebuild_pricing_projections(
             round_pricing_source_rows,
         )
 
-    taker_rows_written = _rebuild_taker_pricing_summaries(conn, chain_id=chain_id, takers=affected_takers)
-    return (
-        len(take_pricing_rows)
-        + len(take_pricing_source_rows)
-        + len(round_pricing_rows)
-        + len(round_pricing_source_rows)
-        + taker_rows_written
-    )
+    return len(round_pricing_rows) + len(round_pricing_source_rows)
 
 
 def _rebuild_taker_pricing_summaries(conn, *, chain_id: int, takers: set[str] | None) -> int:

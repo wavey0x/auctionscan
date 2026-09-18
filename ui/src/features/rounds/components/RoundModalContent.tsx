@@ -1,44 +1,28 @@
 import { buildRoundPath, occurrenceKey, parseOccurrence } from "../../../shared/lib/routes";
 import MetricCoverage from "../../../shared/ui/MetricCoverage";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../../../shared/api/client";
-import {
-  cn,
-  formatAmount,
-  formatCompactDateTime,
-  formatDateTime,
-  formatDuration,
-  formatFullAmount,
-  formatPrice,
-  formatUsd,
-  renderKickedValue,
-  toggleKickedDisplayMode,
-} from "../../../shared/lib/format";
+import { cn, formatAmount, formatDateTime, formatFullAmount, formatUsd, renderKickedValue, toggleKickedDisplayMode } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
-import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, getTakePricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
-import type { RoundListItem, RoundLivePrice, TakeListItem } from "../../../shared/types/api";
-import AddressValue from "../../../shared/ui/AddressValue";
+import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import EmptyState from "../../../shared/ui/EmptyState";
-import InlineSpinner from "../../../shared/ui/InlineSpinner";
 import Panel from "../../../shared/ui/Panel";
 import PnlValue from "../../../shared/ui/PnlValue";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
 import Skeleton from "../../../shared/ui/Skeleton";
 import StackedListRow from "../../../shared/ui/StackedListRow";
 import StatusBadge from "../../../shared/ui/StatusBadge";
-import TakeExpandedContent from "../../../shared/ui/TakeExpandedContent";
-import TakeExpandedRow from "../../../shared/ui/TakeExpandedRow";
-import TakerAddressValue from "../../../shared/ui/TakerAddressValue";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
-import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 import TokenValue from "../../../shared/ui/TokenValue";
-import TxHashValue from "../../../shared/ui/TxHashValue";
+
+import RoundSettingsPanel from "./RoundSettingsPanel";
+import RoundTakesTable from "./RoundTakesTable";
 
 function HeaderMetric({
   label,
@@ -260,372 +244,6 @@ function RoundModalLoadingState({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function livePriceErrorMessage(error: unknown): string | null {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string" && error.trim()) {
-    return error;
-  }
-  return null;
-}
-
-function PriceStatusMarker() {
-  return (
-    <span className="progress-marker flex h-[10px] w-[10px] items-center justify-center rounded-full border text-white shadow-sm">
-      <Check className="h-[7px] w-[7px]" strokeWidth={2.5} />
-    </span>
-  );
-}
-
-function PriceValue({
-  children,
-  className,
-  title,
-}: {
-  children: ReactNode;
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <span
-      className={cn("inline-flex min-w-0 items-center gap-2 font-mono text-data", className)}
-      title={title}
-    >
-      {children}
-    </span>
-  );
-}
-
-function LiveLabelMarker() {
-  return (
-    <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.24)]" />
-  );
-}
-
-function RoundSettingsPanel({
-  round,
-  chainId,
-  startingPricePerUnit,
-  minimumPrice,
-  duration,
-  stepDuration,
-  decay,
-  livePrice,
-  isLivePriceLoading,
-  isLivePriceError,
-  livePriceError,
-}: {
-  round: RoundListItem;
-  chainId: number;
-  startingPricePerUnit?: string | null;
-  minimumPrice?: string | null;
-  duration?: number | null;
-  stepDuration?: number | null;
-  decay?: string | null;
-  livePrice?: RoundLivePrice;
-  isLivePriceLoading: boolean;
-  isLivePriceError: boolean;
-  livePriceError?: unknown;
-}) {
-  const livePriceValue = livePrice?.current_price ? formatPrice(livePrice.current_price, 8) : null;
-  const livePriceErrorDetail = livePriceErrorMessage(livePriceError);
-  const showLivePrice = round.is_active && livePrice?.is_active !== false && Boolean(livePriceValue);
-  const livePriceTitle = livePrice
-    ? `Price at indexed block ${livePrice.indexed_block} · ${formatDateTime(new Date(livePrice.indexed_timestamp * 1000).toISOString())}`
-    : "Price at the displayed indexed block";
-  const executionPriceValue = round.avg_execution_price ? formatPrice(round.avg_execution_price, 8) : null;
-  const showExecutionPriceRow = !round.is_active && round.take_count > 0;
-  const showMinimumPrice = minimumPrice !== null && minimumPrice !== undefined;
-  const showDuration = duration !== null && duration !== undefined;
-  const expectedPriceValue = round.expected_price_per_unit ? formatPrice(round.expected_price_per_unit, 8) : null;
-  const lotUsd = round.kick_market_quote_usd ?? round.total_market_quote_usd;
-  const lotAmount = round.initial_available ?? round.sold_amount;
-  const lotAmountLabel = [formatAmount(lotAmount), round.from_token_symbol].filter(Boolean).join(" ").trim() || "—";
-  const lotAmountTooltip = [formatFullAmount(lotAmount), round.from_token_symbol].filter(Boolean).join(" ").trim() || null;
-
-  return (
-    <Panel className="overflow-hidden p-0">
-      <div className="space-y-2 px-3 py-3 md:px-4">
-        <div className="text-heading text-primary">Round Settings</div>
-      </div>
-
-      <div className="divide-y divide-divider-subtle border-t border-divider-subtle">
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Lot</div>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <TokenValue
-              address={round.from_token}
-              symbol={lotAmountLabel}
-              logoUrl={round.from_token_logo_url}
-              chainId={round.chain_id}
-              className="min-w-0"
-              showCopy={false}
-              tooltip={lotAmountTooltip}
-            />
-            <span className="shrink-0 font-mono text-[10px] leading-none text-tertiary">
-              {lotUsd ? `~${formatUsd(lotUsd)}` : "—"}
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Start</div>
-          <PriceValue className={startingPricePerUnit ? "text-primary" : "text-tertiary"} title="Start price per unit">
-            {startingPricePerUnit ? formatPrice(startingPricePerUnit, 8) : "—"}
-          </PriceValue>
-        </div>
-
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Kick quote</div>
-          <PriceValue className={expectedPriceValue ? "text-primary" : "text-tertiary"} title="Stored kick-time quote per unit">
-            {expectedPriceValue ?? "—"}
-          </PriceValue>
-        </div>
-
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Cutoff</div>
-          <div className={cn("font-mono text-data", showMinimumPrice || showDuration ? "text-primary" : "text-tertiary")}>
-            {showMinimumPrice ? `< ${formatPrice(minimumPrice, 8)}` : null}
-            {showMinimumPrice && showDuration ? <span className="text-tertiary"> or </span> : null}
-            {showDuration ? <span className={showMinimumPrice ? "text-tertiary" : undefined}>{`after ${formatDuration(duration)}`}</span> : null}
-            {!showMinimumPrice && !showDuration ? "—" : null}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Decay</div>
-          <div className="font-mono text-data text-primary">
-            {decay ?? "—"}
-            {decay && stepDuration !== null && stepDuration !== undefined ? (
-              <span className="text-tertiary">{` / ${formatDuration(stepDuration)}`}</span>
-            ) : null}
-          </div>
-        </div>
-
-        {round.is_active ? (
-          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-            <div className="metric-label inline-flex items-center gap-1.5">
-              <LiveLabelMarker />
-              <span>Live</span>
-            </div>
-            <PriceValue className={showLivePrice ? "text-primary" : "text-tertiary"} title={livePriceTitle}>
-              {showLivePrice ? (
-                <span>{livePriceValue}<span className="ml-2 text-[10px] text-tertiary">{formatCompactDateTime(new Date(livePrice!.indexed_timestamp * 1000).toISOString())}</span></span>
-              ) : isLivePriceError ? (
-                <span title={livePriceErrorDetail ?? undefined}>unavailable</span>
-              ) : isLivePriceLoading ? (
-                <InlineSpinner />
-              ) : (
-                "—"
-              )}
-            </PriceValue>
-          </div>
-        ) : null}
-
-        {showExecutionPriceRow ? (
-          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-            <div className="metric-label">Execution</div>
-            <PriceValue className={executionPriceValue ? "text-primary" : "text-tertiary"} title={`Average execution price from ${round.paid_take_count}/${round.take_count} takes with observed payment`}>
-              {executionPriceValue ? (
-                <span className="inline-flex items-center gap-2">
-                  <span>{executionPriceValue}</span>
-                  <PriceStatusMarker />
-                </span>
-              ) : "—"}
-            </PriceValue>
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-          <div className="metric-label">Receiver</div>
-          <div className="min-w-0">
-            <AddressValue address={round.receiver} chainId={chainId} label={round.receiver_name} />
-          </div>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-function TakeTable({
-  takes,
-  priceSource,
-  selectedOccurrenceKey,
-  selectedTake,
-  isSelectedTakeLoading,
-  onSelect,
-}: {
-  takes: TakeListItem[];
-  priceSource: string;
-  selectedOccurrenceKey?: string | null;
-  selectedTake?: Awaited<ReturnType<typeof api.getTake>>;
-  isSelectedTakeLoading: boolean;
-  onSelect: (key: string) => void;
-}) {
-  if (!takes.length) {
-    return (
-      <div className="p-3">
-        <EmptyState title="No takes in this round" titleClassName="text-tertiary" />
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="md:hidden">
-        {takes.map((take) => {
-          const isSelected = occurrenceKey(take.occurrence) === selectedOccurrenceKey;
-          const takePricing = getTakePricingBySource(take, priceSource);
-
-          return (
-            <StackedListRow
-              key={`${take.chain_id}:${occurrenceKey(take.occurrence)}`}
-              interactive
-              className="space-y-2"
-              onClick={() => onSelect(occurrenceKey(take.occurrence))}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-primary">T{take.take_seq}</span>
-                  <TxHashValue txHash={take.tx_hash} chainId={take.chain_id} width={6} />
-                </div>
-                <div className="font-mono text-meta text-tertiary" title={formatDateTime(take.timestamp)}>
-                  {formatCompactDateTime(take.timestamp)}
-                </div>
-              </div>
-              <div className="min-w-0">
-                <TakerAddressValue address={take.taker} chainId={take.chain_id} />
-              </div>
-              <div className="space-y-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="metric-label shrink-0">Sold</span>
-                  <TokenAmountValue
-                    amount={take.amount_taken}
-                    address={take.from_token}
-                    symbol={take.from_token_symbol}
-                    logoUrl={take.from_token_logo_url}
-                    chainId={take.chain_id}
-                    className="min-w-0 w-auto"
-                  />
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="metric-label shrink-0">Recv</span>
-                    <TokenAmountValue
-                      amount={take.amount_paid}
-                      estimatedAmount={take.expected_amount_paid}
-                      address={take.to_token}
-                      symbol={take.to_token_symbol}
-                      logoUrl={take.to_token_logo_url}
-                      chainId={take.chain_id}
-                      className="min-w-0 w-auto"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="metric-label shrink-0">Price</span>
-                    <span className="font-mono text-primary">{formatPrice(take.price)}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="metric-label shrink-0">PnL</span>
-                    <PnlValue percent={takePricing.pnl_percent} usd={takePricing.pnl_usd} compact />
-                  </div>
-                </div>
-              </div>
-              {isSelected ? (
-                <div className="rounded-md border border-divider-subtle bg-background px-3 py-3">
-                  {isSelectedTakeLoading ? (
-                    <Skeleton className="h-32 w-full" />
-                  ) : selectedTake ? (
-                    <TakeExpandedContent take={selectedTake} priceSource={priceSource} />
-                  ) : (
-                    <EmptyState title="Take not found" description="The selected take detail could not be loaded." />
-                  )}
-                </div>
-              ) : null}
-            </StackedListRow>
-          );
-        })}
-      </div>
-      <div className="hidden md:block table-wrap">
-        <TableHoverScope>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Take</th>
-                <th>Tx</th>
-                <th>Taker</th>
-                <th>Time</th>
-                <th>Sold</th>
-                <th>Received</th>
-                <th>Price</th>
-                <th>PnL</th>
-              </tr>
-            </thead>
-            <tbody>
-              {takes.map((take) => {
-                const isSelected = occurrenceKey(take.occurrence) === selectedOccurrenceKey;
-                const takePricing = getTakePricingBySource(take, priceSource);
-
-                return (
-                  <Fragment key={`${take.chain_id}:${occurrenceKey(take.occurrence)}`}>
-                    <tr
-                      className={`data-row ${isSelected ? "bg-surface" : ""}`}
-                      onClick={() => onSelect(occurrenceKey(take.occurrence))}
-                    >
-                      <td className="font-mono text-primary">T{take.take_seq}</td>
-                      <td>
-                        <TxHashValue txHash={take.tx_hash} chainId={take.chain_id} width={6} />
-                      </td>
-                      <td>
-                        <TakerAddressValue address={take.taker} chainId={take.chain_id} />
-                      </td>
-                      <td className="font-mono text-primary" title={formatDateTime(take.timestamp)}>
-                        {formatCompactDateTime(take.timestamp)}
-                      </td>
-                      <td className="text-primary">
-                        <TokenAmountValue
-                          amount={take.amount_taken}
-                          address={take.from_token}
-                          symbol={take.from_token_symbol}
-                          logoUrl={take.from_token_logo_url}
-                          chainId={take.chain_id}
-                        />
-                      </td>
-                      <td className="text-primary">
-                        <TokenAmountValue
-                          amount={take.amount_paid}
-                          estimatedAmount={take.expected_amount_paid}
-                          address={take.to_token}
-                          symbol={take.to_token_symbol}
-                          logoUrl={take.to_token_logo_url}
-                          chainId={take.chain_id}
-                        />
-                      </td>
-                      <td className="font-mono text-primary">{formatPrice(take.price)}</td>
-                      <td>
-                        <PnlValue percent={takePricing.pnl_percent} usd={takePricing.pnl_usd} className="w-[4.8rem]" />
-                      </td>
-                    </tr>
-                    {isSelected ? (
-                      <TakeExpandedRow
-                        colSpan={8}
-                        take={selectedTake}
-                        isLoading={isSelectedTakeLoading}
-                        priceSource={priceSource}
-                      />
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </TableHoverScope>
-      </div>
-    </>
   );
 }
 
@@ -901,7 +519,7 @@ export default function RoundModalContent({
               ) : null}
             </div>
             {selectedTakeParam && !selectedTakeQuery.isFetching && !selectedTake ? <EmptyState title="Take unavailable" description="This occurrence is absent from the indexed round." /> : null}
-            <TakeTable
+            <RoundTakesTable
               takes={takes}
               priceSource={selectedPriceSource}
               selectedOccurrenceKey={selectedTakeParam}

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, api } from "../../../shared/api/client";
-import { buildRoundPath } from "../../../shared/lib/routes";
+import { buildRoundPath, occurrenceKey } from "../../../shared/lib/routes";
 import type { RoundDetailResponse, RoundLivePrice } from "../../../shared/types/api";
 import RoundModalContent from "./RoundModalContent";
 
@@ -71,4 +71,33 @@ it("cannot display a late price from a different indexed snapshot", async () => 
   await settle();
   expect(container.textContent).toContain("222");
   expect(container.textContent).not.toContain("111");
+});
+
+it("replaces the route when a selected take moves rounds, preserving search and background state", async () => {
+  const correctedOccurrence = { ...occurrence, log_index: 8 };
+  const takeOccurrence = { ...occurrence, log_index: 12 };
+  const backgroundLocation = { pathname: `/auction/1/${auction}`, search: "?page=3", hash: "", state: null, key: "auction" };
+  const state = { backgroundLocation };
+  const search = `?take=${occurrenceKey(takeOccurrence)}&priceSource=canonical&from=auction`;
+  vi.spyOn(api, "getRoundDetail").mockImplementation(async (requested) => ({
+    ...details(100), round: { ...details(100).round, occurrence: requested, is_active: false },
+  }));
+  vi.spyOn(api, "getTake").mockResolvedValue({
+    occurrence: takeOccurrence, round_occurrence: correctedOccurrence,
+    auction, auction_address: auction, chain_id: 1, round_id: 2, take_seq: 1, taker: auction,
+    amount_taken: "1", amount_paid: "2", timestamp: "2026-09-17T12:00:00Z",
+    tx_hash: takeOccurrence.tx_hash, block_number: 100, confirmed: true,
+  });
+  const router = createMemoryRouter([
+    { path: "/round/:chainId/:auctionAddress/:occurrence", element: <RoundModalContent onClose={() => {}} /> },
+  ], { initialEntries: [{ pathname: buildRoundPath(1, auction, occurrence), search, state }] });
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  await settle();
+  await settle();
+
+  expect(router.state.location.pathname).toBe(buildRoundPath(1, auction, correctedOccurrence));
+  expect(router.state.historyAction).toBe("REPLACE");
+  expect(router.state.location.search).toBe(search);
+  expect(router.state.location.state).toEqual(state);
+  router.dispose();
 });

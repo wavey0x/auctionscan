@@ -1,12 +1,11 @@
+import { useRoundDetails } from "../useRoundDetails";
 import { buildRoundPath, occurrenceKey, parseOccurrence } from "../../../shared/lib/routes";
 import MetricCoverage from "../../../shared/ui/MetricCoverage";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { ApiError, api } from "../../../shared/api/client";
 import { cn, formatAmount, formatDateTime, formatFullAmount, formatUsd, renderKickedValue, toggleKickedDisplayMode } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
@@ -267,31 +266,17 @@ export default function RoundModalContent({
   const selectedTakeParam = searchParams.get("take");
   const requestedPriceSource = searchParams.get("priceSource");
   const selectedOccurrence = parseOccurrence(chain, selectedTakeParam);
-  const mismatchRetryAfter = useRef(0);
-
-  const roundQuery = useQuery({
-    queryKey: ["round-detail", occurrence],
-    queryFn: ({ signal }) => api.getRoundDetail(occurrence!, signal),
-    enabled: Boolean(occurrence) && !!auctionAddress,
-  });
-
-  const auctionQuery = useQuery({
-    queryKey: ["auction", chain, auctionAddress],
-    queryFn: ({ signal }) => api.getAuction(chain, auctionAddress!, signal),
-    enabled: Number.isFinite(chain) && !!auctionAddress,
-  });
-
-  const takesQuery = useQuery({
-    queryKey: ["round-takes", occurrence],
-    queryFn: ({ signal }) => api.getAuctionTakes(chain, auctionAddress!, occurrence!, 200, signal),
-    enabled: Boolean(occurrence) && !!auctionAddress,
-  });
-
-  const selectedTakeQuery = useQuery({
-    queryKey: ["take-detail", selectedOccurrence],
-    queryFn: ({ signal }) => api.getTake(selectedOccurrence!, signal),
-    enabled: Boolean(occurrence && selectedOccurrence),
-  });
+  const {
+    roundQuery,
+    auctionQuery,
+    takesQuery,
+    selectedTakeQuery,
+    livePriceQuery,
+    round,
+    selectedTake,
+    priceReference,
+    displayedLivePrice,
+  } = useRoundDetails(chain, auctionAddress, occurrence, selectedOccurrence);
 
   useEffect(() => {
     const take = selectedTakeQuery.isError ? undefined : selectedTakeQuery.data;
@@ -299,40 +284,6 @@ export default function RoundModalContent({
     // The transfer remains the identity even if corrected inference moves it to another round.
     navigate({ pathname: buildRoundPath(chain, take.auction, take.round_occurrence), search: location.search }, { replace: true, state: location.state });
   }, [selectedTakeQuery.data, selectedTakeQuery.isError, occurrenceParam, chain, location.search, location.state, navigate]);
-
-  const round = !roundQuery.isError && roundQuery.data && roundQuery.data.round.auction_address.toLowerCase() === auctionAddress?.toLowerCase() ? roundQuery.data.round : undefined;
-  const selectedTake = !selectedTakeQuery.isError && selectedTakeQuery.data && occurrence && occurrenceKey(selectedTakeQuery.data.round_occurrence) === occurrenceKey(occurrence) ? selectedTakeQuery.data : undefined;
-  const checkpoint = roundQuery.data?.as_of[chain];
-  const priceReference = checkpoint?.indexed_block != null && checkpoint.indexed_block_hash && checkpoint.indexed_timestamp != null
-    ? { indexed_block: checkpoint.indexed_block, indexed_block_hash: checkpoint.indexed_block_hash, indexed_timestamp: checkpoint.indexed_timestamp }
-    : null;
-  const livePriceQuery = useQuery({
-    queryKey: ["round-live-price", occurrence, priceReference],
-    queryFn: async ({ signal }) => {
-      try {
-        return await api.getRoundLivePrice(occurrence!, priceReference!, signal);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409 && Date.now() >= mismatchRetryAfter.current) {
-          // Refresh once. The new snapshot key triggers the retry; further mismatches
-          // wait for normal polling instead of recursively refreshing during catch-up.
-          mismatchRetryAfter.current = Date.now() + 3_000;
-          await roundQuery.refetch();
-        }
-        throw error;
-      }
-    },
-    enabled: Boolean(occurrence && priceReference && round?.is_active),
-    retry: false,
-    refetchInterval: 3_000,
-    refetchIntervalInBackground: false,
-  });
-  const price = livePriceQuery.isError ? undefined : livePriceQuery.data;
-  const displayedLivePrice = price && priceReference && occurrence
-    && price.indexed_block_hash === priceReference.indexed_block_hash
-    && price.indexed_block === priceReference.indexed_block
-    && price.indexed_timestamp === priceReference.indexed_timestamp
-    && occurrenceKey(price.occurrence) === occurrenceKey(occurrence)
-    ? price : undefined;
 
   const replaceModalSearchParams = (next: URLSearchParams) => {
     setSearchParams(next, { replace: true, state: location.state });

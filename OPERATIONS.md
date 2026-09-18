@@ -22,10 +22,16 @@ never over the serving database. Keep the original capture unchanged. Run
 `PRAGMA integrity_check` and `PRAGMA foreign_key_check`, then compare captured
 fact counts and checkpoints before and after migrations and offline replay.
 
-Older captures may lack RPC observations. Use explicit `--check-observations`
-and `--backfill-observations` maintenance to prepare the restored copy before
-`--reproject`. Once prepared, full and takes-only replay must work with network
-access disabled and preserve captured facts and sync checkpoints.
+Restore older captures with their saved application revision first. Use that
+revision to prepare missing observations, snapshot provenance, and finality
+anchors before upgrading. The current application rejects pre-finality data
+and incomplete snapshot provenance; it does not adopt or convert them.
+
+For current databases, `--check-observations` checks offline replay inputs and
+`--backfill-observations` explicitly captures missing inputs on the same branch.
+Backfill preserves existing snapshots and rejects a branch mismatch. Once
+prepared, full and takes-only replay work with network access disabled and
+preserve captured facts and sync checkpoints.
 
 For actual recovery, stop the API and all writers, retain the damaged database
 for investigation, restore the verified copy with its matching application and
@@ -56,7 +62,9 @@ Before schema changes or exclusive maintenance:
    health, checkpoints advancing toward head, API documentation, real round/take
    responses, UI navigation, and indexer logs. Confirm backup capture still works.
 
-Normal deployments do not need reprojection. Releases changing derived payment
+Projection-column deletions that preserve surviving values do not require
+reprojection; verify migration and incremental writes, and rehearse replay on
+backup copies. Releases changing derived payment
 semantics do: run `--check-observations`, explicitly fill missing inputs if needed,
 and run `--reproject` before restarting indexing. Rehearse these steps on a restored
 copy first. Preserve chain logs, snapshots, RPC observations, pricing audit facts,

@@ -1,10 +1,9 @@
 from .helpers import make_hydrator
-from types import SimpleNamespace
 
 import pytest
 from web3 import Web3
 
-from backend.indexer.observations import MissingObservation
+from backend.indexer.observations import BranchChanged, MissingObservation
 from backend.indexer.takes import TakeDetector
 from backend.indexer.types import TokenMetadata
 from .helpers import DEFAULT_WANT_TOKEN, make_snapshot
@@ -12,7 +11,7 @@ from .test_observations import _Provider
 from .test_reorg_runtime import _base_events, _base_headers, _build_runtime
 
 
-def _legacy_runtime(tmp_path, *, monkeypatch):
+def _incomplete_runtime(tmp_path, *, monkeypatch):
     events = _base_events()
     runtime, chain = _build_runtime(
         tmp_path,
@@ -26,9 +25,9 @@ def _legacy_runtime(tmp_path, *, monkeypatch):
     runtime.sync_chain_once()
     runtime.writer.transaction(lambda conn: (
         conn.execute("DELETE FROM indexed_blocks"),
-        conn.execute("UPDATE auction_snapshot_facts SET block_hash = NULL"),
-        conn.execute("UPDATE round_param_snapshot SET block_hash = NULL"),
-        conn.execute("UPDATE sync_state SET finality_mode = NULL, last_confirmed_hash = NULL, health = 'error', last_error = 'existing error'"),
+        conn.execute("DELETE FROM auction_snapshot_facts"),
+        conn.execute("DELETE FROM round_param_snapshot"),
+        conn.execute("UPDATE sync_state SET health = 'error', last_error = 'existing error'"),
     ))
     provider = _Provider()
     chain.w3 = Web3(provider)
@@ -60,7 +59,7 @@ def _legacy_runtime(tmp_path, *, monkeypatch):
 
 
 def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path, *, monkeypatch):
-    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
     coverage = runtime.backfill_observations(check_only=True)
     assert coverage["blocks"] == coverage["missing"] == 4
     assert provider.calls == []
@@ -91,7 +90,7 @@ def test_backfill_resumes_from_facts_then_both_replays_are_offline(tmp_path, *, 
 def test_incomplete_inputs_refuse_replay_without_replacing_projections(
     tmp_path, takes_only, missing_input, message, *, monkeypatch
 ):
-    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
     runtime.backfill_observations()
     if missing_input == "metadata":
         runtime.writer.transaction(lambda conn: conn.execute(
@@ -106,25 +105,49 @@ def test_incomplete_inputs_refuse_replay_without_replacing_projections(
     assert list(runtime.writer.fetchall("SELECT * FROM rounds")) == before
 
 
-def test_legacy_orphan_during_backfill_adopts_only_the_completed_prefix(tmp_path, *, monkeypatch):
-    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
-    runtime.writer.transaction(lambda conn: (
-        conn.execute("UPDATE chain_logs SET block_hash = ? WHERE block_number = 102", ('0x' + 'ee' * 32,)),
-        conn.execute("UPDATE domain_events SET block_hash = ? WHERE block_number = 102", ('0x' + 'ee' * 32,)),
+def test_branch_mismatch_during_backfill_refuses_adoption(tmp_path, *, monkeypatch):
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime.backfill_observations(max_blocks=1)
+    runtime.writer.transaction(lambda conn: conn.execute(
+        "UPDATE chain_logs SET block_hash = ? WHERE block_number = 102", ('0x' + 'ee' * 32,),
     ))
-    chain.finality_mode = "finalized"
-    result = runtime.backfill_observations()
-    assert result["missing"] == 0
-    assert result["resume_indexing"] is True
-    state = runtime._load_sync_state_row()
-    assert state["last_live_processed"] == 101
-    assert state["last_confirmed_hash"] == chain.headers[101].block_hash
-    assert runtime.writer.fetchone("SELECT COUNT(*) FROM rounds")[0] == 0
-    assert runtime.writer.fetchone("SELECT COUNT(*) FROM rpc_observations WHERE block_number > 101")[0] == 0
+    before = dict(runtime._load_sync_state_row())
+    with pytest.raises(BranchChanged):
+        runtime.backfill_observations()
+    assert dict(runtime._load_sync_state_row()) == before
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM rounds")[0] == 1
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+@pytest.mark.parametrize("invalid", ["finality", "auction_snapshot_facts", "round_param_snapshot"])
+def test_backfill_refuses_unprepared_data_without_mutation(tmp_path, monkeypatch, check_only, invalid):
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime.backfill_observations()
+    if invalid == "finality":
+        runtime.writer.transaction(lambda conn: conn.execute("UPDATE sync_state SET finality_mode = NULL"))
+    else:
+        runtime.writer.transaction(lambda conn: conn.execute(f"UPDATE {invalid} SET block_hash = NULL"))
+    before = list(runtime.writer.connection.iterdump())
+    calls = len(provider.calls)
+    with pytest.raises(MissingObservation, match="previous application revision"):
+        runtime.backfill_observations(check_only=check_only)
+    assert list(runtime.writer.connection.iterdump()) == before
+    assert len(provider.calls) == calls
+
+
+def test_backfill_missing_calls_preserves_existing_snapshots(tmp_path, monkeypatch):
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime.backfill_observations()
+    snapshots = {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")]
+                 for table in ("auction_snapshot_facts", "round_param_snapshot")}
+    runtime.writer.transaction(lambda conn: conn.execute("DELETE FROM rpc_observations WHERE block_number = 100"))
+    assert runtime.backfill_observations()["missing"] == 0
+    assert {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")]
+            for table in snapshots} == snapshots
 
 
 def test_backfill_transport_failure_does_not_mark_partial_block_complete(tmp_path, *, monkeypatch):
-    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
     runtime.backfill_observations(max_blocks=1)
     provider.failure = TimeoutError("Node offline")
     with pytest.raises(TimeoutError):
@@ -140,7 +163,7 @@ def test_full_reproject_repairs_legacy_sweep_on_a_backup_offline(tmp_path, monke
     from backend.indexer.writer import Writer
     from .helpers import DEFAULT_FROM_TOKEN, make_prepared
 
-    runtime, chain, provider = _legacy_runtime(tmp_path, monkeypatch=monkeypatch)
+    runtime, chain, provider = _incomplete_runtime(tmp_path, monkeypatch=monkeypatch)
     original = runtime.hydrator.read_auction_snapshot
     runtime.hydrator.read_auction_snapshot = lambda *args, **kwargs: replace(
         original(*args, **kwargs), auction_length_raw="1"

@@ -115,34 +115,6 @@ def _persist_deploy_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> Non
 
 
 
-def backfill_snapshot_fact(conn, prepared: PreparedEvent) -> None:
-    """Attach fresh canonical provenance to legacy, potentially partial captures."""
-    event, snapshot = prepared.domain_event, prepared.snapshot
-    if snapshot is None:
-        return
-    if event.event_name == "DeployedNewAuction":
-        _persist_deploy_snapshot_fact(conn, event, snapshot)
-        table, tx, log = "auction_snapshot_facts", "tx_hash", "log_index"
-    elif event.event_name == "AuctionKicked":
-        _persist_kick_snapshot_fact(conn, event, snapshot, _deterministic_round_id(conn, event), _resolve_event_from_token(conn, event))
-        table, tx, log = "round_param_snapshot", "snapshot_tx_hash", "snapshot_log_index"
-    else:
-        return
-    fields = {"block_hash": event.block_hash, "want_token": snapshot.want_token,
-              "receiver": snapshot.receiver, "minimum_price_raw": snapshot.minimum_price_raw,
-              "starting_price_raw": snapshot.starting_price_raw, "step_decay_rate_raw": snapshot.step_decay_rate_raw,
-              "step_duration_raw": snapshot.step_duration_raw, "auction_length_raw": snapshot.auction_length_raw,
-              "extra_params_json": _json_dumps(snapshot.extra_params)}
-    if table == "auction_snapshot_facts":
-        fields["governance"] = snapshot.governance
-    conn.execute(
-        f"UPDATE {table} SET {', '.join(key + ' = ?' for key in fields)} "
-        f"WHERE chain_id = ? AND {tx} = ? AND {log} = ? AND block_hash IS NULL",
-        (*fields.values(), event.chain_id, event.tx_hash, event.log_index),
-    )
-
-
-
 def _deterministic_round_id(conn, event) -> int:
     row = conn.execute(
         """

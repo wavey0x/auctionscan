@@ -46,7 +46,7 @@ from .projections import (
 )
 from .facts import (
     delete_derived_take_events,
-    backfill_snapshot_fact,
+    persist_snapshot_facts,
     delete_fact_blocks_above,
     load_indexed_blocks,
     persist_raw_logs,
@@ -169,7 +169,7 @@ class IndexerRuntime:
             raise BranchChanged("RPC finality head exceeds its latest head")
         existing_state = self.writer.fetchone("SELECT finality_mode, last_success_at FROM sync_state WHERE chain_id = ?", (chain.config.chain_id,))
         if existing_state is not None and existing_state["finality_mode"] is None and existing_state["last_success_at"] is not None:
-            raise MissingObservation("Run --backfill-observations with indexing stopped before starting the current indexer")
+            raise MissingObservation("Prepare this database with its saved previous application revision before using the current indexer")
         verified_finality = existing_state is not None and existing_state["finality_mode"] == "finalized"
         if verified_finality:
             self._verify_finality_anchors()
@@ -529,26 +529,6 @@ class IndexerRuntime:
             finality_warning=getattr(self, "_finality_warning", None),
         )
 
-    def _adopt_backfilled_prefix(self, *, boundary: int) -> None:
-        """Explicit maintenance adopts a verified prefix and rescans the unproven tail."""
-        if self._observed_finality.block_number > self._observed_head.block_number:
-            raise BranchChanged("RPC finality head exceeds its latest head")
-        anchor = self.chain.block_header(boundary) if boundary >= 0 else None
-        stored = self.writer.fetchone("SELECT block_hash FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
-                                      (self.chain.config.chain_id, boundary))
-        if anchor is not None and stored is not None and stored["block_hash"] != anchor.block_hash:
-            raise BranchChanged("Verified prefix changed during backfill")
-
-        def initialize(conn):
-            if anchor is not None:
-                upsert_indexed_blocks(conn, [anchor])
-            self._recover_live_tail_reorg(
-                conn, ancestor_block=boundary, latest_rpc_head=self._observed_head.block_number,
-                confirmed_head=self._observed_finality.block_number, last_confirmed_processed=boundary,
-                record_reorg=False,
-            )
-        self.writer.transaction(initialize)
-
     def _verify_finality_anchors(self) -> None:
         state = self._load_sync_state_row()
         if self.chain.finality_mode != "finalized":
@@ -817,8 +797,12 @@ class IndexerRuntime:
         chain = self.chain
         conn = self.writer.connection
         state = conn.execute("SELECT * FROM sync_state WHERE chain_id = ?", (chain.config.chain_id,)).fetchone()
-        initial_cursor = chain_start_block(chain.config, list(chain.config.factories)) - 1
         fact_blocks = {int(row[0]) for row in conn.execute("SELECT DISTINCT block_number FROM chain_logs WHERE chain_id = ?", (chain.config.chain_id,))}
+        if state is not None and state["finality_mode"] is None and (state["last_success_at"] is not None or fact_blocks):
+            raise MissingObservation("Prepare this database with its saved previous application revision before observation backfill")
+        for table in ("auction_snapshot_facts", "round_param_snapshot"):
+            if conn.execute(f"SELECT 1 FROM {table} WHERE chain_id = ? AND (block_hash IS NULL OR param_schema IS NULL) LIMIT 1", (chain.config.chain_id,)).fetchone():
+                raise MissingObservation(f"Unprepared {table} provenance; use the saved previous application revision")
         blocks = set(fact_blocks)
         if state and state["last_live_processed"] is not None and int(state["last_live_processed"]) >= 0:
             blocks.add(int(state["last_live_processed"]))
@@ -852,56 +836,29 @@ class IndexerRuntime:
                 return reader, native
 
             try:
-                try:
-                    reader, native = prepare(True)
-                    needs_capture = False
-                except MissingObservation as exc:
-                    first_missing = first_missing or str(exc)
-                    if check_only or (max_blocks is not None and captured >= max_blocks):
-                        continue
-                    reader, native = prepare(False)
-                    needs_capture = True
-                if not check_only and chain.block_header(number).block_hash != reader.header(number).block_hash:
-                    raise BranchChanged(f"Stored observations changed branch at {number}")
-                if not needs_capture:
-                    complete += 1
+                reader, native = prepare(True)
+                needs_capture = False
+            except MissingObservation as exc:
+                first_missing = first_missing or str(exc)
+                if check_only or (max_blocks is not None and captured >= max_blocks):
                     continue
-            except BranchChanged:
-                # Legacy confirmation-depth data has no trusted finalized anchor.
-                # An already backfilled prefix can be adopted atomically; normal
-                # indexing will recapture the replacement tail.
-                preceding = sum(block < number for block in blocks)
-                if check_only or state["finality_mode"] is not None or complete != preceding:
-                    raise
-                self._observed_head = chain.block_header(chain.latest_head())
-                self._observed_finality = chain.confirmed_header(self._observed_head.block_number)
-                self._finality_warning = None
-                limit = min(number - 1, self._observed_finality.block_number)
-                boundary = max((block for block in fact_blocks if block <= limit), default=initial_cursor)
-                self._adopt_backfilled_prefix(boundary=boundary)
-                result = self.backfill_observations(check_only=True)
-                return {**result, "captured": captured, "resume_indexing": True}
+                reader, native = prepare(False)
+                needs_capture = True
+            if not check_only and chain.block_header(number).block_hash != reader.header(number).block_hash:
+                raise BranchChanged(f"Stored observations changed branch at {number}")
+            if not needs_capture:
+                complete += 1
+                continue
 
             def persist(conn):
                 reader.persist(conn)
-                for prepared in native:
-                    backfill_snapshot_fact(conn, prepared)
+                persist_snapshot_facts(conn, native)
+                # Validate the captured inputs before committing the block.
+                prepare(True)
             self.writer.transaction(persist)
             captured += 1
             complete += 1
             logger.info("observation backfill network=%s block=%d complete=%d/%d", self.network_name, number, complete, len(blocks))
-        if not check_only and state is not None and state["finality_mode"] is None and complete == len(blocks):
-            self._observed_head = chain.block_header(chain.latest_head())
-            self._observed_finality = chain.confirmed_header(self._observed_head.block_number)
-            self._finality_warning = None
-            boundary = min(int(state["last_live_processed"]), int(state["last_confirmed_processed"]),
-                           self._observed_finality.block_number)
-            # A retained log hash proves the entire prefix. A freshly fetched
-            # empty header alone cannot prove that the old scan saw this branch.
-            boundary = max((block for block in fact_blocks if block <= boundary), default=initial_cursor)
-            self._adopt_backfilled_prefix(boundary=boundary)
-            result = self.backfill_observations(check_only=True)
-            return {**result, "captured": captured, "resume_indexing": True}
         return {"blocks": len(blocks), "complete": complete, "missing": len(blocks) - complete,
                 "captured": captured, "first_missing": first_missing if complete < len(blocks) else None}
 

@@ -79,7 +79,7 @@ def test_expiry_advances_with_empty_live_blocks_during_finality_stall(tmp_path, 
     assert runtime._load_sync_state_row()["last_live_processed"] == 105
 
 
-def test_live_indexing_requires_explicit_backfill_for_unverified_database(tmp_path, *, monkeypatch):
+def test_live_indexing_refuses_unprepared_database(tmp_path, *, monkeypatch):
     runtime, chain = _runtime(tmp_path, [104, 104, 104], finality=102, monkeypatch=monkeypatch)
     runtime.sync_chain_once()
     runtime.sync_chain_once()
@@ -89,6 +89,6 @@ def test_live_indexing_requires_explicit_backfill_for_unverified_database(tmp_pa
     ))
     from backend.indexer.observations import MissingObservation
     before = dict(runtime._load_sync_state_row())
-    with pytest.raises(MissingObservation, match="--backfill-observations"):
+    with pytest.raises(MissingObservation, match="saved previous application revision"):
         runtime.sync_chain_once()
     assert dict(runtime._load_sync_state_row()) == before

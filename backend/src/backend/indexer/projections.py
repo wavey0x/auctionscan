@@ -987,8 +987,7 @@ def apply_batch(conn, prepared_events: list[PreparedEvent]) -> int:
     return len(apply_batch_with_results(conn, prepared_events))
 
 
-def clear_take_state(conn, chain_id: int) -> None:
-    conn.execute("DELETE FROM pricing_capture_queue WHERE chain_id = ?", (chain_id,))
+def _clear_take_projections(conn, chain_id: int) -> None:
     conn.execute("DELETE FROM taker_pricing_summary WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM take_pricing_source WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM round_pricing_source WHERE chain_id = ?", (chain_id,))
@@ -996,6 +995,10 @@ def clear_take_state(conn, chain_id: int) -> None:
     conn.execute("DELETE FROM round_pricing WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM takes WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM taker_summary WHERE chain_id = ?", (chain_id,))
+
+
+def clear_take_state(conn, chain_id: int) -> None:
+    _clear_take_projections(conn, chain_id)
     conn.execute(
         """
         UPDATE rounds
@@ -1023,25 +1026,9 @@ def clear_take_state(conn, chain_id: int) -> None:
 
 
 def clear_projection_state(conn, chain_id: int) -> None:
-    clear_take_state(conn, chain_id)
+    _clear_take_projections(conn, chain_id)
     conn.execute("DELETE FROM tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM tracked_auctions WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM auction_current_params WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM auction_tokens WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM rounds WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM auctions WHERE chain_id = ?", (chain_id,))
-
-
-def clear_rebuildable_chain_state(conn, chain_id: int) -> None:
-    conn.execute("DELETE FROM tokens WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM tracked_auctions WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM taker_pricing_summary WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM take_pricing_source WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM round_pricing_source WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM take_pricing WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM round_pricing WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM taker_summary WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM takes WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_current_params WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM rounds WHERE chain_id = ?", (chain_id,))

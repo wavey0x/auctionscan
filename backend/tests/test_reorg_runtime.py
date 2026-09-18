@@ -974,7 +974,7 @@ def test_event_free_recovery_matches_full_repair_without_replay(
         raise AssertionError("Event-free recovery attempted historical replay")
 
     with monkeypatch.context() as guard, caplog.at_level("INFO"):
-        guard.setattr(runtime_module, "clear_rebuildable_chain_state", unexpected)
+        guard.setattr(runtime_module, "clear_projection_state", unexpected)
         guard.setattr(runtime_module.replay, "load_native_events", unexpected)
         guard.setattr(runtime_module.replay, "load_take_events", unexpected)
         guard.setattr(runtime_module, "rebuild_pricing_projections", unexpected)

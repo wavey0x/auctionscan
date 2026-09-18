@@ -33,7 +33,6 @@ from .projections import (
     apply_native_event_projections,
     apply_take_event_projections,
     chain_start_block,
-    clear_rebuildable_chain_state,
     clear_projection_state,
     clear_take_state,
     ensure_sync_state,
@@ -329,36 +328,18 @@ class IndexerRuntime:
                 enqueue_pricing_work(conn, inserted_native_events + inserted_take_events)
                 refresh_event_pricing(conn, chain_id=chain.config.chain_id,
                                       events=inserted_native_events + inserted_take_events)
-                if batch_mode == "confirmed":
-                    reconcile_round_statuses(
-                        conn,
-                        chain.config.chain_id,
-                        batch_tip.timestamp,
-                    )
-                    self._update_state(
-                        conn,
-                        chain_id=chain.config.chain_id,
-                        network_name=chain.config.name,
-                        latest_rpc_head=latest_head,
-                        confirmed_head=confirmed_head,
-                        last_confirmed_processed=to_block,
-                        last_live_processed=to_block,
-                        health="ok",
-                        last_error=None,
-                    )
-                else:
-                    reconcile_round_statuses(conn, chain.config.chain_id, batch_tip.timestamp)
-                    self._update_state(
-                        conn,
-                        chain_id=chain.config.chain_id,
-                        network_name=chain.config.name,
-                        latest_rpc_head=latest_head,
-                        confirmed_head=confirmed_head,
-                        last_confirmed_processed=last_confirmed_processed,
-                        last_live_processed=to_block,
-                        health="ok",
-                        last_error=None,
-                    )
+                reconcile_round_statuses(conn, chain.config.chain_id, batch_tip.timestamp)
+                self._update_state(
+                    conn,
+                    chain_id=chain.config.chain_id,
+                    network_name=chain.config.name,
+                    latest_rpc_head=latest_head,
+                    confirmed_head=confirmed_head,
+                    last_confirmed_processed=to_block if batch_mode == "confirmed" else last_confirmed_processed,
+                    last_live_processed=to_block,
+                    health="ok",
+                    last_error=None,
+                )
                 return inserted_native_events, inserted_take_events
 
             native_inserted_events, take_inserted_events = self.writer.transaction(persist_batch)
@@ -504,6 +485,7 @@ class IndexerRuntime:
         take_events = self.take_detector.replay_chain(chain, self.writer.connection)
 
         def replace_projections(conn):
+            conn.execute("DELETE FROM pricing_capture_queue WHERE chain_id = ?", (chain.config.chain_id,))
             delete_derived_take_events(conn, chain.config.chain_id)
             if takes_only:
                 clear_take_state(conn, chain.config.chain_id)
@@ -708,7 +690,7 @@ class IndexerRuntime:
             offline=True,
         )
         if not replay_skipped:
-            clear_rebuildable_chain_state(conn, self.chain.config.chain_id)
+            clear_projection_state(conn, self.chain.config.chain_id)
             native_events = replay.load_native_events(conn, self.chain, self.hydrator)
             apply_native_event_projections(conn, native_events)
             take_events = replay.load_take_events(conn, self.chain, self.hydrator)

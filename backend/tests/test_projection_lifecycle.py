@@ -308,7 +308,7 @@ def test_sweep_closure_is_independent_of_batch_timing(tmp_path):
     from backend.indexer.projections import (
         apply_native_event_projections,
         apply_take_event_projections,
-        clear_rebuildable_chain_state,
+        clear_projection_state,
         reconcile_round_statuses,
     )
     from .test_reorg_runtime import _base_events
@@ -371,7 +371,7 @@ def test_sweep_closure_is_independent_of_batch_timing(tmp_path):
                 if mode == "replay":
                     writer.transaction(
                         lambda conn: (
-                            clear_rebuildable_chain_state(conn, 1),
+                            clear_projection_state(conn, 1),
                             apply_native_event_projections(conn, prefix + sweeps),
                             apply_take_event_projections(conn, takes),
                         )

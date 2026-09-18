@@ -1300,7 +1300,7 @@ def test_multiple_kicks_and_takes_in_one_block_match_batching_and_offline_replay
 
 def test_projection_replay_cannot_write_snapshot_facts(tmp_path):
     import sqlite3
-    from backend.indexer.projections import apply_native_event_projections, clear_rebuildable_chain_state
+    from backend.indexer.projections import apply_native_event_projections, clear_projection_state
 
     writer = Writer(str(tmp_path / "snapshots.sqlite3"))
     native = _base_native_batch() + [make_prepared(
@@ -1321,7 +1321,7 @@ def test_projection_replay_cannot_write_snapshot_facts(tmp_path):
     writer.connection.set_authorizer(protect_snapshots)
     try:
         writer.transaction(lambda conn: (
-            clear_rebuildable_chain_state(conn, 1), apply_native_event_projections(conn, native),
+            clear_projection_state(conn, 1), apply_native_event_projections(conn, native),
         ))
     finally:
         writer.connection.set_authorizer(None)
@@ -1350,6 +1350,7 @@ def test_maintenance_take_replacement_is_atomic_and_preserves_native_facts(tmp_p
     tables = ("chain_logs", "domain_events", "auction_snapshot_facts", "round_param_snapshot",
               "takes", "rounds", "pricing_capture_queue")
     before = {table: [tuple(row) for row in runtime.writer.fetchall(f"SELECT * FROM {table}")] for table in tables}
+    assert before["pricing_capture_queue"]
     original = runtime_module.apply_batch
 
     def fail_after_deleting_takes(conn, prepared):
@@ -1364,6 +1365,7 @@ def test_maintenance_take_replacement_is_atomic_and_preserves_native_facts(tmp_p
     native_before = [tuple(row) for row in runtime.writer.fetchall("SELECT * FROM domain_events WHERE event_name != 'Take'")]
     monkeypatch.setattr(runtime_module, "apply_batch", original)
     runtime.reproject_chain(takes_only=takes_only)
+    assert runtime.writer.fetchone("SELECT COUNT(*) FROM pricing_capture_queue")[0] == 0
     assert [tuple(row) for row in runtime.writer.fetchall("SELECT * FROM domain_events WHERE event_name != 'Take'")] == native_before
     assert runtime.writer.fetchone("SELECT COUNT(*) FROM domain_events WHERE event_name = 'Take'")[0] == 1
     for table in ("chain_logs", "auction_snapshot_facts", "round_param_snapshot"):

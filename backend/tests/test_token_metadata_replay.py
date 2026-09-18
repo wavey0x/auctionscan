@@ -4,7 +4,7 @@ import pytest
 
 from backend.indexer.projections import (
     apply_batch, apply_native_event_projections, apply_take_event_projections,
-    clear_rebuildable_chain_state,
+    clear_projection_state,
 )
 from backend.indexer.types import TokenMetadata
 from backend.indexer.writer import Writer
@@ -34,7 +34,7 @@ def test_metadata_is_independent_of_native_take_batching_and_drops_orphans(tmp_p
         writer.transaction(lambda conn: conn.execute(
             "INSERT INTO tokens (chain_id, token_address, symbol, metadata_updated_at, metadata_block) VALUES (1, 'orphan', 'ORPHAN', 0, 106)"))
         writer.transaction(lambda conn: (
-            clear_rebuildable_chain_state(conn, 1),
+            clear_projection_state(conn, 1),
             apply_native_event_projections(conn, native),
             apply_take_event_projections(conn, [take]),
         ))

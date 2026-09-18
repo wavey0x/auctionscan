@@ -80,7 +80,7 @@ def test_apply_batch_projects_lifecycle_state_and_is_idempotent(tmp_path):
 
     auction = writer.fetchone(
         """
-        SELECT factory_address, receiver, want_token, has_enabled_tokens, latest_lifecycle_block
+        SELECT factory_address, receiver, want_token, latest_lifecycle_block
           FROM auctions
          WHERE chain_id = 1 AND auction_address = ?
         """,
@@ -90,7 +90,6 @@ def test_apply_batch_projects_lifecycle_state_and_is_idempotent(tmp_path):
         "factory_address": DEFAULT_FACTORY,
         "receiver": UPDATED_RECEIVER,
         "want_token": DEFAULT_WANT_TOKEN,
-        "has_enabled_tokens": 0,
         "latest_lifecycle_block": 107,
     }
 
@@ -135,7 +134,7 @@ def test_apply_batch_projects_lifecycle_state_and_is_idempotent(tmp_path):
 
     round_row = writer.fetchone(
         """
-        SELECT round_id, status, settled_at, initial_available_raw, receiver, minimum_price_raw,
+        SELECT round_id, status, settled_at, initial_available_raw, receiver,
                minimum_price, starting_price, step_decay_percent, step_duration_seconds,
                auction_length_seconds
           FROM rounds
@@ -149,7 +148,6 @@ def test_apply_batch_projects_lifecycle_state_and_is_idempotent(tmp_path):
         "settled_at": 1_700_000_105,
         "initial_available_raw": "500",
         "receiver": UPDATED_RECEIVER,
-        "minimum_price_raw": "42",
         "minimum_price": "0.000000000000000042",
         "starting_price": "100",
         "step_decay_percent": "0.25",
@@ -168,9 +166,7 @@ def test_apply_batch_projects_lifecycle_state_and_is_idempotent(tmp_path):
     assert dict(snapshot_row) == {"param_schema": "v1_wad_bps"}
 
     event_count = writer.fetchone("SELECT COUNT(*) AS count FROM domain_events")
-    param_history_count = writer.fetchone("SELECT COUNT(*) AS count FROM auction_param_history")
     assert event_count["count"] == len(batch)
-    assert param_history_count["count"] == 2
 
 
 def test_apply_batch_decodes_1_0_5_wad_scaled_starting_price(tmp_path):
@@ -233,15 +229,13 @@ def test_apply_batch_decodes_1_0_5_wad_scaled_starting_price(tmp_path):
 
     round_row = writer.fetchone(
         """
-        SELECT minimum_price_raw, starting_price_raw, minimum_price, starting_price
+        SELECT minimum_price, starting_price
           FROM rounds
          WHERE chain_id = 1 AND auction_address = ? AND round_id = 1
         """,
         (DEFAULT_AUCTION,),
     )
     assert dict(round_row) == {
-        "minimum_price_raw": minimum_price_raw,
-        "starting_price_raw": starting_price_raw,
         "minimum_price": "50",
         "starting_price": "100",
     }
@@ -307,19 +301,6 @@ def test_apply_batch_merges_updated_let_cow_peek_extra_params(tmp_path):
     assert params["last_updated_block"] == 201
     assert json.loads(params["extra_params_json"]) == {"letCowPeek": True, "origin": "snapshot"}
 
-    history = writer.fetchone(
-        """
-        SELECT param_key, value_text, value_json
-          FROM auction_param_history
-         WHERE chain_id = 1 AND auction_address = ?
-        """,
-        (DEFAULT_AUCTION,),
-    )
-    assert dict(history) == {
-        "param_key": "letCowPeek",
-        "value_text": "1",
-        "value_json": '{"letCowPeek":true,"origin":"snapshot"}',
-    }
 
 
 def test_sweep_closure_is_independent_of_batch_timing(tmp_path):

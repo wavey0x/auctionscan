@@ -468,14 +468,12 @@ def _rebuild_take_pricing(conn, *, chain_id: int, rounds, observations: _Pricing
                 int(row["take_seq"]),
                 quote_selection.fact_id if quote_selection else None,
                 price_selection.fact_id if price_selection else None,
-                None,
                 row["amount_taken_raw"],
                 row["amount_paid_raw"],
                 row["expected_amount_paid_raw"],
                 market_quote_out_raw,
                 market_quote_out_usd,
                 want_token_price_usd,
-                None,
                 auction_profit_raw,
                 _bps_from_raws(row["amount_paid_raw"], market_quote_out_raw),
                 auction_profit_usd,
@@ -624,14 +622,14 @@ def _rebuild_take_pricing(conn, *, chain_id: int, rounds, observations: _Pricing
             INSERT INTO take_pricing (
                 chain_id, auction_address, round_id, take_seq,
                 canonical_quote_fact_id, canonical_want_price_fact_id,
-                canonical_from_price_fact_id, amount_taken_raw, actual_paid_raw,
+                amount_taken_raw, actual_paid_raw,
                 expected_paid_raw, market_quote_out_raw, market_quote_out_usd,
                 want_token_price_usd,
-                from_token_price_usd, auction_profit_raw, auction_profit_bps,
+                auction_profit_raw, auction_profit_bps,
                 auction_profit_usd, priced_volume_usd, pricing_status,
                 provider_success_count, quote_spread_bps, capture_lag_seconds,
                 fresh_quote, fresh_want_price
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             take_pricing_rows,
         )
@@ -721,8 +719,6 @@ def _rebuild_round_pricing(
                 quote_selection.fact_id if quote_selection else None,
                 kick_market_quote_out_raw,
                 kick_market_quote_usd,
-                None,
-                None,
                 total_actual_paid_raw,
                 total_market_quote_out_raw,
                 _decimal_to_text(rollup["total_actual_paid_usd"]) if rollup["has_actual_paid_usd"] else None,
@@ -784,13 +780,12 @@ def _rebuild_round_pricing(
             INSERT INTO round_pricing (
                 chain_id, auction_address, round_id, kick_quote_fact_id,
                 kick_market_quote_out_raw, kick_market_quote_usd,
-                kick_contract_expected_out_raw, kick_start_premium_bps,
                 total_actual_paid_raw,
                 total_market_quote_out_raw, total_actual_paid_usd,
                 total_market_quote_usd, total_auction_profit_usd,
                 total_auction_profit_bps, priced_take_count, usd_priced_take_count, paid_usd_take_count, total_take_count,
                 priced_volume_share
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             round_pricing_rows,
         )

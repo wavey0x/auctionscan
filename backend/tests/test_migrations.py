@@ -8,10 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.app import create_app
-from backend.indexer.db_migrations.helpers.schema_v0001 import (
-    decode_params as migration_decode_params,
-    param_schema_for_version as migration_param_schema_for_version,
-)
 from backend.indexer.migrations import _read_migrations, apply_pending_migrations, has_pending_migrations
 
 from .helpers import capture_due_pricing, DEFAULT_AUCTION, DEFAULT_FACTORY, DEFAULT_FROM_TOKEN, DEFAULT_GOVERNANCE, DEFAULT_RECEIVER, DEFAULT_WANT_TOKEN
@@ -23,287 +19,85 @@ def _table_names(db_path) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def test_migration_param_decoder_handles_1_0_5_wad_scaled_starting_price():
-    assert migration_param_schema_for_version("1.0.5") == "v1_wad_start_wad_bps"
+@pytest.mark.parametrize("interrupt_migration", [False, True])
+def test_cleanup_preserves_populated_database_and_incremental_writes(tmp_path, monkeypatch, interrupt_migration):
+    from backend.indexer.pricing import PricingCaptureRuntime
+    from backend.indexer.pricing_projections import rebuild_pricing_projections
+    from backend.indexer.projections import apply_batch
+    from .helpers import make_prepared
+    from .test_pricing import _FakePricingClient, _seed_pricing_db
 
-    decoded = migration_decode_params(
-        "v1_wad_start_wad_bps",
-        minimum_price_raw="50000000000000000000",
-        starting_price_raw="100000000000000000000",
-        step_decay_rate_raw="25",
-        step_duration_raw="60",
-        auction_length_raw="86400",
-    )
+    path = tmp_path / "upgrade.sqlite3"
+    writer, _ = _seed_pricing_db(path)
+    capture_due_pricing(PricingCaptureRuntime(client=_FakePricingClient(), max_capture_lag_seconds=10**9), writer, chain_id=1)
+    conn = writer.connection
+    current_schema = list(conn.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name"))
+    tables = sorted(_table_names(path) - {"sqlite_sequence", "yoyo_lock"})
+    # Restore precisely the removed storage to exercise real DROP statements on
+    # populated tables. Retained schema/constraints are supplied by bootstrap.
+    for table, columns in {
+        "take_pricing": ("canonical_from_price_fact_id INTEGER", "from_token_price_usd TEXT"),
+        "round_pricing": ("kick_contract_expected_out_raw TEXT", "kick_start_premium_bps INTEGER"),
+        "rounds": ("minimum_price_raw TEXT", "starting_price_raw TEXT", "step_decay_rate_raw TEXT", "step_duration_raw TEXT", "auction_length_raw TEXT"),
+        "auctions": ("has_enabled_tokens INTEGER NOT NULL DEFAULT 0",),
+    }.items():
+        for column in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+    conn.execute("CREATE TABLE auction_param_history (id INTEGER PRIMARY KEY, value_text TEXT)")
+    conn.execute("INSERT INTO auction_param_history VALUES (1, 'obsolete derived value')")
+    conn.execute("DELETE FROM _yoyo_migration WHERE migration_id = '0018_legacy_cleanup'")
+    conn.commit()
+    before = {table: [dict(row) for row in conn.execute(f'SELECT * FROM "{table}"')] for table in tables if not table.startswith('_yoyo')}
+    assert has_pending_migrations(path)
 
-    assert decoded == {
-        "starting_price": "100",
-        "minimum_price": "50",
-        "step_decay_percent": "0.25",
-        "step_duration_seconds": 60,
-        "auction_length_seconds": 86400,
-    }
+    if interrupt_migration:
+        old_schema = list(conn.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name"))
+        from yoyo.backends.core.sqlite3 import SQLiteBackend
+        real_connect = SQLiteBackend.connect
 
+        def fail_last_drop(backend, uri):
+            connection = real_connect(backend, uri)
+            connection.set_authorizer(
+                lambda action, name, *_: sqlite3.SQLITE_DENY
+                if action == sqlite3.SQLITE_DROP_TABLE and name == "auction_param_history"
+                else sqlite3.SQLITE_OK
+            )
+            return connection
 
-def _build_older_schema_db(db_path) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE tokens (
-                chain_id INTEGER NOT NULL,
-                token_address TEXT NOT NULL,
-                symbol TEXT,
-                name TEXT,
-                decimals INTEGER,
-                logo_url TEXT,
-                metadata_updated_at INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, token_address)
-            );
+        with monkeypatch.context() as patch:
+            patch.setattr(SQLiteBackend, "connect", fail_last_drop)
+            with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                apply_pending_migrations(path)
+        assert list(conn.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name")) == old_schema
+        assert {table: [dict(row) for row in conn.execute(f'SELECT * FROM "{table}"')] for table in before} == before
+        assert has_pending_migrations(path)
 
-            CREATE TABLE auctions (
-                chain_id INTEGER NOT NULL,
-                auction_address TEXT NOT NULL,
-                factory_address TEXT NOT NULL,
-                version TEXT NOT NULL,
-                capability_family TEXT NOT NULL,
-                governance TEXT,
-                receiver TEXT,
-                want_token TEXT,
-                has_enabled_tokens INTEGER NOT NULL DEFAULT 0,
-                deployment_block INTEGER NOT NULL,
-                latest_lifecycle_block INTEGER NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, auction_address)
-            );
+    apply_pending_migrations(path)
+    assert not has_pending_migrations(path)
+    assert "auction_param_history" not in _table_names(path)
+    # SQLite may change SQL whitespace on DROP COLUMN; definitions and indexes
+    # must otherwise be identical to fresh bootstrap.
+    normalize = lambda rows: [(row[0], "".join((row[1] or "").split())) for row in rows]
+    assert normalize(conn.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name")) == normalize(current_schema)
+    for table, old_rows in before.items():
+        columns = [row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')]
+        assert [dict(row) for row in conn.execute(f'SELECT * FROM "{table}"')] == [
+            {key: row[key] for key in columns} for row in old_rows
+        ]
+    after = list(conn.iterdump())
+    apply_pending_migrations(path)
+    assert list(conn.iterdump()) == after
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert list(conn.execute("PRAGMA foreign_key_check")) == []
 
-            CREATE TABLE auction_current_params (
-                chain_id INTEGER NOT NULL,
-                auction_address TEXT NOT NULL,
-                receiver TEXT,
-                minimum_price_raw TEXT,
-                starting_price_raw TEXT,
-                step_decay_rate_raw TEXT,
-                step_duration_raw TEXT,
-                auction_length_raw TEXT,
-                extra_params_json TEXT,
-                last_updated_block INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, auction_address)
-            );
-
-            CREATE TABLE rounds (
-                chain_id INTEGER NOT NULL,
-                auction_address TEXT NOT NULL,
-                round_id INTEGER NOT NULL,
-                from_token TEXT NOT NULL,
-                want_token TEXT,
-                status TEXT NOT NULL,
-                kicked_at INTEGER NOT NULL,
-                end_at INTEGER,
-                settled_at INTEGER,
-                initial_available_raw TEXT NOT NULL,
-                remaining_available_raw TEXT NOT NULL,
-                sold_amount_raw TEXT NOT NULL,
-                paid_amount_raw TEXT NOT NULL,
-                take_count INTEGER NOT NULL DEFAULT 0,
-                last_take_at INTEGER,
-                last_take_price_raw TEXT,
-                receiver TEXT,
-                minimum_price_raw TEXT,
-                starting_price_raw TEXT,
-                step_decay_rate_raw TEXT,
-                step_duration_raw TEXT,
-                auction_length_raw TEXT,
-                snapshot_block INTEGER NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, auction_address, round_id)
-            );
-
-            CREATE TABLE round_param_snapshot (
-                chain_id INTEGER NOT NULL,
-                auction_address TEXT NOT NULL,
-                round_id INTEGER NOT NULL,
-                from_token TEXT NOT NULL,
-                want_token TEXT,
-                version TEXT NOT NULL,
-                snapshot_block INTEGER NOT NULL,
-                snapshot_tx_hash TEXT NOT NULL,
-                snapshot_log_index INTEGER NOT NULL,
-                receiver TEXT,
-                minimum_price_raw TEXT,
-                starting_price_raw TEXT,
-                step_decay_rate_raw TEXT,
-                step_duration_raw TEXT,
-                auction_length_raw TEXT,
-                extra_params_json TEXT,
-                created_at INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, auction_address, round_id)
-            );
-
-            CREATE TABLE domain_events (
-                chain_id INTEGER NOT NULL,
-                block_number INTEGER NOT NULL,
-                block_hash TEXT NOT NULL,
-                tx_hash TEXT NOT NULL,
-                tx_index INTEGER NOT NULL,
-                log_index INTEGER NOT NULL,
-                event_name TEXT NOT NULL,
-                address TEXT NOT NULL,
-                auction_address TEXT NOT NULL,
-                version TEXT NOT NULL,
-                capability_family TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                PRIMARY KEY (chain_id, tx_hash, log_index)
-            );
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO tokens (
-                chain_id, token_address, symbol, name, decimals, logo_url, metadata_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (1, DEFAULT_WANT_TOKEN, "WANT", "Want Token", 6, None, 111),
-        )
-        conn.execute(
-            """
-            INSERT INTO auctions (
-                chain_id, auction_address, factory_address, version, capability_family,
-                governance, receiver, want_token, has_enabled_tokens, deployment_block,
-                latest_lifecycle_block, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                1,
-                DEFAULT_AUCTION,
-                DEFAULT_FACTORY,
-                "1.0.4",
-                "1.0.4",
-                DEFAULT_GOVERNANCE,
-                DEFAULT_RECEIVER,
-                DEFAULT_WANT_TOKEN,
-                1,
-                100,
-                102,
-                1_700_000_100,
-                1_700_000_102,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO auction_current_params (
-                chain_id, auction_address, receiver, minimum_price_raw, starting_price_raw,
-                step_decay_rate_raw, step_duration_raw, auction_length_raw, extra_params_json,
-                last_updated_block, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                1,
-                DEFAULT_AUCTION,
-                DEFAULT_RECEIVER,
-                "50",
-                "100",
-                "25",
-                "60",
-                "86400",
-                "{}",
-                100,
-                1_700_000_100,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO rounds (
-                chain_id, auction_address, round_id, from_token, want_token, status, kicked_at,
-                end_at, settled_at, initial_available_raw, remaining_available_raw, sold_amount_raw,
-                paid_amount_raw, take_count, last_take_at, last_take_price_raw, receiver,
-                minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
-                auction_length_raw, snapshot_block, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                1,
-                DEFAULT_AUCTION,
-                1,
-                DEFAULT_FROM_TOKEN,
-                DEFAULT_WANT_TOKEN,
-                "live",
-                1_700_000_102,
-                1_700_086_502,
-                None,
-                "500000000000000000000",
-                "500000000000000000000",
-                "0",
-                "0",
-                0,
-                None,
-                None,
-                DEFAULT_RECEIVER,
-                "50",
-                "100",
-                "25",
-                "60",
-                "86400",
-                102,
-                1_700_000_102,
-                1_700_000_102,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO round_param_snapshot (
-                chain_id, auction_address, round_id, from_token, want_token, version,
-                snapshot_block, snapshot_tx_hash, snapshot_log_index, receiver,
-                minimum_price_raw, starting_price_raw, step_decay_rate_raw,
-                step_duration_raw, auction_length_raw, extra_params_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                1,
-                DEFAULT_AUCTION,
-                1,
-                DEFAULT_FROM_TOKEN,
-                DEFAULT_WANT_TOKEN,
-                "1.0.4",
-                102,
-                "0x0000000000000000000000000000000000000000000000000000000000000003",
-                0,
-                DEFAULT_RECEIVER,
-                "50",
-                "100",
-                "25",
-                "60",
-                "86400",
-                "{}",
-                1_700_000_102,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO domain_events (
-                chain_id, block_number, block_hash, tx_hash, tx_index, log_index, event_name,
-                address, auction_address, version, capability_family, payload_json, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                1,
-                100,
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
-                0,
-                0,
-                "DeployedNewAuction",
-                DEFAULT_FACTORY,
-                DEFAULT_AUCTION,
-                "1.0.4",
-                "1.0.4",
-                json.dumps({"want": DEFAULT_WANT_TOKEN}),
-                1_700_000_100,
-            ),
-        )
-        conn.commit()
+    # Continue writing the migrated projections, with no reproject first.
+    update = make_prepared(event_name="UpdatedStartingPrice", tx_nonce=5, block_number=104, payload={"startingPrice": 75})
+    writer.transaction(lambda db: apply_batch(db, [update]))
+    writer.transaction(lambda db: rebuild_pricing_projections(db, chain_id=1))
+    assert writer.fetchone("SELECT starting_price FROM auction_current_params")[0] == "75"
+    client = TestClient(create_app(db_path=str(path)))
+    assert client.get("/api/rounds").status_code == 200
+    assert client.get(f"/api/takes/1/0x{103:064x}/0x{4:064x}/4").json()["amount_paid_usd"] == "150"
 
 
 def _restore_pre_compaction_pricing_tables(conn: sqlite3.Connection) -> None:
@@ -859,78 +653,6 @@ def test_apply_pending_migrations_stamps_current_schema_without_losing_data(tmp_
             (DEFAULT_WANT_TOKEN,),
         ).fetchone()
     assert row == ("WANT", 222)
-    assert has_pending_migrations(db_path) is False
-
-
-def test_apply_pending_migrations_upgrades_older_db(tmp_path):
-    db_path = tmp_path / "auctionscan.sqlite3"
-    _build_older_schema_db(db_path)
-
-    assert has_pending_migrations(db_path) is True
-
-    apply_pending_migrations(db_path)
-
-    with sqlite3.connect(db_path) as conn:
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
-        token_columns = {row[1] for row in conn.execute("PRAGMA table_info(tokens)").fetchall()}
-        round_columns = {row[1] for row in conn.execute("PRAGMA table_info(rounds)").fetchall()}
-        snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(round_param_snapshot)").fetchall()}
-        current_params = conn.execute(
-            """
-            SELECT param_schema, minimum_price, starting_price, step_decay_percent,
-                   step_duration_seconds, auction_length_seconds
-              FROM auction_current_params
-             WHERE chain_id = 1 AND auction_address = ?
-            """,
-            (DEFAULT_AUCTION,),
-        ).fetchone()
-        round_row = conn.execute(
-            """
-            SELECT scheduled_end_at, minimum_price, starting_price, step_decay_percent,
-                   step_duration_seconds, auction_length_seconds
-              FROM rounds
-             WHERE chain_id = 1 AND auction_address = ? AND round_id = 1
-            """,
-            (DEFAULT_AUCTION,),
-        ).fetchone()
-        snapshot_row = conn.execute(
-            """
-            SELECT param_schema
-              FROM round_param_snapshot
-             WHERE chain_id = 1 AND auction_address = ? AND round_id = 1
-            """,
-            (DEFAULT_AUCTION,),
-        ).fetchone()
-        deploy_fact = conn.execute(
-            """
-            SELECT snapshot_kind, param_schema, want_token, governance, receiver,
-                   minimum_price_raw, starting_price_raw, step_decay_rate_raw,
-                   step_duration_raw, auction_length_raw
-              FROM auction_snapshot_facts
-             WHERE chain_id = 1 AND auction_address = ?
-            """,
-            (DEFAULT_AUCTION,),
-        ).fetchone()
-
-    assert {"logo_url", "logo_source", "logo_checked_at"}.isdisjoint(token_columns)
-    assert {"scheduled_end_at", "minimum_price", "starting_price", "step_decay_percent"} <= round_columns
-    assert "param_schema" in snapshot_columns
-    assert "address_aliases" in tables
-    assert current_params == ("v1_wad_bps", "0.00000000000000005", "100", "0.25", 60, 86400)
-    assert round_row == (1_700_086_502, "0.00000000000000005", "100", "0.25", 60, 86400)
-    assert snapshot_row == ("v1_wad_bps",)
-    assert deploy_fact == (
-        "deploy",
-        "v1_wad_bps",
-        DEFAULT_WANT_TOKEN,
-        DEFAULT_GOVERNANCE,
-        DEFAULT_RECEIVER,
-        "50",
-        "100",
-        "25",
-        "60",
-        "86400",
-    )
     assert has_pending_migrations(db_path) is False
 
 

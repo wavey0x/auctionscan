@@ -321,49 +321,6 @@ def _upsert_current_params(conn, event, snapshot: AuctionSnapshot | None, *, blo
     )
 
 
-def _append_param_history(conn, event, param_key: str, value_text: str | None, value_json: str | None) -> None:
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO auction_param_history (
-            chain_id, auction_address, param_key, value_text, value_json, source_event,
-            version, effective_block, tx_hash, log_index
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event.chain_id,
-            event.auction_address,
-            param_key,
-            value_text,
-            value_json,
-            event.event_name,
-            event.version,
-            event.block_number,
-            event.tx_hash,
-            event.log_index,
-        ),
-    )
-
-
-def _recompute_enabled_tokens(conn, chain_id: int, auction_address: str) -> None:
-    row = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-          FROM auction_tokens
-         WHERE chain_id = ? AND auction_address = ? AND currently_enabled = 1
-        """,
-        (chain_id, auction_address),
-    ).fetchone()
-    conn.execute(
-        """
-        UPDATE auctions
-           SET has_enabled_tokens = ?,
-               updated_at = ?
-         WHERE chain_id = ? AND auction_address = ?
-        """,
-        (1 if int(row["count"]) > 0 else 0, _now(), chain_id, auction_address),
-    )
-
-
 def _project_deployment(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     snapshot = prepared.snapshot
@@ -404,9 +361,9 @@ def _project_deployment(conn, prepared: PreparedEvent) -> None:
         """
         INSERT INTO auctions (
             chain_id, auction_address, factory_address, version, capability_family,
-            governance, receiver, want_token, has_enabled_tokens, deployment_block,
+            governance, receiver, want_token, deployment_block,
             latest_lifecycle_block, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chain_id, auction_address) DO UPDATE SET
             factory_address = excluded.factory_address,
             version = excluded.version,
@@ -490,7 +447,6 @@ def _project_auction_enabled(conn, prepared: PreparedEvent) -> None:
         """,
         (want_token, event.block_number, _now(), event.chain_id, event.auction_address),
     )
-    _recompute_enabled_tokens(conn, event.chain_id, event.auction_address)
 
 
 def _project_auction_disabled(conn, prepared: PreparedEvent) -> None:
@@ -523,7 +479,6 @@ def _project_auction_disabled(conn, prepared: PreparedEvent) -> None:
         """,
         (event.block_number, _now(), event.chain_id, event.auction_address),
     )
-    _recompute_enabled_tokens(conn, event.chain_id, event.auction_address)
 
 
 def _project_kick(conn, prepared: PreparedEvent) -> None:
@@ -547,10 +502,9 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
             chain_id, auction_address, round_id, from_token, want_token, status, kicked_at,
             scheduled_end_at, end_at, settled_at, initial_available_raw, remaining_available_raw, sold_amount_raw,
             paid_amount_raw, take_count, last_take_at, last_take_price_raw, receiver,
-            minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
-            auction_length_raw, minimum_price, starting_price, step_decay_percent,
+            minimum_price, starting_price, step_decay_percent,
             step_duration_seconds, auction_length_seconds, snapshot_block, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'live', ?, ?, ?, NULL, ?, ?, '0', NULL, 0, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'live', ?, ?, ?, NULL, ?, ?, '0', NULL, 0, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chain_id, auction_address, round_id) DO NOTHING
         """,
         (
@@ -565,11 +519,6 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
             initial_available_raw,
             initial_available_raw,
             snapshot.receiver,
-            snapshot.minimum_price_raw,
-            snapshot.starting_price_raw,
-            snapshot.step_decay_rate_raw,
-            snapshot.step_duration_raw,
-            snapshot.auction_length_raw,
             decoded.minimum_price,
             decoded.starting_price,
             decoded.step_decay_percent,
@@ -646,7 +595,6 @@ def _project_param_event(conn, prepared: PreparedEvent) -> None:
             block_number=event.block_number,
             updated_at=now,
         )
-        _append_param_history(conn, event, "letCowPeek", "1" if event.payload["letCowPeek"] else "0", merged)
         return
 
     column_name, payload_key = PARAM_EVENT_FIELDS[event.event_name]
@@ -696,7 +644,6 @@ def _project_param_event(conn, prepared: PreparedEvent) -> None:
             """,
             (event.block_number, now, event.chain_id, event.auction_address),
         )
-    _append_param_history(conn, event, column_name, value_text, None)
 
 
 def _project_settled(conn, prepared: PreparedEvent) -> None:
@@ -1079,7 +1026,6 @@ def clear_projection_state(conn, chain_id: int) -> None:
     clear_take_state(conn, chain_id)
     conn.execute("DELETE FROM tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM tracked_auctions WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM auction_param_history WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_current_params WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM rounds WHERE chain_id = ?", (chain_id,))
@@ -1096,7 +1042,6 @@ def clear_rebuildable_chain_state(conn, chain_id: int) -> None:
     conn.execute("DELETE FROM round_pricing WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM taker_summary WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM takes WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM auction_param_history WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_current_params WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM rounds WHERE chain_id = ?", (chain_id,))

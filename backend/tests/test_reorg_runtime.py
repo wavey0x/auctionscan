@@ -789,7 +789,6 @@ RECOVERY_PROJECTIONS = (
     "tokens",
     "auction_tokens",
     "auction_current_params",
-    "auction_param_history",
     "rounds",
     "takes",
     "taker_summary",
@@ -809,7 +808,7 @@ def _projection_values(writer):
             values = dict(row)
             for key in ("created_at", "updated_at", "metadata_updated_at"):
                 values.pop(key, None)
-            if table in {"auction_param_history", "takes"}:
+            if table == "takes":
                 values.pop("id", None)
             rows.append(values)
         result[table] = rows

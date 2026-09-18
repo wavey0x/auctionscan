@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from backend.indexer.auction_params import RawAuctionParams, decode_params as canonical_decode_params, param_schema_for_version
 from backend.indexer.observations import OBSERVATION_SCHEMA
 
 CURRENT_SCHEMA_SQL = """
@@ -129,7 +128,6 @@ CREATE TABLE IF NOT EXISTS auctions (
     governance TEXT,
     receiver TEXT,
     want_token TEXT,
-    has_enabled_tokens INTEGER NOT NULL DEFAULT 0,
     deployment_block INTEGER NOT NULL,
     latest_lifecycle_block INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
@@ -172,21 +170,6 @@ CREATE TABLE IF NOT EXISTS auction_current_params (
     PRIMARY KEY (chain_id, auction_address)
 );
 
-CREATE TABLE IF NOT EXISTS auction_param_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chain_id INTEGER NOT NULL,
-    auction_address TEXT NOT NULL,
-    param_key TEXT NOT NULL,
-    value_text TEXT,
-    value_json TEXT,
-    source_event TEXT NOT NULL,
-    version TEXT NOT NULL,
-    effective_block INTEGER NOT NULL,
-    tx_hash TEXT NOT NULL,
-    log_index INTEGER NOT NULL,
-    UNIQUE (chain_id, auction_address, tx_hash, log_index)
-);
-
 CREATE TABLE IF NOT EXISTS rounds (
     chain_id INTEGER NOT NULL,
     auction_address TEXT NOT NULL,
@@ -208,11 +191,6 @@ CREATE TABLE IF NOT EXISTS rounds (
     last_take_at INTEGER,
     last_take_price_raw TEXT,
     receiver TEXT,
-    minimum_price_raw TEXT,
-    starting_price_raw TEXT,
-    step_decay_rate_raw TEXT,
-    step_duration_raw TEXT,
-    auction_length_raw TEXT,
     minimum_price TEXT,
     starting_price TEXT,
     step_decay_percent TEXT,
@@ -428,14 +406,12 @@ CREATE TABLE IF NOT EXISTS take_pricing (
     take_seq INTEGER NOT NULL,
     canonical_quote_fact_id INTEGER,
     canonical_want_price_fact_id INTEGER,
-    canonical_from_price_fact_id INTEGER,
     amount_taken_raw TEXT NOT NULL,
     actual_paid_raw TEXT,
     expected_paid_raw TEXT,
     market_quote_out_raw TEXT,
     market_quote_out_usd TEXT,
     want_token_price_usd TEXT,
-    from_token_price_usd TEXT,
     auction_profit_raw TEXT,
     auction_profit_bps INTEGER,
     auction_profit_usd TEXT,
@@ -473,8 +449,6 @@ CREATE TABLE IF NOT EXISTS round_pricing (
     kick_quote_fact_id INTEGER,
     kick_market_quote_out_raw TEXT,
     kick_market_quote_usd TEXT,
-    kick_contract_expected_out_raw TEXT,
-    kick_start_premium_bps INTEGER,
     total_actual_paid_raw TEXT,
     total_market_quote_out_raw TEXT,
     paid_usd_take_count INTEGER NOT NULL DEFAULT 0,
@@ -585,15 +559,7 @@ def ensure_current_schema(conn) -> None:
     conn.row_factory = sqlite3.Row
     conn.executescript(CURRENT_SCHEMA_SQL)
     conn.executescript(OBSERVATION_SCHEMA)
-    _ensure_pricing_fact_columns(conn)
-    _ensure_pricing_source_linkage(conn)
-    _ensure_auction_current_params_columns(conn)
-    _ensure_rounds_columns(conn)
-    _ensure_round_param_snapshot_columns(conn)
-    _backfill_round_param_snapshot_param_schema(conn)
-    _backfill_auction_current_params(conn)
-    _backfill_rounds(conn)
-    _backfill_auction_snapshot_facts(conn)
+
 
 def _ensure_pricing_fact_columns(conn) -> None:
     _add_column_if_missing(
@@ -670,258 +636,6 @@ def _ensure_pricing_source_linkage(conn) -> None:
 
     _backfill_pricing_source_linkage(conn, "pricing_quote_facts")
     _backfill_pricing_source_linkage(conn, "pricing_price_facts")
-
-
-def _ensure_auction_current_params_columns(conn) -> None:
-    _add_column_if_missing(conn, "auction_current_params", "param_schema", "param_schema TEXT")
-    _add_column_if_missing(conn, "auction_current_params", "minimum_price", "minimum_price TEXT")
-    _add_column_if_missing(conn, "auction_current_params", "starting_price", "starting_price TEXT")
-    _add_column_if_missing(conn, "auction_current_params", "step_decay_percent", "step_decay_percent TEXT")
-    _add_column_if_missing(
-        conn,
-        "auction_current_params",
-        "step_duration_seconds",
-        "step_duration_seconds INTEGER",
-    )
-    _add_column_if_missing(
-        conn,
-        "auction_current_params",
-        "auction_length_seconds",
-        "auction_length_seconds INTEGER",
-    )
-
-
-def _ensure_rounds_columns(conn) -> None:
-    _add_column_if_missing(conn, "rounds", "scheduled_end_at", "scheduled_end_at INTEGER")
-    _add_column_if_missing(conn, "rounds", "minimum_price", "minimum_price TEXT")
-    _add_column_if_missing(conn, "rounds", "starting_price", "starting_price TEXT")
-    _add_column_if_missing(conn, "rounds", "step_decay_percent", "step_decay_percent TEXT")
-    _add_column_if_missing(conn, "rounds", "step_duration_seconds", "step_duration_seconds INTEGER")
-    _add_column_if_missing(conn, "rounds", "auction_length_seconds", "auction_length_seconds INTEGER")
-
-
-def _ensure_round_param_snapshot_columns(conn) -> None:
-    _add_column_if_missing(conn, "round_param_snapshot", "param_schema", "param_schema TEXT")
-
-
-def _backfill_round_param_snapshot_param_schema(conn) -> None:
-    if not _table_exists(conn, "round_param_snapshot"):
-        return
-    rows = conn.execute(
-        """
-        SELECT rowid AS migration_rowid, version, param_schema
-          FROM round_param_snapshot
-        """
-    ).fetchall()
-    for row in rows:
-        if row["param_schema"]:
-            continue
-        conn.execute(
-            "UPDATE round_param_snapshot SET param_schema = ? WHERE rowid = ?",
-            (param_schema_for_version(row["version"]), row["migration_rowid"]),
-        )
-
-
-def _backfill_auction_current_params(conn) -> None:
-    if not _table_exists(conn, "auction_current_params"):
-        return
-    rows = conn.execute(
-        """
-        SELECT acp.rowid AS migration_rowid,
-               acp.param_schema,
-               acp.receiver,
-               acp.minimum_price_raw,
-               acp.starting_price_raw,
-               acp.step_decay_rate_raw,
-               acp.step_duration_raw,
-               acp.auction_length_raw,
-               acp.extra_params_json,
-               a.version
-          FROM auction_current_params acp
-          LEFT JOIN auctions a
-            ON a.chain_id = acp.chain_id
-           AND a.auction_address = acp.auction_address
-        """
-    ).fetchall()
-    for row in rows:
-        param_schema = row["param_schema"] or param_schema_for_version(row["version"])
-        decoded = decode_params(
-            param_schema,
-            minimum_price_raw=row["minimum_price_raw"],
-            starting_price_raw=row["starting_price_raw"],
-            step_decay_rate_raw=row["step_decay_rate_raw"],
-            step_duration_raw=row["step_duration_raw"],
-            auction_length_raw=row["auction_length_raw"],
-        )
-        conn.execute(
-            """
-            UPDATE auction_current_params
-               SET param_schema = ?,
-                   minimum_price = ?,
-                   starting_price = ?,
-                   step_decay_percent = ?,
-                   step_duration_seconds = ?,
-                   auction_length_seconds = ?,
-                   extra_params_json = ?
-             WHERE rowid = ?
-            """,
-            (
-                param_schema,
-                decoded["minimum_price"],
-                decoded["starting_price"],
-                decoded["step_decay_percent"],
-                decoded["step_duration_seconds"],
-                decoded["auction_length_seconds"],
-                row["extra_params_json"] or "{}",
-                row["migration_rowid"],
-            ),
-        )
-
-
-def _backfill_rounds(conn) -> None:
-    if not _table_exists(conn, "rounds"):
-        return
-    rows = conn.execute(
-        """
-        SELECT r.rowid AS migration_rowid,
-               r.kicked_at,
-               r.scheduled_end_at,
-               r.minimum_price_raw,
-               r.starting_price_raw,
-               r.step_decay_rate_raw,
-               r.step_duration_raw,
-               r.auction_length_raw,
-               s.param_schema AS snapshot_param_schema,
-               a.version AS auction_version
-          FROM rounds r
-          LEFT JOIN round_param_snapshot s
-            ON s.chain_id = r.chain_id
-           AND s.auction_address = r.auction_address
-           AND s.round_id = r.round_id
-          LEFT JOIN auctions a
-            ON a.chain_id = r.chain_id
-           AND a.auction_address = r.auction_address
-        """
-    ).fetchall()
-    for row in rows:
-        param_schema = row["snapshot_param_schema"] or param_schema_for_version(row["auction_version"])
-        decoded = decode_params(
-            param_schema,
-            minimum_price_raw=row["minimum_price_raw"],
-            starting_price_raw=row["starting_price_raw"],
-            step_decay_rate_raw=row["step_decay_rate_raw"],
-            step_duration_raw=row["step_duration_raw"],
-            auction_length_raw=row["auction_length_raw"],
-        )
-        scheduled_end_at = row["scheduled_end_at"]
-        if scheduled_end_at is None and row["kicked_at"] is not None and decoded["auction_length_seconds"] is not None:
-            scheduled_end_at = int(row["kicked_at"]) + int(decoded["auction_length_seconds"])
-        conn.execute(
-            """
-            UPDATE rounds
-               SET scheduled_end_at = ?,
-                   minimum_price = ?,
-                   starting_price = ?,
-                   step_decay_percent = ?,
-                   step_duration_seconds = ?,
-                   auction_length_seconds = ?
-             WHERE rowid = ?
-            """,
-            (
-                scheduled_end_at,
-                decoded["minimum_price"],
-                decoded["starting_price"],
-                decoded["step_decay_percent"],
-                decoded["step_duration_seconds"],
-                decoded["auction_length_seconds"],
-                row["migration_rowid"],
-            ),
-        )
-
-
-def _backfill_auction_snapshot_facts(conn) -> None:
-    if not _table_exists(conn, "auction_snapshot_facts") or not _table_exists(conn, "domain_events"):
-        return
-    rows = conn.execute(
-        """
-        SELECT de.chain_id,
-               de.auction_address,
-               de.version,
-               de.block_number,
-               de.tx_hash,
-               de.log_index,
-               de.timestamp,
-               de.payload_json,
-               a.want_token AS auction_want_token,
-               a.governance,
-               a.receiver AS auction_receiver,
-               acp.param_schema,
-               acp.receiver,
-               acp.minimum_price_raw,
-               acp.starting_price_raw,
-               acp.step_decay_rate_raw,
-               acp.step_duration_raw,
-               acp.auction_length_raw,
-               acp.extra_params_json
-          FROM domain_events de
-          LEFT JOIN auctions a
-            ON a.chain_id = de.chain_id
-           AND a.auction_address = de.auction_address
-          LEFT JOIN auction_current_params acp
-            ON acp.chain_id = de.chain_id
-           AND acp.auction_address = de.auction_address
-         WHERE de.event_name = 'DeployedNewAuction'
-        """
-    ).fetchall()
-    for row in rows:
-        payload = _json_loads(row["payload_json"])
-        want_token = row["auction_want_token"] or payload.get("want")
-        receiver = row["receiver"] or row["auction_receiver"]
-        param_schema = row["param_schema"] or param_schema_for_version(row["version"])
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO auction_snapshot_facts (
-                chain_id,
-                auction_address,
-                snapshot_kind,
-                round_id,
-                version,
-                param_schema,
-                block_number,
-                tx_hash,
-                log_index,
-                want_token,
-                governance,
-                receiver,
-                minimum_price_raw,
-                starting_price_raw,
-                step_decay_rate_raw,
-                step_duration_raw,
-                auction_length_raw,
-                extra_params_json,
-                created_at
-            ) VALUES (?, ?, 'deploy', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row["chain_id"],
-                row["auction_address"],
-                row["version"],
-                param_schema,
-                row["block_number"],
-                row["tx_hash"],
-                row["log_index"],
-                want_token,
-                row["governance"],
-                receiver,
-                row["minimum_price_raw"],
-                row["starting_price_raw"],
-                row["step_decay_rate_raw"],
-                row["step_duration_raw"],
-                row["auction_length_raw"],
-                row["extra_params_json"] or "{}",
-                row["timestamp"],
-            ),
-        )
 
 
 def _backfill_pricing_source_linkage(conn, table_name: str) -> None:
@@ -1079,31 +793,3 @@ def _json_loads(value: str | None) -> dict:
     except ValueError:
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
-
-def decode_params(
-    param_schema: str | None,
-    *,
-    minimum_price_raw: str | None,
-    starting_price_raw: str | None,
-    step_decay_rate_raw: str | None,
-    step_duration_raw: str | None,
-    auction_length_raw: str | None,
-) -> dict[str, object | None]:
-    decoded = canonical_decode_params(
-        param_schema,
-        RawAuctionParams(
-            minimum_price_raw=minimum_price_raw,
-            starting_price_raw=starting_price_raw,
-            step_decay_rate_raw=step_decay_rate_raw,
-            step_duration_raw=step_duration_raw,
-            auction_length_raw=auction_length_raw,
-        ),
-    )
-    return {
-        "starting_price": decoded.starting_price,
-        "minimum_price": decoded.minimum_price,
-        "step_decay_percent": decoded.step_decay_percent,
-        "step_duration_seconds": decoded.step_duration_seconds,
-        "auction_length_seconds": decoded.auction_length_seconds,
-    }

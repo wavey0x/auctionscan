@@ -835,9 +835,9 @@ def test_backfill_receiver_aliases_updates_missing_rows(tmp_path, monkeypatch):
             """
             INSERT INTO auctions (
                 chain_id, auction_address, factory_address, version, capability_family,
-                governance, receiver, want_token, has_enabled_tokens, deployment_block,
+                governance, receiver, want_token, deployment_block,
                 latest_lifecycle_block, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 1,
@@ -848,7 +848,6 @@ def test_backfill_receiver_aliases_updates_missing_rows(tmp_path, monkeypatch):
                 None,
                 DEFAULT_RECEIVER,
                 DEFAULT_WANT_TOKEN,
-                0,
                 100,
                 100,
                 100,

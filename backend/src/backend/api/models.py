@@ -209,59 +209,6 @@ class RoundDetailResponse(IndexedResponse):
     round: RoundListItem
 
 
-class AuctionRound(BaseModel):
-    occurrence: SourceOccurrence
-    round_id: int
-    kicked_at: str
-    round_start: str | None = None
-    scheduled_end_at: str | None = None
-    round_end: str | None = None
-    initial_available: str
-    is_active: bool
-    total_takes: int
-    from_token: str | None = None
-    from_token_symbol: str | None = None
-    from_token_name: str | None = None
-    from_token_decimals: int | None = None
-    from_token_logo_url: str | None = None
-    want_token: str | None = None
-    want_token_symbol: str | None = None
-    want_token_name: str | None = None
-    want_token_decimals: int | None = None
-    want_token_logo_url: str | None = None
-    receiver: str | None = None
-    receiver_name: str | None = None
-    available_amount: str | None = None
-    from_token_price_usd: str | None = None
-    want_token_price_usd: str | None = None
-    transaction_hash: str | None = None
-    version: str | None = None
-    update_interval: int | None = None
-    decay_percent: str | None = None
-    auction_length: int | None = None
-    starting_price: str | None = None
-    starting_price_per_unit: str | None = None
-    minimum_price: str | None = None
-    expected_price_per_unit: str | None = None
-    kick_market_quote: str | None = None
-    kick_market_quote_usd: str | None = None
-    paid_usd_take_count: int = 0
-    total_actual_paid_usd: str | None = None
-    total_market_quote_usd: str | None = None
-    total_auction_profit_usd: str | None = None
-    total_auction_profit_bps: float | None = None
-    usd_priced_take_count: int = 0
-    priced_take_count: int | None = None
-    total_take_count: int | None = None
-    priced_volume_share: float | None = None
-
-
-class AuctionRoundsResponse(IndexedResponse):
-    auction: str
-    rounds: list[AuctionRound]
-    total_rounds: int
-
-
 class AuctionParameters(BaseModel):
     update_interval: int | None = None
     decay_percent: str | None = None
@@ -349,7 +296,6 @@ class TakeListItem(BaseModel):
     to_token_name: str | None = None
     to_token_decimals: int | None = None
     to_token_logo_url: str | None = None
-    amount_taken_usd: str | None = None
     amount_paid_usd: str | None = None
     market_quote_out: str | None = None
     market_quote_out_usd: str | None = None
@@ -379,8 +325,6 @@ class PricingQuoteProvider(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     error_retry_after_ms: int | None = None
-    route: dict[str, object] | None = None
-    raw_provider_payload: dict[str, object] | None = None
 
 
 class PricingQuoteFact(BaseModel):
@@ -409,7 +353,6 @@ class PricingPriceProvider(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     error_retry_after_ms: int | None = None
-    raw_provider_payload: dict[str, object] | None = None
 
 
 class PricingPriceFact(BaseModel):
@@ -425,17 +368,8 @@ class PricingPriceFact(BaseModel):
 
 
 class TakeDetail(TakeListItem):
-    auction_address: str
-    token_prices: list[dict] | None = None
-    take_quotes: list[dict] | None = None
     quote_facts: list[PricingQuoteFact] | None = None
     price_facts: list[PricingPriceFact] | None = None
-    gas_price: int | None = None
-    base_fee: int | None = None
-    priority_fee: int | None = None
-    gas_used: int | None = None
-    transaction_fee_eth: float | None = None
-    transaction_fee_usd: float | None = None
 
 
 class AuctionTakesResponse(IndexedResponse):
@@ -509,11 +443,9 @@ class TakerTake(BaseModel):
     auction_address: str
     round_id: int
     take_seq: int | None = None
-    sequence: int | None = None
     taker: str
     timestamp: str
     tx_hash: str
-    sold: str | None = None
     amount_taken: str | None = None
     amount_paid: str | None = None
     expected_amount_paid: str | None = None

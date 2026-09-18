@@ -1203,10 +1203,12 @@ def test_take_and_round_api_surfaces_use_canonical_pricing(tmp_path):
     assert take_payload["quote_facts"][0]["provider_success_count"] == 3
     assert take_payload["price_facts"][0]["canonical_price_usd"] == "1"
     quote_provider = take_payload["quote_facts"][0]["providers"][0]
-    assert quote_provider["route"] == {"provider": quote_provider["provider_id"]}
-    assert quote_provider["raw_provider_payload"]["amount_out"] is not None
+    assert {"route", "raw_provider_payload"}.isdisjoint(quote_provider)
+    assert quote_provider["amount_out_raw"] is not None
+    assert quote_provider["participation_status"] == "ok"
     price_provider = take_payload["price_facts"][0]["providers"][0]
-    assert price_provider["raw_provider_payload"]["price"] is not None
+    assert "raw_provider_payload" not in price_provider
+    assert price_provider["price_usd"] == "0.99"
     assert take_payload["pricing_by_source"] == {
         "canonical": {
             "market_quote_out": "140",

@@ -84,7 +84,7 @@ it("replaces the route when a selected take moves rounds, preserving search and 
   }));
   vi.spyOn(api, "getTake").mockResolvedValue({
     occurrence: takeOccurrence, round_occurrence: correctedOccurrence,
-    auction, auction_address: auction, chain_id: 1, round_id: 2, take_seq: 1, taker: auction,
+    auction, chain_id: 1, round_id: 2, take_seq: 1, taker: auction,
     amount_taken: "1", amount_paid: "2", timestamp: "2026-09-17T12:00:00Z",
     tx_hash: takeOccurrence.tx_hash, block_number: 100, confirmed: true,
   });

@@ -51,23 +51,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/auctions/{auction_address}/rounds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Auction Rounds */
-        get: operations["get_auction_rounds_api_auctions__auction_address__rounds_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/auctions/{auction_address}/takes": {
         parameters: {
             query?: never;
@@ -361,115 +344,6 @@ export interface components {
             /** Update Interval */
             update_interval?: number | null;
         };
-        /** AuctionRound */
-        AuctionRound: {
-            /** Auction Length */
-            auction_length?: number | null;
-            /** Available Amount */
-            available_amount?: string | null;
-            /** Decay Percent */
-            decay_percent?: string | null;
-            /** Expected Price Per Unit */
-            expected_price_per_unit?: string | null;
-            /** From Token */
-            from_token?: string | null;
-            /** From Token Decimals */
-            from_token_decimals?: number | null;
-            /** From Token Logo Url */
-            from_token_logo_url?: string | null;
-            /** From Token Name */
-            from_token_name?: string | null;
-            /** From Token Price Usd */
-            from_token_price_usd?: string | null;
-            /** From Token Symbol */
-            from_token_symbol?: string | null;
-            /** Initial Available */
-            initial_available: string;
-            /** Is Active */
-            is_active: boolean;
-            /** Kick Market Quote */
-            kick_market_quote?: string | null;
-            /** Kick Market Quote Usd */
-            kick_market_quote_usd?: string | null;
-            /** Kicked At */
-            kicked_at: string;
-            /** Minimum Price */
-            minimum_price?: string | null;
-            occurrence: components["schemas"]["SourceOccurrence"];
-            /**
-             * Paid Usd Take Count
-             * @default 0
-             */
-            paid_usd_take_count: number;
-            /** Priced Take Count */
-            priced_take_count?: number | null;
-            /** Priced Volume Share */
-            priced_volume_share?: number | null;
-            /** Receiver */
-            receiver?: string | null;
-            /** Receiver Name */
-            receiver_name?: string | null;
-            /** Round End */
-            round_end?: string | null;
-            /** Round Id */
-            round_id: number;
-            /** Round Start */
-            round_start?: string | null;
-            /** Scheduled End At */
-            scheduled_end_at?: string | null;
-            /** Starting Price */
-            starting_price?: string | null;
-            /** Starting Price Per Unit */
-            starting_price_per_unit?: string | null;
-            /** Total Actual Paid Usd */
-            total_actual_paid_usd?: string | null;
-            /** Total Auction Profit Bps */
-            total_auction_profit_bps?: number | null;
-            /** Total Auction Profit Usd */
-            total_auction_profit_usd?: string | null;
-            /** Total Market Quote Usd */
-            total_market_quote_usd?: string | null;
-            /** Total Take Count */
-            total_take_count?: number | null;
-            /** Total Takes */
-            total_takes: number;
-            /** Transaction Hash */
-            transaction_hash?: string | null;
-            /** Update Interval */
-            update_interval?: number | null;
-            /**
-             * Usd Priced Take Count
-             * @default 0
-             */
-            usd_priced_take_count: number;
-            /** Version */
-            version?: string | null;
-            /** Want Token */
-            want_token?: string | null;
-            /** Want Token Decimals */
-            want_token_decimals?: number | null;
-            /** Want Token Logo Url */
-            want_token_logo_url?: string | null;
-            /** Want Token Name */
-            want_token_name?: string | null;
-            /** Want Token Price Usd */
-            want_token_price_usd?: string | null;
-            /** Want Token Symbol */
-            want_token_symbol?: string | null;
-        };
-        /** AuctionRoundsResponse */
-        AuctionRoundsResponse: {
-            /** As Of */
-            as_of: {
-                [key: string]: components["schemas"]["IndexedCheckpoint"];
-            };
-            /** Auction */
-            auction: string;
-            /** Rounds */
-            rounds: components["schemas"]["AuctionRound"][];
-            /** Total Rounds */
-            total_rounds: number;
-        };
         /** AuctionTakesResponse */
         AuctionTakesResponse: {
             /** As Of */
@@ -718,10 +592,6 @@ export interface components {
             provider_id: string;
             /** Provider Position */
             provider_position: number;
-            /** Raw Provider Payload */
-            raw_provider_payload?: {
-                [key: string]: unknown;
-            } | null;
             /** Retrieved At */
             retrieved_at?: string | null;
         };
@@ -784,16 +654,8 @@ export interface components {
             provider_id: string;
             /** Provider Position */
             provider_position: number;
-            /** Raw Provider Payload */
-            raw_provider_payload?: {
-                [key: string]: unknown;
-            } | null;
             /** Retrieved At */
             retrieved_at?: string | null;
-            /** Route */
-            route?: {
-                [key: string]: unknown;
-            } | null;
         };
         /** RoundDetailResponse */
         RoundDetailResponse: {
@@ -1021,14 +883,8 @@ export interface components {
             amount_paid_usd?: string | null;
             /** Amount Taken */
             amount_taken: string;
-            /** Amount Taken Usd */
-            amount_taken_usd?: string | null;
             /** Auction */
             auction: string;
-            /** Auction Address */
-            auction_address: string;
-            /** Base Fee */
-            base_fee?: number | null;
             /** Block Number */
             block_number: number;
             /** Chain Id */
@@ -1047,10 +903,6 @@ export interface components {
             from_token_name?: string | null;
             /** From Token Symbol */
             from_token_symbol?: string | null;
-            /** Gas Price */
-            gas_price?: number | null;
-            /** Gas Used */
-            gas_used?: number | null;
             /** Market Quote Out */
             market_quote_out?: string | null;
             /** Market Quote Out Usd */
@@ -1070,8 +922,6 @@ export interface components {
             } | null;
             /** Pricing Status */
             pricing_status?: string | null;
-            /** Priority Fee */
-            priority_fee?: number | null;
             /** Provider Success Count */
             provider_success_count?: number | null;
             /** Quote Facts */
@@ -1085,10 +935,6 @@ export interface components {
             /** Round Id */
             round_id: number;
             round_occurrence: components["schemas"]["SourceOccurrence"];
-            /** Take Quotes */
-            take_quotes?: {
-                [key: string]: unknown;
-            }[] | null;
             /** Take Seq */
             take_seq: number;
             /** Taker */
@@ -1105,14 +951,6 @@ export interface components {
             to_token_name?: string | null;
             /** To Token Symbol */
             to_token_symbol?: string | null;
-            /** Token Prices */
-            token_prices?: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Transaction Fee Eth */
-            transaction_fee_eth?: number | null;
-            /** Transaction Fee Usd */
-            transaction_fee_usd?: number | null;
             /** Tx Hash */
             tx_hash: string;
             /** Want Token Price Usd */
@@ -1126,8 +964,6 @@ export interface components {
             amount_paid_usd?: string | null;
             /** Amount Taken */
             amount_taken: string;
-            /** Amount Taken Usd */
-            amount_taken_usd?: string | null;
             /** Auction */
             auction: string;
             /** Block Number */
@@ -1356,10 +1192,6 @@ export interface components {
             /** Round Id */
             round_id: number;
             round_occurrence: components["schemas"]["SourceOccurrence"];
-            /** Sequence */
-            sequence?: number | null;
-            /** Sold */
-            sold?: string | null;
             /** Take Seq */
             take_seq?: number | null;
             /** Taker */
@@ -1551,41 +1383,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuctionDetails"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_auction_rounds_api_auctions__auction_address__rounds_get: {
-        parameters: {
-            query: {
-                chain_id: number;
-                round_id?: number | null;
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                auction_address: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuctionRoundsResponse"];
                 };
             };
             /** @description Validation Error */

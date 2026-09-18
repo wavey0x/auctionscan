@@ -22,7 +22,7 @@ const round: RoundListItem = {
 };
 const take: TakeDetail = {
   occurrence: { ...occurrence, log_index: 8 }, round_occurrence: occurrence,
-  auction, auction_address: auction, chain_id: 1, round_id: 7, take_seq: 1, taker: auction,
+  auction, chain_id: 1, round_id: 7, take_seq: 1, taker: auction,
   amount_taken: "1", amount_paid: "2", price: "2", timestamp: "2026-09-17T13:00:00Z",
   tx_hash: occurrence.tx_hash, block_number: 100, confirmed: true,
   from_token: sellToken.address, from_token_symbol: sellToken.symbol,

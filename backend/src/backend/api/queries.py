@@ -463,28 +463,6 @@ def get_auction_activity(
     }
 
 
-def list_auction_rounds(
-    conn: sqlite3.Connection,
-    *,
-    chain_id: int,
-    auction_address: str,
-    round_id: int | None,
-    limit: int,
-) -> list[sqlite3.Row]:
-    where_sql, params = build_round_filters(
-        chain_id=chain_id,
-        auction_address=auction_address,
-        round_id=round_id,
-        status=None,
-        pair=None,
-        tx_hash=None,
-        time_window=None,
-        versions=None,
-    )
-    sql = _round_select_clause() + where_sql + " ORDER BY r.round_id DESC LIMIT ?"
-    return list(conn.execute(sql, (*params, limit)).fetchall())
-
-
 def list_auction_takes(
     conn: sqlite3.Connection,
     *,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, localcontext
 
@@ -11,7 +10,6 @@ from backend.indexer.pricing_summary import summarize_quote, summarize_price
 from .queries import occurrence_from_row
 from .models import (
     AuctionListItem,
-    AuctionRound,
     PricingPriceFact,
     PricingPriceProvider,
     PricingQuoteFact,
@@ -286,66 +284,6 @@ def round_list_item_from_row(row, *, pricing_by_source: dict | None = None) -> R
     )
 
 
-def auction_round_from_row(row) -> AuctionRound:
-    from_decimals = int(row["from_token_decimals"]) if row["from_token_decimals"] is not None else None
-    want_decimals = int(row["want_token_decimals"]) if row["want_token_decimals"] is not None else None
-    return AuctionRound(
-        occurrence=occurrence_from_row(row, kick=True),
-        round_id=int(row["round_id"]),
-        kicked_at=iso_utc(row["kicked_at"]),
-        round_start=iso_utc(row["kicked_at"]),
-        scheduled_end_at=iso_utc(row["scheduled_end_at"]),
-        round_end=iso_utc(row["end_at"]),
-        initial_available=decimal_string(row["initial_available_raw"], from_decimals) or "0",
-        is_active=str(row["status"]) == "live",
-        total_takes=int(row["take_count"]),
-        from_token=checksum_address(row["from_token"]) if row["from_token"] else None,
-        from_token_symbol=row["from_token_symbol"],
-        from_token_name=row["from_token_name"],
-        from_token_decimals=from_decimals,
-        from_token_logo_url=token_logo_url(int(row["chain_id"]), row["from_token"]),
-        want_token=checksum_address(row["want_token"]) if row["want_token"] else None,
-        want_token_symbol=row["want_token_symbol"],
-        want_token_name=row["want_token_name"],
-        want_token_decimals=want_decimals,
-        want_token_logo_url=token_logo_url(int(row["chain_id"]), row["want_token"]),
-        receiver=checksum_address(row["receiver"]) if row["receiver"] else None,
-        receiver_name=row["receiver_name"],
-        available_amount=decimal_string(row["remaining_available_raw"], from_decimals),
-        from_token_price_usd=None,
-        want_token_price_usd=None,
-        transaction_hash=row["snapshot_tx_hash"],
-        version=row["version"],
-        update_interval=int(row["step_duration_seconds"]) if row["step_duration_seconds"] is not None else None,
-        decay_percent=percent_text_value(row["step_decay_percent"]),
-        auction_length=int(row["auction_length_seconds"]) if row["auction_length_seconds"] is not None else None,
-        starting_price=decimal_text_value(row["starting_price"]),
-        starting_price_per_unit=starting_price_per_unit_value(
-            starting_price=row["starting_price"],
-            initial_available_raw=row["initial_available_raw"],
-            from_decimals=from_decimals,
-        ),
-        minimum_price=decimal_text_value(row["minimum_price"]),
-        expected_price_per_unit=quote_price(
-            paid_raw=row["kick_market_quote_out_raw"],
-            sold_raw=row["initial_available_raw"],
-            from_decimals=from_decimals,
-            want_decimals=want_decimals,
-        ),
-        kick_market_quote=decimal_string(row["kick_market_quote_out_raw"], want_decimals),
-        kick_market_quote_usd=decimal_text_value(row["kick_market_quote_usd"]),
-        total_actual_paid_usd=decimal_text_value(row["total_actual_paid_usd"]),
-        paid_usd_take_count=int(row["paid_usd_take_count"] or 0),
-        usd_priced_take_count=int(row["usd_priced_take_count"] or 0),
-        total_market_quote_usd=decimal_text_value(row["total_market_quote_usd"]),
-        total_auction_profit_usd=decimal_text_value(row["total_auction_profit_usd"]),
-        total_auction_profit_bps=bps_to_percent_value(row["total_auction_profit_bps"]),
-        priced_take_count=int(row["priced_take_count"]) if row["priced_take_count"] is not None else None,
-        total_take_count=int(row["total_take_count"]) if row["total_take_count"] is not None else None,
-        priced_volume_share=float_value(row["priced_volume_share"]),
-    )
-
-
 def take_list_item_from_row(row, *, pricing_by_source: dict | None = None) -> TakeListItem:
     from_decimals = int(row["from_token_decimals"]) if row["from_token_decimals"] is not None else None
     want_decimals = int(row["to_token_decimals"]) if row["to_token_decimals"] is not None else None
@@ -383,7 +321,6 @@ def take_list_item_from_row(row, *, pricing_by_source: dict | None = None) -> Ta
         to_token_name=row["to_token_name"],
         to_token_decimals=want_decimals,
         to_token_logo_url=token_logo_url(int(row["chain_id"]), row["want_token"]),
-        amount_taken_usd=None,
         amount_paid_usd=decimal_text_value(row["priced_volume_usd"]),
         market_quote_out=decimal_string(row["market_quote_out_raw"], want_decimals),
         market_quote_out_usd=decimal_text_value(row["market_quote_out_usd"]),
@@ -401,7 +338,6 @@ def _quote_provider_from_row(
     row,
     *,
     want_decimals: int | None,
-    raw_provider_payload: dict | None,
 ) -> PricingQuoteProvider:
     return PricingQuoteProvider(
         provider_id=str(row["provider_id"]),
@@ -420,12 +356,10 @@ def _quote_provider_from_row(
         error_code=row["error_code"],
         error_message=row["error_message"],
         error_retry_after_ms=int(row["error_retry_after_ms"]) if row["error_retry_after_ms"] is not None else None,
-        route=_route_from_provider_payload(raw_provider_payload),
-        raw_provider_payload=raw_provider_payload,
     )
 
 
-def _price_provider_from_row(row, *, raw_provider_payload: dict | None) -> PricingPriceProvider:
+def _price_provider_from_row(row) -> PricingPriceProvider:
     return PricingPriceProvider(
         provider_id=str(row["provider_id"]),
         provider_position=int(row["provider_position"]),
@@ -437,48 +371,7 @@ def _price_provider_from_row(row, *, raw_provider_payload: dict | None) -> Prici
         error_code=row["error_code"],
         error_message=row["error_message"],
         error_retry_after_ms=int(row["error_retry_after_ms"]) if row["error_retry_after_ms"] is not None else None,
-        raw_provider_payload=raw_provider_payload,
     )
-
-
-def _provider_payloads_from_fact(fact) -> dict[str, dict]:
-    if not fact["aggregate_response_json"]:
-        return {}
-    try:
-        aggregate_response = json.loads(fact["aggregate_response_json"])
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(aggregate_response, dict):
-        return {}
-    providers = aggregate_response.get("providers")
-    if isinstance(providers, dict):
-        return {
-            str(provider_id): payload
-            for provider_id, payload in providers.items()
-            if isinstance(payload, dict)
-        }
-    legacy_rows = aggregate_response.get("legacy_provider_rows")
-    if not isinstance(legacy_rows, list):
-        return {}
-    return {
-        str(payload["source"]): payload
-        for payload in legacy_rows
-        if isinstance(payload, dict) and payload.get("source") is not None
-    }
-
-
-def _route_from_provider_payload(raw_provider_payload: dict | None):
-    if raw_provider_payload is None:
-        return None
-    if "route" in raw_provider_payload:
-        return raw_provider_payload.get("route")
-    routing_path = raw_provider_payload.get("routing_path")
-    if not isinstance(routing_path, str):
-        return routing_path
-    try:
-        return json.loads(routing_path)
-    except ValueError:
-        return routing_path
 
 
 def _quote_fact_models(
@@ -492,12 +385,10 @@ def _quote_fact_models(
         providers_by_fact.setdefault(int(row["quote_fact_id"]), []).append(row)
     models: list[PricingQuoteFact] = []
     for fact in quote_fact_rows:
-        provider_payloads = _provider_payloads_from_fact(fact)
         provider_models = [
             _quote_provider_from_row(
                 item,
                 want_decimals=want_decimals,
-                raw_provider_payload=provider_payloads.get(str(item["provider_id"])),
             )
             for item in providers_by_fact.get(int(fact["id"]), [])
         ]
@@ -527,12 +418,8 @@ def _price_fact_models(price_fact_rows, price_provider_rows) -> list[PricingPric
         providers_by_fact.setdefault(int(row["price_fact_id"]), []).append(row)
     models: list[PricingPriceFact] = []
     for fact in price_fact_rows:
-        provider_payloads = _provider_payloads_from_fact(fact)
         provider_models = [
-            _price_provider_from_row(
-                item,
-                raw_provider_payload=provider_payloads.get(str(item["provider_id"])),
-            )
+            _price_provider_from_row(item)
             for item in providers_by_fact.get(int(fact["id"]), [])
         ]
         summary = summarize_price(fact, providers_by_fact.get(int(fact["id"]), []))
@@ -571,35 +458,6 @@ def take_detail_from_row(
     price_models = _price_fact_models(price_fact_rows or [], price_provider_rows or [])
     return TakeDetail(
         **item.model_dump(),
-        auction_address=item.auction,
-        token_prices=[
-            {
-                "source": model.capture_state,
-                "token_address": item.to_token,
-                "token_symbol": item.to_token_symbol,
-                "price_usd": float_value(model.canonical_price_usd),
-                "block_number": item.block_number,
-                "timestamp": row["timestamp"],
-            }
-            for model in price_models
-        ] or None,
-        take_quotes=[
-            {
-                "source": model.capture_state,
-                "from_token": item.from_token,
-                "to_token": item.to_token,
-                "quote": float_value(model.canonical_amount_out),
-                "timestamp": row["timestamp"],
-                "block_number": item.block_number,
-            }
-            for model in quote_models
-        ] or None,
         quote_facts=quote_models or None,
         price_facts=price_models or None,
-        gas_price=None,
-        base_fee=None,
-        priority_fee=None,
-        gas_used=None,
-        transaction_fee_eth=None,
-        transaction_fee_usd=None,
     )

@@ -11,7 +11,6 @@ from ..models import (
     AuctionActivity,
     AuctionDetails,
     AuctionParameters,
-    AuctionRoundsResponse,
     AuctionTakesResponse,
     AuctionVersionOption,
     AuctionVersionsResponse,
@@ -23,7 +22,6 @@ from ..queries import (
     get_auction,
     get_auction_activity,
     list_auction_from_tokens,
-    list_auction_rounds,
     list_auction_takes,
     list_auction_versions,
     list_auctions,
@@ -31,7 +29,6 @@ from ..queries import (
 )
 from ..serializers import (
     auction_list_item_from_row,
-    auction_round_from_row,
     checksum_address,
     decimal_string,
     decimal_text_value,
@@ -174,36 +171,6 @@ def get_auction_detail(
             total_rounds=activity["total_rounds"],
             total_takes=activity["total_takes"],
         ),
-    )
-
-
-@router.get("/auctions/{auction_address}/rounds", response_model=AuctionRoundsResponse)
-def get_auction_rounds(
-    auction_address: str,
-    response: Response,
-    chain_id: int = Query(...),
-    round_id: int | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    db: Database = Depends(get_database),
-) -> AuctionRoundsResponse:
-    set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            rows = list_auction_rounds(
-                conn,
-                chain_id=chain_id,
-                auction_address=auction_address,
-                round_id=round_id,
-                limit=limit,
-            )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return AuctionRoundsResponse(
-        as_of=as_of,
-        auction=checksum_address(auction_address) or auction_address,
-        rounds=[auction_round_from_row(row) for row in rows],
-        total_rounds=len(rows),
     )
 
 

@@ -86,16 +86,6 @@ export default function TakeExpandedContent({
         }
       />
       <TakeExpandedField
-        label="Gas"
-        value={
-          <div className="font-mono">
-            {take.transaction_fee_eth !== null && take.transaction_fee_eth !== undefined
-              ? `${take.transaction_fee_eth.toFixed(6)} ETH`
-              : "—"}
-          </div>
-        }
-      />
-      <TakeExpandedField
         label="Transaction"
         value={<TxHashValue txHash={take.tx_hash} chainId={take.chain_id} />}
       />

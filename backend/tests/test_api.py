@@ -320,18 +320,12 @@ def test_api_rounds_auction_take_taker_and_search_routes(tmp_path):
         f"/api/auctions/{DEFAULT_AUCTION}/rounds",
         params={"chain_id": 1},
     )
-    assert auction_rounds.status_code == 200
-    auction_rounds_payload = auction_rounds.json()
-    assert auction_rounds_payload["total_rounds"] == 1
-    assert auction_rounds_payload["rounds"][0]["starting_price_per_unit"] == "0.2"
-    assert auction_rounds_payload["rounds"][0]["from_token_logo_url"] == token_logo_url(
-        1,
-        DEFAULT_FROM_TOKEN,
+    assert auction_rounds.status_code == 404
+    filtered_rounds = client.get(
+        "/api/rounds", params={"chain_id": 1, "auction_address": DEFAULT_AUCTION}
     )
-    assert auction_rounds_payload["rounds"][0]["want_token_logo_url"] == token_logo_url(
-        1,
-        DEFAULT_WANT_TOKEN,
-    )
+    assert filtered_rounds.status_code == 200
+    assert filtered_rounds.json()["rounds"] == rounds_payload["rounds"]
 
     auction_takes = client.get(
         f"/api/auctions/{DEFAULT_AUCTION}/takes",
@@ -391,6 +385,10 @@ def test_api_rounds_auction_take_taker_and_search_routes(tmp_path):
     assert take.status_code == 200
     take_payload = take.json()
     assert take_payload["take_seq"] == 1
+    assert {"auction_address", "amount_taken_usd", "token_prices", "take_quotes",
+            "gas_price", "base_fee", "priority_fee", "gas_used",
+            "transaction_fee_eth", "transaction_fee_usd"}.isdisjoint(take_payload)
+    assert take_payload["auction"] == checksum_address(DEFAULT_AUCTION)
     assert take_payload["confirmed"] is True
     assert take_payload["block_number"] == 103
     assert take_payload["price"] == "0.75"
@@ -429,6 +427,9 @@ def test_api_rounds_auction_take_taker_and_search_routes(tmp_path):
     assert taker_takes.status_code == 200
     taker_takes_payload = taker_takes.json()
     assert taker_takes_payload["total_count"] == 1
+    assert {"sequence", "sold"}.isdisjoint(taker_takes_payload["takes"][0])
+    assert taker_takes_payload["takes"][0]["take_seq"] == 1
+    assert taker_takes_payload["takes"][0]["amount_taken"] == "200"
     assert taker_takes_payload["takes"][0]["price"] == "0.75"
     assert taker_takes_payload["available_price_sources"] == [
         {
@@ -1248,3 +1249,21 @@ def test_later_kick_cannot_supply_price_to_earlier_round(tmp_path, monkeypatch):
     client = TestClient(create_app(db_path=str(db_path)))
     response = client.get(f"/api/rounds/1/{_tx_hash(102)}/{_tx_hash(3)}/0/live-price", params=LIVE_REFERENCE)
     assert response.status_code == 200 and response.json()["is_active"] is False
+
+
+def test_openapi_exposes_only_current_take_and_round_contract():
+    schema = create_app().openapi()
+    assert "/api/auctions/{auction_address}/rounds" not in schema["paths"]
+    models = schema["components"]["schemas"]
+    assert {"AuctionRound", "AuctionRoundsResponse"}.isdisjoint(models)
+    removed = {
+        "TakerTake": {"sequence", "sold"},
+        "TakeListItem": {"amount_taken_usd"},
+        "TakeDetail": {"auction_address", "amount_taken_usd", "token_prices", "take_quotes",
+                       "gas_price", "base_fee", "priority_fee", "gas_used",
+                       "transaction_fee_eth", "transaction_fee_usd"},
+        "PricingQuoteProvider": {"route", "raw_provider_payload"},
+        "PricingPriceProvider": {"raw_provider_payload"},
+    }
+    for name, keys in removed.items():
+        assert keys.isdisjoint(models[name]["properties"])

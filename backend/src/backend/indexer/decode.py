@@ -56,13 +56,11 @@ class AbiRegistry:
     def __init__(self, settings: IndexerSettings) -> None:
         self.settings = settings
         self._auction_contract_abis: dict[str, list[dict[str, Any]]] = {}
-        self._factory_contract_abis: dict[str, list[dict[str, Any]]] = {}
         self._auction_event_abis: dict[str, dict[str, dict[str, Any]]] = {}
         self._factory_event_abis: dict[str, dict[str, dict[str, Any]]] = {}
         self._auction_topics: dict[str, dict[str, str]] = {}
         self._factory_topics: dict[str, dict[str, str]] = {}
         self._registry_abi = _load_abi(settings.paths.registry_abi_path)
-        self._erc20_abi = _load_abi(settings.paths.erc20_abi_path)
         self._initialize_versions()
 
     def _initialize_versions(self) -> None:
@@ -70,7 +68,6 @@ class AbiRegistry:
             auction_abi = _load_abi(definition.auction_abi_path)
             factory_abi = _load_abi(definition.factory_abi_path)
             self._auction_contract_abis[version] = auction_abi
-            self._factory_contract_abis[version] = factory_abi
 
             auction_events = {
                 item["name"]: item
@@ -104,9 +101,6 @@ class AbiRegistry:
 
     def registry_contract(self, w3, address: str):
         return w3.eth.contract(address=w3.to_checksum_address(address), abi=self._registry_abi)
-
-    def erc20_contract(self, w3, address: str):
-        return w3.eth.contract(address=w3.to_checksum_address(address), abi=self._erc20_abi)
 
     def auction_event_topic(self, version: str, event_name: str) -> str:
         event_abi = self._auction_event_abis[version][event_name]

@@ -70,7 +70,6 @@ def test_resolve_artifact_abi_path_preserves_indexed_address_case(tmp_path):
         root_config_path=repo_root / "config.yaml",
         artifact_index_path=repo_root / "artifacts" / "auction_source" / "index.json",
         registry_abi_path=repo_root / "backend" / "abis" / "AuctionRegistry.json",
-        erc20_abi_path=repo_root / "backend" / "abis" / "ERC20.json",
     )
 
     resolved = _resolve_artifact_abi_path(
@@ -101,7 +100,6 @@ def test_resolve_artifact_abi_path_matches_case_insensitively(tmp_path):
         root_config_path=repo_root / "config.yaml",
         artifact_index_path=repo_root / "artifacts" / "auction_source" / "index.json",
         registry_abi_path=repo_root / "backend" / "abis" / "AuctionRegistry.json",
-        erc20_abi_path=repo_root / "backend" / "abis" / "ERC20.json",
     )
 
     resolved = _resolve_artifact_abi_path(

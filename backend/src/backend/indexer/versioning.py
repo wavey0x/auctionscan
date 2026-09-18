@@ -11,7 +11,6 @@ class ContractVersionMetadata:
     supported_events: tuple[str, ...]
     getter_bundle: tuple[str, ...]
     factory_abi_filename: str
-    historical: bool
 
 
 def normalize_version(value: str | None) -> str:
@@ -45,7 +44,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
         ),
         getter_bundle=("want", "governance", "startingPrice", "auctionLength"),
         factory_abi_filename="LegacyAuctionFactory.json",
-        historical=True,
     ),
     "1.0.1": ContractVersionMetadata(
         version="1.0.1",
@@ -60,7 +58,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
         ),
         getter_bundle=("want", "governance", "receiver", "startingPrice", "auctionLength"),
         factory_abi_filename="AuctionFactory.json",
-        historical=True,
     ),
     "1.0.2": ContractVersionMetadata(
         version="1.0.2",
@@ -75,7 +72,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
         ),
         getter_bundle=("want", "governance", "receiver", "startingPrice", "auctionLength"),
         factory_abi_filename="AuctionFactory.json",
-        historical=True,
     ),
     "1.0.3": ContractVersionMetadata(
         version="1.0.3",
@@ -102,7 +98,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
             "auctionLength",
         ),
         factory_abi_filename="AuctionFactory1_0_3.json",
-        historical=False,
     ),
     "1.0.3cc": ContractVersionMetadata(
         version="1.0.3cc",
@@ -131,7 +126,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
             "letCowPeek",
         ),
         factory_abi_filename="AuctionFactory1_0_3.json",
-        historical=False,
     ),
     "1.0.4": ContractVersionMetadata(
         version="1.0.4",
@@ -161,7 +155,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
             "auctionLength",
         ),
         factory_abi_filename="AuctionFactory1_0_3.json",
-        historical=False,
     ),
     "1.0.5": ContractVersionMetadata(
         version="1.0.5",
@@ -191,7 +184,6 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
             "auctionLength",
         ),
         factory_abi_filename="AuctionFactory1_0_3.json",
-        historical=False,
     ),
 }
 

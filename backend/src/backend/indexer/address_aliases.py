@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover
 
 from .chains import ChainState
 from .polling import chunked
-from .types import PreparedEvent, normalize_address
+from .types import normalize_address
 
 
 logger = logging.getLogger(__name__)
@@ -83,44 +83,6 @@ class AddressAliasUpdate:
 class AddressAliasBackfillSummary:
     checked: int
     updated: int
-
-
-def collect_receiver_alias_addresses(prepared_events: list[PreparedEvent]) -> list[str]:
-    seen: set[str] = set()
-    collected: list[str] = []
-    for prepared in prepared_events:
-        candidates = [
-            prepared.snapshot.receiver if prepared.snapshot else None,
-            prepared.domain_event.payload.get("receiver"),
-        ]
-        for value in candidates:
-            if not value:
-                continue
-            try:
-                address = normalize_address(value)
-            except ValueError:
-                continue
-            if address in seen:
-                continue
-            seen.add(address)
-            collected.append(address)
-    return collected
-
-
-def load_existing_address_aliases(conn, *, chain_id: int, addresses: list[str]) -> set[str]:
-    if not addresses:
-        return set()
-    placeholders = ", ".join("?" for _ in addresses)
-    rows = conn.execute(
-        f"""
-        SELECT address
-          FROM address_aliases
-         WHERE chain_id = ?
-           AND address IN ({placeholders})
-        """,
-        (chain_id, *addresses),
-    ).fetchall()
-    return {str(row["address"]) for row in rows}
 
 
 def load_address_alias_backfill_candidates(

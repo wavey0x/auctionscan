@@ -102,7 +102,6 @@ def _build_paths(db_path: str | None = None) -> ProjectPaths:
         root_config_path=repo_root / "config.yaml",
         artifact_index_path=repo_root / "artifacts" / "auction_source" / "index.json",
         registry_abi_path=repo_root / "backend" / "abis" / "AuctionRegistry.json",
-        erc20_abi_path=repo_root / "backend" / "abis" / "ERC20.json",
     )
 
 
@@ -223,7 +222,6 @@ def load_settings(
         name=target_network,
         chain_id=chain_id,
         rpc_url=rpc_url,
-        enabled=True,
         finality_depth=int(
             raw_network.get("finality_depth")
             or DEFAULT_FINALITY_DEPTHS.get(chain_id, 64)

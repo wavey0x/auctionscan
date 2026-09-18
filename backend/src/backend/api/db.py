@@ -39,8 +39,6 @@ class ChainMetadata:
     emoji: str | None
     disabled: bool
     start_block: int | None
-    block_lag_warn: int | None
-    block_lag_critical: int | None
 
 
 class SchemaOutdatedError(FileNotFoundError):
@@ -78,8 +76,6 @@ def load_chain_catalog() -> dict[int, ChainMetadata]:
             emoji=str(raw["emoji"]) if raw.get("emoji") else None,
             disabled=bool(raw.get("disabled", False)),
             start_block=_chain_start_block(raw),
-            block_lag_warn=int(raw["block_lag_warn"]) if raw.get("block_lag_warn") is not None else None,
-            block_lag_critical=int(raw["block_lag_critical"]) if raw.get("block_lag_critical") is not None else None,
         )
     return catalog
 

@@ -2,7 +2,6 @@ import type { paths } from "../types/generated";
 
 import type {
   AuctionDetails,
-  AuctionsResponse,
   AuctionVersionsResponse,
   AuctionTakesResponse,
   ChainsResponse,
@@ -17,7 +16,6 @@ import type {
   TakerDetail,
   TakerListResponse,
   TakerTakesResponse,
-  TokensResponse,
 } from "../types/api";
 
 function normalizeApiBase(rawBaseUrl: string | undefined): string {
@@ -89,10 +87,6 @@ export const api = {
     return fetchJson<AuctionDetails | null>(`/auctions/${address}?${buildQuery({ chain_id: chainId })}`, signal);
   },
 
-  getAuctions(params: NonNullable<paths["/api/auctions"]["get"]["parameters"]["query"]>, signal?: AbortSignal): Promise<AuctionsResponse> {
-    const query = buildQuery(params);
-    return fetchJson<AuctionsResponse>(`/auctions${query ? `?${query}` : ""}`, signal);
-  },
 
   getAuctionVersions(chainId?: number, signal?: AbortSignal): Promise<AuctionVersionsResponse> {
     const query = buildQuery({ chain_id: chainId });
@@ -140,8 +134,4 @@ export const api = {
     return fetchJson<TxResolveResponse>(`/tx/${encodeURIComponent(txHash)}/resolve`, signal);
   },
 
-  getTokens(chainId?: number, signal?: AbortSignal): Promise<TokensResponse> {
-    const query = buildQuery({ chain_id: chainId });
-    return fetchJson<TokensResponse>(`/tokens${query ? `?${query}` : ""}`, signal);
-  },
 };

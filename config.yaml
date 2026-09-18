@@ -18,8 +18,6 @@ networks:
     block_batch_size: 50000
     disabled: false
     # Block lag tolerances for health monitoring
-    block_lag_warn: 20 # show "degraded" in api when 20 blocks behind
-    block_lag_critical: 50 # show "down" in api at 50 blocks behind
     # AuctionRegistry - primary source for factory discovery
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
@@ -44,15 +42,13 @@ networks:
     block_batch_size: 50000
     poa: true
     disabled: false
-    block_lag_warn: 100 # "degraded" at 100 blocks behind
-    block_lag_critical: 200 # "down" at 200 blocks behind
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 77215119
     factories:
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 67859213
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 76488294
         version: 1.0.3
@@ -66,19 +62,18 @@ networks:
     explorer: "https://arbiscan.io"
     icon: "https://icons.llamao.fi/icons/chains/rsz_arbitrum.jpg"
     block_batch_size: 50000
-    block_lag_warn: 750 # "degraded" threshold
-    block_lag_critical: 1500 # "down" threshold
     disabled: false
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 385690411
     factories:
+      # Verified 1.0.2 fixed-decay variant with governance-only kick.
       - address: "0xCd1E4c17A5485f2a6DF1C01cC65EFDe25c951dBB"
         start_block: 358466772
-        version: legacy
+        version: 1.0.2
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 305508425
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 379483701
         version: 1.0.3
@@ -93,15 +88,13 @@ networks:
     icon: "https://icons.llamao.fi/icons/chains/rsz_optimism.jpg"
     block_batch_size: 50000
     disabled: false
-    block_lag_warn: 100 # "degraded" threshold
-    block_lag_critical: 200 # "down" threshold
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 141955023
     factories:
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 131910143
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 141180062
         version: 1.0.3
@@ -116,15 +109,13 @@ networks:
     icon: "https://icons.llamao.fi/icons/chains/rsz_base.jpg"
     block_batch_size: 50000
     disabled: false
-    block_lag_warn: 100 # "degraded" threshold
-    block_lag_critical: 200 # "down" threshold
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 36359570
     factories:
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 26314893
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 35584896
         version: 1.0.3
@@ -141,15 +132,13 @@ networks:
     emoji: "🐻"
     explorer: "https://berascan.com"
     block_batch_size: 50000
-    block_lag_warn: 50 # "degraded" threshold
-    block_lag_critical: 200 # "down" threshold
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 11299976
     factories:
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 1070705
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 10525389
         version: 1.0.3
@@ -162,26 +151,10 @@ networks:
     emoji: "🟪"
     explorer: "https://katanascan.com"
     block_batch_size: 50000
-    block_lag_warn: 75 # "degraded" threshold
-    block_lag_critical: 300 # "down" threshold
     factories:
       - address: "0xCfA510188884F199fcC6e750764FAAbE6e56ec40"
         start_block: 2237117
-        version: legacy
+        version: 1.0.2
       - address: "0xbC587a495420aBB71Bbd40A0e291B64e80117526"
         start_block: 11216721
         version: 1.0.3
-
-  local:
-    chain_id: 31337
-    rpc_url: ${ANVIL_RPC_URL:http://localhost:8545}
-    name: "Anvil Local"
-    short_name: "Anvil"
-    emoji: "🧪"
-    explorer: "#"
-    icon: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg"
-    disabled: true
-    factories:
-      - address: "${LOCAL_FACTORY_ADDRESS}"
-        start_block: 0
-        version: legacy

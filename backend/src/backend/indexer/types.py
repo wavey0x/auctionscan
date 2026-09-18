@@ -55,7 +55,6 @@ class ProjectPaths:
     root_config_path: Path
     artifact_index_path: Path
     registry_abi_path: Path
-    erc20_abi_path: Path
 
 
 @dataclass(frozen=True)
@@ -81,7 +80,6 @@ class ChainConfig:
     name: str
     chain_id: int
     rpc_url: str
-    enabled: bool
     finality_depth: int
     block_batch_size: int
     poll_interval_seconds: float

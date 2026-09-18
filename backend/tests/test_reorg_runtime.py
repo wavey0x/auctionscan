@@ -106,7 +106,6 @@ def _build_runtime(
         name="ethereum",
         chain_id=1,
         rpc_url="http://localhost:8545",
-        enabled=True,
         finality_depth=finality_depth,
         block_batch_size=10_000,
         poll_interval_seconds=1.0,

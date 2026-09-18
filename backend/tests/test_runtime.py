@@ -78,7 +78,6 @@ def _build_runtime(tmp_path, *, latest_heads: list[int], monkeypatch) -> tuple[I
         name="ethereum",
         chain_id=1,
         rpc_url="http://localhost:8545",
-        enabled=True,
         finality_depth=0,
         block_batch_size=1_000,
         poll_interval_seconds=1.0,

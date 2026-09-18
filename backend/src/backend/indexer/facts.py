@@ -348,14 +348,6 @@ def load_indexed_blocks(
 
 
 
-def prune_indexed_blocks_through(conn, *, chain_id: int, block_number: int) -> None:
-    conn.execute(
-        "DELETE FROM indexed_blocks WHERE chain_id = ? AND block_number <= ?",
-        (chain_id, block_number),
-    )
-
-
-
 def delete_fact_blocks_above(conn, *, chain_id: int, ancestor_block: int) -> None:
     conn.execute("DELETE FROM rpc_observations WHERE chain_id = ? AND block_number > ?", (chain_id, ancestor_block))
     conn.execute(

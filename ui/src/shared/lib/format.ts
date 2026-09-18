@@ -1,5 +1,5 @@
 import clsx, { type ClassValue } from "clsx";
-import { format, formatDistanceToNowStrict, fromUnixTime } from "date-fns";
+import { format, fromUnixTime } from "date-fns";
 import { getAddress, isAddress } from "viem";
 
 export function cn(...inputs: ClassValue[]) {
@@ -31,18 +31,6 @@ export function formatDateTime(value: string | number | Date | null | undefined)
 export function formatCompactDateTime(value: string | number | Date | null | undefined): string {
   const date = parseTimestamp(value);
   return date ? format(date, "MMM d HH:mm") : "—";
-}
-
-export function formatLongRelativeTime(value: string | number | Date | null | undefined): string {
-  const date = parseTimestamp(value);
-  if (!date) return "—";
-
-  const deltaMs = date.getTime() - Date.now();
-  if (Math.abs(deltaMs) < 60_000) {
-    return deltaMs >= 0 ? "in less than a minute" : "less than a minute ago";
-  }
-
-  return formatDistanceToNowStrict(date, { addSuffix: true });
 }
 
 export function formatCompactRelativeTime(value: string | number | Date | null | undefined): string {

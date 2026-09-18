@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { api } from "../../../shared/api/client";
+import { ApiError, api } from "../../../shared/api/client";
 import { formatAmount, formatDuration, formatPrice, toggleKickedDisplayMode } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
@@ -18,6 +18,7 @@ import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import AuctionVersionBadge from "../../../shared/ui/AuctionVersionBadge";
 import ChainPill from "../../../shared/ui/ChainPill";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Pagination from "../../../shared/ui/Pagination";
 import Panel from "../../../shared/ui/Panel";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
@@ -130,7 +131,13 @@ export default function AuctionPage() {
     enabled: Boolean(selectedOccurrence),
   });
 
-  const selectedTake = !selectedTakeQuery.isError && selectedTakeQuery.data?.auction.toLowerCase() === address?.toLowerCase() ? selectedTakeQuery.data : undefined;
+  const takeNotFound = selectedTakeQuery.error instanceof ApiError && selectedTakeQuery.error.status === 404;
+  const selectedTake = !takeNotFound && selectedTakeQuery.data?.auction.toLowerCase() === address?.toLowerCase() ? selectedTakeQuery.data : undefined;
+  const selectedTakeNotice = !selectedTakeParam ? null : !selectedOccurrence ? <EmptyState title="Invalid take link" /> : takeNotFound || (selectedTakeQuery.isSuccess && !selectedTake) ? (
+    <EmptyState title="Take not found" description="This occurrence is absent from the indexed auction." />
+  ) : selectedTakeQuery.isError ? (
+    <RequestError message={selectedTake ? "Could not refresh take. Showing previously loaded data." : "Unable to load take."} onRetry={() => { void selectedTakeQuery.refetch(); }} />
+  ) : null;
 
   const pairTokens = useMemo(() => {
     if (!auctionQuery.data) {
@@ -203,6 +210,10 @@ export default function AuctionPage() {
     );
   }
 
+  if (auctionQuery.isError && !auctionQuery.data) {
+    return <RequestError message="Unable to load auction." onRetry={() => { void auctionQuery.refetch(); }} />;
+  }
+
   if (!auctionQuery.data) {
     return <EmptyState title="Auction not found" description="The requested auction could not be loaded." />;
   }
@@ -212,6 +223,7 @@ export default function AuctionPage() {
 
   return (
     <div className="space-y-4">
+      {auctionQuery.isError && <RequestError message="Could not refresh auction. Showing previously loaded data." onRetry={() => { void auctionQuery.refetch(); }} />}
       <Link
         to="/"
         className="inline-flex items-center gap-2 text-meta text-tertiary underline-offset-4 transition-colors hover:text-primary hover:underline"
@@ -297,13 +309,14 @@ export default function AuctionPage() {
             Recent rounds: <span className="font-mono">{auctionQuery.data.activity.total_rounds.toLocaleString()}</span>
           </div>
         </div>
+        {roundsQuery.isError && <RequestError message={roundsQuery.data ? "Could not refresh rounds. Showing previously loaded data." : "Unable to load rounds."} onRetry={() => { void roundsQuery.refetch(); }} />}
         {roundsQuery.isLoading ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 8 }).map((_, index) => (
               <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
-        ) : roundsQuery.data?.rounds.length ? (
+        ) : roundsQuery.isError && !roundsQuery.data ? null : roundsQuery.data?.rounds.length ? (
           <AuctionRoundsTable
             rounds={roundsQuery.data.rounds}
             kickedDisplayMode={kickedDisplayMode}
@@ -363,17 +376,18 @@ export default function AuctionPage() {
             ) : null}
           </div>
           <div className="flex items-center justify-between gap-3">
-            <div className="font-mono text-meta text-tertiary">{recentTakesQuery.data?.takes.length ?? 0}</div>
+            <div className="font-mono text-meta text-tertiary">{recentTakesQuery.data?.takes.length ?? "—"}</div>
           </div>
         </div>
-        {selectedTakeParam && !selectedTakeQuery.isFetching && !selectedTake ? <EmptyState title="Take unavailable" description="This occurrence is absent from the indexed auction." /> : null}
+        {selectedTakeNotice}
+        {recentTakesQuery.isError && <RequestError message={recentTakesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void recentTakesQuery.refetch(); }} />}
         {recentTakesQuery.isLoading ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="h-14 w-full" />
             ))}
           </div>
-        ) : (
+        ) : recentTakesQuery.isError && !recentTakesQuery.data ? null : (
           <TableHoverScope>
             <AuctionTakesTable
               takes={recentTakesQuery.data?.takes || []}

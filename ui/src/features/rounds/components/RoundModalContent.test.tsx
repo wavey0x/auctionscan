@@ -72,6 +72,20 @@ it("cannot display a late price from a different indexed snapshot", async () => 
   expect(container.textContent).not.toContain("111");
 });
 
+it.each(["round-detail", "round-live-price"])("withholds a cached live price when %s refresh fails", async (key) => {
+  const roundRequest = vi.spyOn(api, "getRoundDetail").mockResolvedValue(details(100));
+  const priceRequest = vi.spyOn(api, "getRoundLivePrice").mockResolvedValue(price(100, "123.456"));
+  const { container } = mount();
+  await settle();
+  expect(container.textContent).toContain("123.456");
+  const request = key === "round-detail" ? roundRequest : priceRequest;
+  request.mockRejectedValue(new ApiError(503, "Unavailable"));
+  act(() => { void client.refetchQueries({ queryKey: [key] }); });
+  await settle(1200);
+  expect(container.textContent).not.toContain("123.456");
+  expect(container.textContent).toContain("R1");
+});
+
 it("replaces the route when a selected take moves rounds, preserving search and background state", async () => {
   const correctedOccurrence = { ...occurrence, log_index: 8 };
   const takeOccurrence = { ...occurrence, log_index: 12 };

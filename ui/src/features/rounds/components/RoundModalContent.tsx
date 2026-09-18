@@ -1,3 +1,4 @@
+import { ApiError } from "../../../shared/api/client";
 import { useRoundDetails } from "../useRoundDetails";
 import { buildRoundPath, occurrenceKey, parseOccurrence } from "../../../shared/lib/routes";
 import MetricCoverage from "../../../shared/ui/MetricCoverage";
@@ -11,6 +12,7 @@ import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Panel from "../../../shared/ui/Panel";
 import PnlValue from "../../../shared/ui/PnlValue";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
@@ -274,6 +276,8 @@ export default function RoundModalContent({
     livePriceQuery,
     round,
     selectedTake,
+    roundNotFound,
+    selectedTakeNotFound,
     priceReference,
     displayedLivePrice,
   } = useRoundDetails(chain, auctionAddress, occurrence, selectedOccurrence);
@@ -328,7 +332,15 @@ export default function RoundModalContent({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, searchParams, selectedTakeParam, setSearchParams]);
 
-  const takes = takesQuery.isError ? [] : takesQuery.data?.takes || [];
+  const takesNotFound = takesQuery.error instanceof ApiError && takesQuery.error.status === 404;
+  const takes = takesNotFound ? [] : takesQuery.data?.takes || [];
+  const selectedTakeNotice = !selectedTakeParam ? null : !selectedOccurrence ? (
+    <EmptyState title="Invalid take link" />
+  ) : selectedTakeNotFound || (selectedTakeQuery.isSuccess && !selectedTake) ? (
+    <EmptyState title="Take not found" description="This occurrence is absent from the indexed round." />
+  ) : selectedTakeQuery.isError ? (
+    <RequestError message={selectedTake ? "Could not refresh take. Showing previously loaded data." : "Unable to load take."} onRetry={() => { void selectedTakeQuery.refetch(); }} />
+  ) : null;
   const sourceOptions = takesQuery.data?.available_price_sources || [];
   const selectedPriceSource = resolvePriceSource(requestedPriceSource, sourceOptions);
   const showPriceSourceSelector = shouldShowPriceSourceSelector(sourceOptions);
@@ -344,11 +356,11 @@ export default function RoundModalContent({
     setPriceSource(selectedPriceSource);
   }, [requestedPriceSource, selectedPriceSource, sourceOptions.length]);
 
-  if (occurrence && (roundQuery.isLoading || auctionQuery.isLoading || takesQuery.isLoading)) {
+  if (occurrence && roundQuery.isLoading) {
     return <RoundModalLoadingState onClose={onClose} />;
   }
 
-  if (!round || !auctionQuery.data) {
+  if (!round) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-divider-strong bg-background/95 px-3 py-3 backdrop-blur-sm md:px-4">
@@ -356,7 +368,9 @@ export default function RoundModalContent({
           <ModalCloseButton onClose={onClose} autoFocus />
         </div>
         <div data-round-modal-scroll-root="true" className="flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
-          <EmptyState title="Round not found" description="The requested round could not be built from indexed data." />
+          {!occurrence ? <EmptyState title="Invalid round link" /> : roundQuery.isError && !roundNotFound ? (
+            <RequestError message="Unable to load round." onRetry={() => { void roundQuery.refetch(); }} />
+          ) : <EmptyState title="Round not found" description="This occurrence is absent from the indexed auction." />}
         </div>
       </div>
     );
@@ -365,7 +379,7 @@ export default function RoundModalContent({
   const roundPricing = getRoundPricingBySource(round, selectedPriceSource);
   const soldUsd = roundPricing.total_market_quote_usd ? `~${formatUsd(roundPricing.total_market_quote_usd)}` : "—";
   const receivedUsd = round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : "—";
-  const displayVersion = formatDisplayVersion(round.version ?? auctionQuery.data.version);
+  const displayVersion = formatDisplayVersion(round.version ?? auctionQuery.data?.version);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -377,7 +391,7 @@ export default function RoundModalContent({
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <HeaderMetric
               label="Auction"
-              value={<AuctionAddressValue address={auctionQuery.data.address} chainId={round.chain_id} showCowExplorerIcon />}
+              value={<AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />}
               detail={displayVersion}
             />
             <HeaderMetric
@@ -444,6 +458,9 @@ export default function RoundModalContent({
 
       <div data-round-modal-scroll-root="true" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
         <div className="space-y-4">
+          {roundQuery.isError && <RequestError message="Could not refresh round. Showing previously loaded data." onRetry={() => { void roundQuery.refetch(); }} />}
+          {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
+          {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" />}
           <RoundSettingsPanel
             round={round}
             chainId={chain}
@@ -454,7 +471,7 @@ export default function RoundModalContent({
             decay={round.decay_percent}
             livePrice={displayedLivePrice}
             isLivePriceLoading={livePriceQuery.isLoading}
-            isLivePriceError={livePriceQuery.isError || !priceReference}
+            isLivePriceError={roundQuery.isError || livePriceQuery.isError || !priceReference}
             livePriceError={livePriceQuery.error}
           />
 
@@ -469,15 +486,16 @@ export default function RoundModalContent({
                 />
               ) : null}
             </div>
-            {selectedTakeParam && !selectedTakeQuery.isFetching && !selectedTake ? <EmptyState title="Take unavailable" description="This occurrence is absent from the indexed round." /> : null}
-            <RoundTakesTable
+            {selectedTakeNotice}
+            {takesNotFound ? <EmptyState title="Round not found" description="Takes are unavailable for this occurrence." /> : takesQuery.isError ? <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} /> : null}
+            {takesQuery.isLoading ? <div className="p-3"><Skeleton className="h-32 w-full" /></div> : takesNotFound || (takesQuery.isError && !takesQuery.data) ? null : <RoundTakesTable
               takes={takes}
               priceSource={selectedPriceSource}
               selectedOccurrenceKey={selectedTakeParam}
               selectedTake={selectedTake}
               isSelectedTakeLoading={selectedTakeQuery.isLoading}
               onSelect={(key) => setSelectedTake(selectedTakeParam === key ? undefined : key)}
-            />
+            />}
           </Panel>
         </div>
       </div>

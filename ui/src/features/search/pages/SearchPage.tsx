@@ -10,6 +10,7 @@ import AddressValue from "../../../shared/ui/AddressValue";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Panel from "../../../shared/ui/Panel";
 import TokenValue from "../../../shared/ui/TokenValue";
 import TxHashValue from "../../../shared/ui/TxHashValue";
@@ -124,6 +125,9 @@ export default function SearchPage() {
         </form>
       </Panel>
 
+      {directRoundMatch && directRoundQuery.isError && <RequestError message={directRoundQuery.data ? "Could not refresh direct round lookup. Showing previously loaded data." : "Unable to look up this round."} onRetry={() => { void directRoundQuery.refetch(); }} />}
+      {directRoundMatch && directRoundQuery.isLoading && <Panel className="text-data text-tertiary">Looking up round…</Panel>}
+      {directRoundMatch && directRoundQuery.data && !directRound && <EmptyState title="Round not found" />}
       {directRoundMatch && directRound ? (
         <Panel className="space-y-2">
           <div className="metric-label">Direct round workspace</div>
@@ -139,6 +143,7 @@ export default function SearchPage() {
         </Panel>
       ) : null}
 
+      {query.trim().length >= 2 && searchQuery.isError && <RequestError message={searchQuery.data ? "Could not refresh search. Showing previously loaded data." : "Unable to search."} onRetry={() => { void searchQuery.refetch(); }} />}
       {query.trim().length < 2 ? (
         <EmptyState title="Start with a query" description="Use at least two characters for indexed search, or a chain:auction:round pattern for a direct jump." />
       ) : searchQuery.data?.results.length ? (
@@ -202,9 +207,9 @@ export default function SearchPage() {
             </div>
           </Panel>
         ))
-      ) : searchQuery.isFetching ? (
+      ) : searchQuery.isLoading ? (
         <Panel className="text-data text-tertiary">Searching…</Panel>
-      ) : (
+      ) : searchQuery.isError && !searchQuery.data ? null : (
         <EmptyState title="No matches" description="No indexed auctions, takers, transactions, or token symbols matched this query." />
       )}
     </div>

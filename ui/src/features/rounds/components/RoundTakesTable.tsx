@@ -106,9 +106,7 @@ export default function RoundTakesTable({
                     <Skeleton className="h-32 w-full" />
                   ) : selectedTake ? (
                     <TakeExpandedContent take={selectedTake} priceSource={priceSource} />
-                  ) : (
-                    <EmptyState title="Take not found" description="The selected take detail could not be loaded." />
-                  )}
+                  ) : null}
                 </div>
               ) : null}
             </StackedListRow>

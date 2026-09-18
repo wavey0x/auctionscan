@@ -11,6 +11,7 @@ import { buildTakePath, withBackgroundLocation } from "../../../shared/lib/route
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Pagination from "../../../shared/ui/Pagination";
 import Panel from "../../../shared/ui/Panel";
 import PnlValue from "../../../shared/ui/PnlValue";
@@ -77,12 +78,17 @@ export default function TakerProfilePage() {
     );
   }
 
+  if (detailQuery.isError && !detailQuery.data) {
+    return <RequestError message="Unable to load taker profile." onRetry={() => { void detailQuery.refetch(); }} />;
+  }
+
   if (!detailQuery.data) {
     return <EmptyState title="Taker not found" description="The requested taker profile could not be loaded." />;
   }
 
   return (
     <div className="space-y-4">
+      {detailQuery.isError && <RequestError message="Could not refresh taker profile. Showing previously loaded data." onRetry={() => { void detailQuery.refetch(); }} />}
       <Panel className="space-y-4">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
@@ -169,13 +175,14 @@ export default function TakerProfilePage() {
               <div className="text-heading text-primary">Recent takes</div>
             </div>
           )}
+          {takesQuery.isError && <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} />}
           {takesQuery.isLoading ? (
             <div className="space-y-2 p-3">
               {Array.from({ length: 8 }).map((_, index) => (
                 <Skeleton key={index} className="h-10 w-full" />
               ))}
             </div>
-          ) : takesQuery.data?.takes.length ? (
+          ) : takesQuery.isError && !takesQuery.data ? null : takesQuery.data?.takes.length ? (
             <>
               <div className="md:hidden">
                 {takesQuery.data.takes.map((take, index) => {

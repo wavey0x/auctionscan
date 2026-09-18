@@ -24,6 +24,7 @@ import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Pagination from "../../../shared/ui/Pagination";
 import Panel from "../../../shared/ui/Panel";
 import RoundProgressMini, { toggleProgressDisplayMode, type RoundProgressMiniMode } from "../../../shared/ui/RoundProgressMini";
@@ -362,7 +363,8 @@ export default function RoundsPage() {
   const [progressDisplayMode, setProgressDisplayMode] = useState<RoundProgressMiniMode>("time");
   const filters = useMemo(() => readFilters(searchParams), [searchParams]);
 
-  const { data: chainsData } = useChainsQuery();
+  const chainsQuery = useChainsQuery();
+  const chainsData = chainsQuery.data;
   const versionsQuery = useQuery({
     queryKey: ["auction-versions", filters.chainId],
     queryFn: ({ signal }) => api.getAuctionVersions(filters.chainId, signal),
@@ -454,6 +456,8 @@ export default function RoundsPage() {
           </label>
         </div>
 
+        {chainsQuery.isError && <RequestError message={chainsData ? "Could not refresh network filters. Showing previously loaded data." : "Unable to load network filters."} onRetry={() => { void chainsQuery.refetch(); }} />}
+        {versionsQuery.isError && <RequestError message={versionsQuery.data ? "Could not refresh version filters. Showing previously loaded data." : "Unable to load version filters."} onRetry={() => { void versionsQuery.refetch(); }} />}
         {roundsQuery.data ? (
           <div className="border-t border-divider-subtle pt-1.5 text-meta text-tertiary">
             {roundsQuery.data.total.toLocaleString()} matching rounds
@@ -462,13 +466,14 @@ export default function RoundsPage() {
       </Panel>
 
       <Panel padded={false}>
+        {roundsQuery.isError && <RequestError message={roundsQuery.data ? "Could not refresh rounds. Showing previously loaded data." : "Unable to load rounds."} onRetry={() => { void roundsQuery.refetch(); }} />}
         {roundsQuery.isLoading ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 8 }).map((_, index) => (
               <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
-        ) : roundsQuery.data?.rounds.length ? (
+        ) : roundsQuery.isError && !roundsQuery.data ? null : roundsQuery.data?.rounds.length ? (
           <>
             <div className="md:hidden">
               {roundsQuery.data.rounds.map((round) => (
@@ -557,7 +562,6 @@ export default function RoundsPage() {
         ) : null}
       </Panel>
 
-      {roundsQuery.error ? <div className={cn("text-data", "text-negative")}>Failed to load rounds explorer.</div> : null}
     </div>
   );
 }

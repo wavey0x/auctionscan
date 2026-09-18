@@ -9,6 +9,7 @@ import { formatCompactDateTime, formatDateTime, formatUsd } from "../../../share
 import { handleRowNavigation } from "../../../shared/lib/rowNavigation";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
+import RequestError from "../../../shared/ui/RequestError";
 import Pagination from "../../../shared/ui/Pagination";
 import Panel from "../../../shared/ui/Panel";
 import Skeleton from "../../../shared/ui/Skeleton";
@@ -54,7 +55,8 @@ export default function TakersPage() {
   const chainId = searchParams.get("chain") ? Number(searchParams.get("chain")) : undefined;
   const query = searchParams.get("q") || "";
 
-  const { data: chainsData } = useChainsQuery();
+  const chainsQuery = useChainsQuery();
+  const chainsData = chainsQuery.data;
 
   const takersQuery = useQuery({
     queryKey: ["takers", page, sortBy, chainId, query],
@@ -138,6 +140,7 @@ export default function TakersPage() {
             </select>
           </label>
         </div>
+        {chainsQuery.isError && <RequestError message={chainsData ? "Could not refresh network filters. Showing previously loaded data." : "Unable to load network filters."} onRetry={() => { void chainsQuery.refetch(); }} />}
         {takersQuery.data ? (
           <div className="text-meta text-tertiary">
             {takersQuery.data.total.toLocaleString()} results found
@@ -146,13 +149,14 @@ export default function TakersPage() {
       </Panel>
 
       <Panel padded={false}>
+        {takersQuery.isError && <RequestError message={takersQuery.data ? "Could not refresh takers. Showing previously loaded data." : "Unable to load takers."} onRetry={() => { void takersQuery.refetch(); }} />}
         {takersQuery.isLoading ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 10 }).map((_, index) => (
               <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
-        ) : takersQuery.data?.takers.length ? (
+        ) : takersQuery.isError && !takersQuery.data ? null : takersQuery.data?.takers.length ? (
           <>
             <div className="md:hidden">
               {takersQuery.data.takers.map((taker) => (

@@ -37,8 +37,10 @@ export function useRoundDetails(
     enabled: Boolean(occurrence && selectedOccurrence),
   });
 
-  const round = !roundQuery.isError && roundQuery.data && roundQuery.data.round.auction_address.toLowerCase() === auctionAddress?.toLowerCase() ? roundQuery.data.round : undefined;
-  const selectedTake = !selectedTakeQuery.isError && selectedTakeQuery.data && occurrence && occurrenceKey(selectedTakeQuery.data.round_occurrence) === occurrenceKey(occurrence) ? selectedTakeQuery.data : undefined;
+  const roundNotFound = roundQuery.error instanceof ApiError && roundQuery.error.status === 404;
+  const selectedTakeNotFound = selectedTakeQuery.error instanceof ApiError && selectedTakeQuery.error.status === 404;
+  const round = !roundNotFound && roundQuery.data && roundQuery.data.round.auction_address.toLowerCase() === auctionAddress?.toLowerCase() ? roundQuery.data.round : undefined;
+  const selectedTake = !selectedTakeNotFound && selectedTakeQuery.data && occurrence && occurrenceKey(selectedTakeQuery.data.round_occurrence) === occurrenceKey(occurrence) ? selectedTakeQuery.data : undefined;
   const checkpoint = roundQuery.data?.as_of[chain];
   const priceReference = checkpoint?.indexed_block != null && checkpoint.indexed_block_hash && checkpoint.indexed_timestamp != null
     ? { indexed_block: checkpoint.indexed_block, indexed_block_hash: checkpoint.indexed_block_hash, indexed_timestamp: checkpoint.indexed_timestamp }
@@ -58,13 +60,13 @@ export function useRoundDetails(
         throw error;
       }
     },
-    enabled: Boolean(occurrence && priceReference && round?.is_active),
+    enabled: Boolean(occurrence && priceReference && round?.is_active && !roundQuery.isError),
     retry: false,
     refetchInterval: 3_000,
     refetchIntervalInBackground: false,
   });
   const price = livePriceQuery.isError ? undefined : livePriceQuery.data;
-  const displayedLivePrice = price && priceReference && occurrence
+  const displayedLivePrice = !roundQuery.isError && price && priceReference && occurrence
     && price.indexed_block_hash === priceReference.indexed_block_hash
     && price.indexed_block === priceReference.indexed_block
     && price.indexed_timestamp === priceReference.indexed_timestamp
@@ -79,6 +81,8 @@ export function useRoundDetails(
     livePriceQuery,
     round,
     selectedTake,
+    roundNotFound,
+    selectedTakeNotFound,
     priceReference,
     displayedLivePrice,
   };

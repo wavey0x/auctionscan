@@ -1,5 +1,4 @@
 import type { TakeDetail } from "../types/api";
-import EmptyState from "./EmptyState";
 import Skeleton from "./Skeleton";
 import TakeExpandedContent from "./TakeExpandedContent";
 
@@ -24,9 +23,7 @@ export default function TakeExpandedRow({
             <Skeleton className="h-32 w-full" />
           ) : take ? (
             <TakeExpandedContent take={take} priceSource={priceSource} />
-          ) : (
-            <EmptyState title="Take not found" description="The selected take detail could not be loaded." />
-          )}
+          ) : null}
         </div>
       </td>
     </tr>

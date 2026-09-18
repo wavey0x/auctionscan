@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { expect, it } from "vitest";

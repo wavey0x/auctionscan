@@ -6,10 +6,10 @@ from backend.indexer.types import normalize_address
 
 from ..cache_policy import PERSISTED, set_cache_policy
 from ..db import Database
-from ..queries import load_as_of, occurrence_from_row
+from ..queries import load_as_of, occurrence_from_row, list_take_pricing_sources_for_keys
 from ..models import TakerDetail, TakerListResponse, TakerSummary, TakerTake, TakerTakesResponse
 from ..pricing_sources import build_take_pricing_maps
-from ..queries import get_taker_detail, list_take_pricing_sources_for_keys, list_taker_takes, list_takers
+from ..taker_queries import get_taker_detail, list_taker_takes, list_takers
 from ..serializers import checksum_address, decimal_string, float_value, iso_utc, quote_price
 
 

@@ -1,6 +1,6 @@
 # Auctionscan: focused code organization
 
-Prepared September 17, 2026 against `61f7d01`. Status: planned; application code is unchanged.
+Prepared September 17, 2026 against `61f7d01`. Status: implementation complete; verification results are recorded below.
 
 ## Objective
 
@@ -64,11 +64,11 @@ Return the five query results and the existing derived values (`round`, `selecte
 - Route and search-parameter parsing, preserving `location.state` when changing modal search parameters.
 - Redirecting to the corrected round when the selected take's inferred round changes. This effect must still inspect the successful selected-take query result before the same-round display filter; otherwise the redirect can silently stop working.
 - The `take` and `priceSource` URL updates, source normalization, Escape behavior, and display preferences.
-- Loading/empty-state decisions, the header, and composition of the extracted views.
+- Parent-level loading/not-found decisions, the header, and composition of the extracted views. Existing take-table empty states stay inside the extracted table.
 
 Keep the hook unconditional and mounted at the same level as the existing queries. Do not reset the mismatch-throttle ref or change any query's activation condition during the move. Keep the modal shell and focus management in `RoundModal.tsx` untouched.
 
-**Verification.** Keep the existing component-level tests in `RoundModalContent.test.tsx`; they must still prove throttled snapshot-mismatch recovery and rejection of late prices from older snapshots. Add one focused integration case there for a selected take moving to another round: the route updates with replace semantics, and the search parameters and modal background state survive. Test the mounted component through the API boundary rather than mocking the new hook.
+**Verification.** Establish the new navigation cases against the existing implementation before extraction, then rerun them after the moves. Keep the existing component-level tests in `RoundModalContent.test.tsx`; they must still prove throttled snapshot-mismatch recovery and rejection of late prices from older snapshots. Add one focused integration case there for a selected take moving to another round: the route updates with replace semantics, and the search parameters and modal background state survive. Test the mounted component through the API boundary rather than mocking the new hook.
 
 **Stopping point.** The settings/table files contain rendering, the hook owns the five requests and snapshot coordination, and the modal owns navigation and composition. There is no second state store and no new generic hook.
 
@@ -83,7 +83,7 @@ Add two files under `ui/src/features/auctions/components/`:
 | `AuctionTakesTable.tsx` | Move `RecentTakesList`, renaming it to `AuctionTakesTable`; preserve its mobile/desktop views and selected-take expansion. |
 | `AuctionRoundsTable.tsx` | Move `RecentRoundsMobileList` and the adjacent desktop rounds table into one responsive component. Keep the mobile helper private in this file. |
 
-For `AuctionTakesTable`, retain the existing props and selection callback. Its surrounding `TableHoverScope` stays in the page, in the same place relative to loading and empty states.
+For `AuctionTakesTable`, retain the existing props, selection callback, and table-owned empty state. Its surrounding `TableHoverScope` stays in the page, in the same place relative to loading and empty states.
 
 For `AuctionRoundsTable`, pass:
 
@@ -94,7 +94,7 @@ For `AuctionRoundsTable`, pass:
 
 The page's desktop callback continues to call `handleRowNavigation` with the existing round URL and background-location state. Preserve modifier-click, middle-click, and nested link/button behavior. The table retains its existing desktop `TableHoverScope`; rounds and takes must not share a hover provider.
 
-Keep all queries, URL selection, source normalization, Escape handling, page-size constants, pagination, panel headers, loading/empty decisions, and navigation callbacks in `AuctionPage.tsx`. Keep `InfoItem`, `SellTokensPreview`, and `formatVolume` local. Do not add an auction data hook in this pass: the immediate problem is the embedded list markup.
+Keep all queries, URL selection, source normalization, Escape handling, page-size constants, pagination, panel headers, parent-level loading/empty decisions, and navigation callbacks in `AuctionPage.tsx`. Keep `InfoItem`, `SellTokensPreview`, and `formatVolume` local. Do not add an auction data hook in this pass: the immediate problem is the embedded list markup.
 
 Do not merge the round and auction take tables into a configurable shared table. Their context, columns, hover scopes, and selection presentation differ. Their existing shared leaf components already remove the useful duplication.
 
@@ -179,3 +179,15 @@ Leave the following for separate work:
 - Deployment automation, broad typing/lint adoption, dependency upgrades, polling changes, performance optimization, and visual redesign.
 
 The result should be easier to understand through clear ownership, with no new framework and no change to how Auctionscan behaves.
+
+## Implementation verification — September 17, 2026
+
+All six source modules are implemented. The round view extraction and taker query extraction preserve the original function bodies; the round hook preserves query options, snapshot validation, and the mismatch throttle. Navigation remains in the parent components, including the redirect's use of the unfiltered selected-take query. Existing table empty states remain inside their extracted views.
+
+- Full backend suite: **209 passed**; focused API/pricing suite: **68 passed**.
+- Full UI suite: **19 passed**, including the new corrected-round navigation case and five auction-page interaction cases. New navigation cases were exercised before extraction.
+- TypeScript check, generated API contract check, production UI build, and `git diff --check`: passed.
+- Desktop (1440 × 1000) and mobile (390 × 844) comparisons used the same auction (`0x5Fb81419f48FeB9C403df43eC1Fd6E035A8dEb60`) and round R92 against a retained build of the original UI. Layout, take expansion, mobile round navigation, Escape behavior, pricing selection, and modal focus behavior were checked.
+- All moved taker SQL/function bodies are byte-for-byte unchanged. The production CSS is also byte-for-byte identical to the original build. No dependencies, generated API types, database schema, or deployment configuration changed.
+
+No migration or reproject is required. The request-failure/empty-state follow-up remains separate.

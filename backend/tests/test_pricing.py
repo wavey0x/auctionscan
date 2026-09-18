@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from backend.api.app import create_app
 from backend.api import db as api_db
-from backend.api import queries as api_queries
+from backend.api import taker_queries
 from backend.indexer import pricing as pricing_module
 from backend.indexer import prices_api as prices_api_module
 from backend.indexer.prices_api import PricingApiClient, ProviderCapability
@@ -1953,15 +1953,15 @@ def test_taker_sql_materializes_only_the_requested_page(tmp_path, monkeypatch):
     )
 
     materialized = 0
-    original = api_queries._taker_item_from_row
+    original = taker_queries._taker_item_from_row
 
     def counted(row):
         nonlocal materialized
         materialized += 1
         return original(row)
 
-    monkeypatch.setattr(api_queries, "_taker_item_from_row", counted)
-    total, page_rows = api_queries.list_takers(
+    monkeypatch.setattr(taker_queries, "_taker_item_from_row", counted)
+    total, page_rows = taker_queries.list_takers(
         writer.connection,
         chain_id=None,
         sort_by="takes",

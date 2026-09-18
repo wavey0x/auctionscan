@@ -1,18 +1,18 @@
 # Auctionscan legacy cleanup and clean cutover
 
-Reviewed against `d6c9158`. Status: implementation and rehearsal complete; production deployment awaits authenticated Vercel rollback access.
+Reviewed against `d6c9158`. Implementation and offline rehearsal are complete. The coordinated production switch is described in section 8.
 
 Implementation: `0bbf902`, `f235500`, `b38f3c4`, `d768a44`. Runtime source is 792 lines smaller (57 added, 849 removed), excluding generated types and tests. The existing locally ignored `AGENTS.md` inventory was updated without adding it to version control.
 
 Verified September 17, 2026:
 
-- Backend: 217 tests passed. UI: 19 tests passed; typecheck, build, generated OpenAPI check, and whitespace checks passed.
+- Backend: 217 tests passed. UI: 19 tests passed; typecheck, build, generated OpenAPI check, and whitespace checks passed. The same implementation passed [CI on pull request #1](https://github.com/wavey0x/auctionscan/actions/runs/35294296123), including secret scanning, and its Vercel preview build.
 - A consistent production backup contained Ethereum only: 22,223 raw logs, 22,004 domain events, 266 deploy snapshots, and 4,717 kick snapshots. All 10,717 required observation blocks were complete. Snapshot provenance, integrity, foreign keys, and the finalized checkpoint hash were verified.
 - Migration took 0.136 seconds locally; every retained row matched its baseline fingerprint. Fresh and production-upgraded projection columns, constraints, and indexes matched. Transaction-failure rollback and incremental writes without replay passed.
 - Full replay (22,004 events) and takes-only replay (5,768 events) each completed with networking forbidden in approximately 70 seconds, including observation checks. All retained semantic projections, native events, captured facts, aliases, and checkpoints matched; no repair was needed.
 - The migrated API served representative auction, round, take, and taker responses before replay. The removed route returned 404. Desktop and 390px mobile inspection confirmed the compact take layout, removal of Gas, provider selection, transaction/copy controls, and direct-link reload. Restoring the backup with `d6c9158` served the old API contract successfully.
 
-Rehearsal evidence and database copies are kept outside the repository in `/tmp/auctionscan-cutover-20260918`; the source backup is also retained on `electro` under `/home/wavey/auctionscan-backups/legacy-cutover-20260918`. Backup SHA-256: `64982d3b21797be15b86aa7555fb43ed960bc2eaf86d1db88711a8adb8352c2a`. Production remains on `d6c9158` until the switch below.
+Rehearsal evidence and database copies are kept outside the repository in `/tmp/auctionscan-cutover-20260918`; the source backup is also retained on `electro` under `/home/wavey/auctionscan-backups/legacy-cutover-20260918`. Backup SHA-256: `64982d3b21797be15b86aa7555fb43ed960bc2eaf86d1db88711a8adb8352c2a`. The existing server backup tool also captured the installed `d6c9158` code, runtime, configuration, and database in `pre-release-capture`, verified its checksums, and saved encrypted backup snapshot `637440a9`. The previous Vercel deployment is `auctionscan-l3ij14zvh-wavey0xs-projects.vercel.app`; authenticated status and rollback access were confirmed before maintenance.
 
 Ship one deletion-focused release: remove unused API paths, ten redundant projection columns, one unread projection table, obsolete bootstrap repair, and pre-finality adoption. Preserve useful product behavior and durable facts. The substantial win is fewer representations, writes, and recovery branches to maintain; do not claim a performance or database-size improvement without measurement.
 

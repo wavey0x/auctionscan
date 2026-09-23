@@ -14,12 +14,14 @@ export default function PnlValue({
   align = "left",
   compact = false,
   className,
+  title,
 }: {
   percent: string | number | null | undefined;
   usd: string | number | null | undefined;
   align?: "left" | "right";
   compact?: boolean;
   className?: string;
+  title?: string;
 }) {
   const pnlPercent = coerceFiniteNumber(percent);
   const pnlUsdValue = coerceFiniteNumber(usd);
@@ -27,7 +29,7 @@ export default function PnlValue({
   const alignClass = align === "right" ? "items-end text-right" : "items-start text-left";
 
   return (
-    <div className={cn("flex flex-col gap-[2px] font-mono leading-[0.92rem]", alignClass, className)}>
+    <div className={cn("flex flex-col gap-[2px] font-mono leading-[0.92rem]", alignClass, className)} title={title}>
       <div
         className={cn(
           "w-full truncate whitespace-nowrap leading-none",

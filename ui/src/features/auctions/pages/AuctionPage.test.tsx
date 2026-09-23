@@ -46,7 +46,7 @@ afterEach(() => { cleanup(); router?.dispose(); client.clear(); vi.restoreAllMoc
 async function mount(search = "?priceSource=canonical&keep=yes") {
   router = createMemoryRouter([
     { path: "/auction/:chainId/:address", element: <AuctionPage /> },
-    { path: "/round/:chainId/:auctionAddress/:occurrence", element: <div>Round destination</div> },
+    { path: "/round/:chainId/:auctionAddress/:roundId", element: <div>Round destination</div> },
   ], { initialEntries: [buildAuctionPath(1, auction) + search] });
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   await screen.findByRole("cell", { name: "T1" });
@@ -88,7 +88,7 @@ it("opens a desktop round with the auction location as its modal background", as
   await mount("?page=2&keep=yes");
   const background = router.state.location;
   fireEvent.click(roundRow());
-  expect(router.state.location.pathname + router.state.location.search).toBe(buildRoundPathWithSource(1, auction, occurrence, "auction"));
+  expect(router.state.location.pathname + router.state.location.search).toBe(buildRoundPathWithSource(1, auction, 7, "auction"));
   expect(router.state.location.state).toEqual({ backgroundLocation: background });
 });
 
@@ -101,7 +101,7 @@ it("opens modified and middle row clicks in a new tab without navigating the pag
   fireEvent.click(row, { metaKey: true });
   fireEvent(row, new MouseEvent("auxclick", { button: 1, bubbles: true }));
   expect(open).toHaveBeenCalledTimes(3);
-  expect(open).toHaveBeenCalledWith(buildRoundPathWithSource(1, auction, occurrence, "auction"), "_blank", "noopener,noreferrer");
+  expect(open).toHaveBeenCalledWith(buildRoundPathWithSource(1, auction, 7, "auction"), "_blank", "noopener,noreferrer");
   expect(router.state.location).toEqual(initialLocation);
 });
 

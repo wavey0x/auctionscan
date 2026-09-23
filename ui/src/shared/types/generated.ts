@@ -119,7 +119,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/rounds/{chain_id}/{block_hash}/{tx_hash}/{log_index}": {
+    "/api/rounds/{chain_id}/{auction_address}/{round_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -127,7 +127,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Round Detail */
-        get: operations["get_round_detail_api_rounds__chain_id___block_hash___tx_hash___log_index__get"];
+        get: operations["get_round_detail_api_rounds__chain_id___auction_address___round_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1513,15 +1513,14 @@ export interface operations {
             };
         };
     };
-    get_round_detail_api_rounds__chain_id___block_hash___tx_hash___log_index__get: {
+    get_round_detail_api_rounds__chain_id___auction_address___round_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 chain_id: number;
-                block_hash: string;
-                tx_hash: string;
-                log_index: number;
+                auction_address: string;
+                round_id: number;
             };
             cookie?: never;
         };

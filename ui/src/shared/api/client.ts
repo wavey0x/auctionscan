@@ -79,8 +79,8 @@ export const api = {
     return fetchJson<RoundsResponse>(`/rounds${query ? `?${query}` : ""}`, signal);
   },
 
-  getRoundDetail(occurrence: SourceOccurrence, signal?: AbortSignal): Promise<RoundDetailResponse> {
-    return fetchJson<RoundDetailResponse>(`/rounds/${occurrence.chain_id}/${occurrence.block_hash}/${occurrence.tx_hash}/${occurrence.log_index}`, signal, "no-store");
+  getRoundDetail(chainId: number, auctionAddress: string, roundId: number, signal?: AbortSignal): Promise<RoundDetailResponse> {
+    return fetchJson<RoundDetailResponse>(`/rounds/${chainId}/${auctionAddress}/${roundId}`, signal, "no-store");
   },
 
   getAuction(chainId: number, address: string, signal?: AbortSignal): Promise<AuctionDetails | null> {

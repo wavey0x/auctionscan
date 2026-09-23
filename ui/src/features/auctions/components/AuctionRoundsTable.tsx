@@ -1,10 +1,10 @@
 import type { MouseEvent } from "react";
 import type { RoundListItem } from "../../../shared/types/api";
-import MetricCoverage from "../../../shared/ui/MetricCoverage";
 
 import { formatCompactDateTime, formatDateTime, renderKickedValue } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { roundProgressSummary } from "../../../shared/lib/roundProgress";
+import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
 import PnlValue from "../../../shared/ui/PnlValue";
 import RoundProgressMini, { type RoundProgressMiniMode } from "../../../shared/ui/RoundProgressMini";
@@ -101,10 +101,9 @@ function RecentRoundsMobileList({
               <PnlValue
                 percent={round.total_auction_profit_bps}
                 usd={round.total_auction_profit_usd}
+                title={roundPnlCoverageTitle(round)}
                 compact
               />
-              <MetricCoverage count={round.priced_take_count ?? 0} total={round.take_count} label="quoted" />
-              {round.usd_priced_take_count !== (round.priced_take_count ?? 0) ? <MetricCoverage count={round.usd_priced_take_count} total={round.take_count} label="USD" /> : null}
             </div>
           </div>
         </StackedListRow>
@@ -237,10 +236,9 @@ export default function AuctionRoundsTable({
                     <PnlValue
                       percent={round.total_auction_profit_bps}
                       usd={round.total_auction_profit_usd}
+                      title={roundPnlCoverageTitle(round)}
                       className="w-[4.8rem]"
                     />
-                    <MetricCoverage count={round.priced_take_count ?? 0} total={round.take_count} label="quoted" />
-                    {round.usd_priced_take_count !== (round.priced_take_count ?? 0) ? <MetricCoverage count={round.usd_priced_take_count} total={round.take_count} label="USD" /> : null}
                   </td>
                 </tr>
               ))}

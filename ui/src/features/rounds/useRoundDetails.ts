@@ -8,16 +8,22 @@ import type { SourceOccurrence } from "../../shared/types/api";
 export function useRoundDetails(
   chain: number,
   auctionAddress: string | undefined,
-  occurrence: SourceOccurrence | null,
+  roundId: number | null,
   selectedOccurrence: SourceOccurrence | null,
 ) {
   const mismatchRetryAfter = useRef(0);
+  const validRound = Number.isSafeInteger(chain) && chain > 0 && !!auctionAddress && roundId !== null;
 
   const roundQuery = useQuery({
-    queryKey: ["round-detail", occurrence],
-    queryFn: ({ signal }) => api.getRoundDetail(occurrence!, signal),
-    enabled: Boolean(occurrence) && !!auctionAddress,
+    queryKey: ["round-detail", chain, auctionAddress?.toLowerCase(), roundId],
+    queryFn: ({ signal }) => api.getRoundDetail(chain, auctionAddress!, roundId!, signal),
+    enabled: validRound,
   });
+  const roundNotFound = roundQuery.error instanceof ApiError && roundQuery.error.status === 404;
+  const candidate = roundNotFound ? undefined : roundQuery.data?.round;
+  const round = candidate?.chain_id === chain && candidate.round_id === roundId
+    && candidate.auction_address.toLowerCase() === auctionAddress?.toLowerCase() ? candidate : undefined;
+  const occurrence = round?.occurrence;
 
   const auctionQuery = useQuery({
     queryKey: ["auction", chain, auctionAddress],
@@ -34,12 +40,10 @@ export function useRoundDetails(
   const selectedTakeQuery = useQuery({
     queryKey: ["take-detail", selectedOccurrence],
     queryFn: ({ signal }) => api.getTake(selectedOccurrence!, signal),
-    enabled: Boolean(occurrence && selectedOccurrence),
+    enabled: validRound && Boolean(selectedOccurrence),
   });
 
-  const roundNotFound = roundQuery.error instanceof ApiError && roundQuery.error.status === 404;
   const selectedTakeNotFound = selectedTakeQuery.error instanceof ApiError && selectedTakeQuery.error.status === 404;
-  const round = !roundNotFound && roundQuery.data && roundQuery.data.round.auction_address.toLowerCase() === auctionAddress?.toLowerCase() ? roundQuery.data.round : undefined;
   const selectedTake = !selectedTakeNotFound && selectedTakeQuery.data && occurrence && occurrenceKey(selectedTakeQuery.data.round_occurrence) === occurrenceKey(occurrence) ? selectedTakeQuery.data : undefined;
   const checkpoint = roundQuery.data?.as_of[chain];
   const priceReference = checkpoint?.indexed_block != null && checkpoint.indexed_block_hash && checkpoint.indexed_timestamp != null

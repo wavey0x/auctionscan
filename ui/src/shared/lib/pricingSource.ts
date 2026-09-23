@@ -2,6 +2,15 @@ import type { PriceSourceOption, RoundListItem, RoundPricingBySource, TakeListIt
 
 export const DEFAULT_PRICE_SOURCE = "canonical";
 
+export function roundPnlCoverageTitle(round: Pick<RoundListItem, "priced_take_count" | "usd_priced_take_count" | "take_count">): string | undefined {
+  const quoted = round.priced_take_count ?? 0;
+  if (quoted >= round.take_count && round.usd_priced_take_count >= round.take_count) return undefined;
+  const details = [`Market quotes available for ${quoted} of ${round.take_count} takes.`];
+  if (round.usd_priced_take_count !== quoted) details.push(`USD PnL available for ${round.usd_priced_take_count} of ${round.take_count} takes.`);
+  details.push("PnL includes only takes with the required pricing data.");
+  return details.join(" ");
+}
+
 export function resolvePriceSource(
   requestedSource: string | null | undefined,
   options: PriceSourceOption[] | null | undefined,

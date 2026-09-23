@@ -33,7 +33,7 @@ const profile: TakerDetail = { as_of: {}, taker: address, active_chains: [1], au
 const roundList = { as_of: {}, rounds: [roundDetails.round], total: 1, page: 1, per_page: 10, has_next: false };
 const takeList = { as_of: {}, takes: [take], available_price_sources: [] };
 const searchResults = { query: "SELL", results: [{ type: "token" as const, chain_id: 1, address_or_hash: address, metadata: { symbol: "SELL", name: "Search match" } }], total: 1 };
-const roundPath = buildRoundPath(1, address, occurrence);
+const roundPath = buildRoundPath(1, address, 7);
 const cases = [
   { name: "rounds", path: "/", method: "getRounds", key: "rounds", loaded: "1 matching rounds", missing: "No rounds found", data: roundList, empty: { ...roundList, rounds: [], total: 0 } },
   { name: "takers", path: "/takers", method: "getTakers", key: "takers", loaded: "1 results found", missing: "No takers found", data: { takers: [taker], total: 1, page: 1, per_page: 15, has_next: false, as_of: {} }, empty: { takers: [], total: 0, page: 1, per_page: 15, has_next: false, as_of: {} } },
@@ -65,7 +65,7 @@ function mount(path: string) {
   router = createMemoryRouter([
     { path: "/", element: <RoundsPage /> },
     { path: "/auction/:chainId/:address", element: <AuctionPage /> },
-    { path: "/round/:chainId/:auctionAddress/:occurrence", element: <RoundModalContent onClose={() => {}} /> },
+    { path: "/round/:chainId/:auctionAddress/:roundId", element: <RoundModalContent onClose={() => {}} /> },
     { path: "/taker/:address", element: <TakerProfilePage /> },
     { path: "/takers", element: <TakersPage /> },
     { path: "/search", element: <SearchPage /> },

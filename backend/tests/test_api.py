@@ -357,7 +357,7 @@ def test_api_rounds_auction_take_taker_and_search_routes(tmp_path):
         DEFAULT_WANT_TOKEN,
     )
 
-    round_detail = client.get(f"/api/rounds/1/0x{102:064x}/0x{3:064x}/0")
+    round_detail = client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1")
     assert round_detail.status_code == 200
     round_detail_payload = round_detail.json()
     assert round_detail_payload["round"]["round_id"] == 1
@@ -1140,11 +1140,24 @@ def test_aggregate_checkpoint_and_values_share_the_same_snapshot(tmp_path, monke
     assert response["as_of"]["1"]["indexed_block"] == 104
 
 
-def test_occurrence_links_survive_renumbering_and_reject_replacement_branches(tmp_path):
+def test_numbered_round_lookup_is_scoped_by_chain_and_auction(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    _seed_api_db(db_path)
+    client = TestClient(create_app(db_path=str(db_path)))
+    for address in (DEFAULT_AUCTION.lower(), DEFAULT_AUCTION.upper()):
+        response = client.get(f"/api/rounds/1/{address}/1")
+        assert response.status_code == 200
+        assert response.json()["round"]["auction_address"].lower() == DEFAULT_AUCTION.lower()
+        assert response.headers["cache-control"] == "no-store"
+    for path in (f"/api/rounds/10/{DEFAULT_AUCTION}/1", f"/api/rounds/1/{TAKER}/1", f"/api/rounds/1/{DEFAULT_AUCTION}/999"):
+        assert client.get(path).status_code == 404
+
+
+def test_numbered_round_links_follow_projections_while_take_links_keep_exact_identity(tmp_path):
     db_path = tmp_path / "auctionscan.sqlite3"
     writer = _seed_api_db(db_path)
     client = TestClient(create_app(db_path=str(db_path)))
-    round_url = f"/api/rounds/1/{_tx_hash(102)}/{_tx_hash(3)}/0"
+    round_url = f"/api/rounds/1/{DEFAULT_AUCTION}/1"
     take_url = f"/api/takes/1/{_tx_hash(103)}/{_tx_hash(4)}/4"
     before_round = client.get(round_url).json()["round"]["occurrence"]
     before_take = client.get(take_url).json()["occurrence"]
@@ -1153,6 +1166,8 @@ def test_occurrence_links_survive_renumbering_and_reject_replacement_branches(tm
         conn.execute("UPDATE round_param_snapshot SET round_id = 7")
         conn.execute("UPDATE takes SET round_id = 7, take_seq = 9")
     writer.transaction(renumber)
+    assert client.get(round_url).status_code == 404
+    round_url = f"/api/rounds/1/{DEFAULT_AUCTION}/7"
     assert client.get(round_url).json()["round"]["round_id"] == 7
     assert client.get(round_url).json()["round"]["occurrence"] == before_round
     take = client.get(take_url).json()
@@ -1165,7 +1180,7 @@ def test_occurrence_links_survive_renumbering_and_reject_replacement_branches(tm
     assert exact["destination"]["occurrence"] == before_round
     # Same transaction and log re-included on another branch is a different occurrence.
     writer.transaction(lambda conn: conn.execute("UPDATE domain_events SET block_hash = ? WHERE tx_hash IN (?, ?)", (_tx_hash(999), _tx_hash(3), _tx_hash(4))))
-    assert client.get(round_url).status_code == 404
+    assert client.get(round_url).json()["round"]["occurrence"]["block_hash"] == _tx_hash(999)
     assert client.get(take_url).status_code == 404
     assert client.get(f"/api/tx/{_tx_hash(4)}/resolve", params=params).json()["outcome"] == "not_found"
     assert client.get(f"/api/takes/1/{_tx_hash(999)}/{_tx_hash(4)}/4").json()["take_seq"] == 9
@@ -1232,7 +1247,7 @@ def test_live_price_closes_database_snapshot_before_rpc_and_survives_failure(tmp
     client = TestClient(create_app(db_path=str(db_path)))
     url = f"/api/rounds/1/{_tx_hash(102)}/{_tx_hash(3)}/0"
     assert client.get(url + "/live-price", params=LIVE_REFERENCE).status_code == 503
-    assert client.get(url).status_code == 200
+    assert client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1").status_code == 200
 
 
 def test_later_kick_cannot_supply_price_to_earlier_round(tmp_path, monkeypatch):
@@ -1254,6 +1269,8 @@ def test_later_kick_cannot_supply_price_to_earlier_round(tmp_path, monkeypatch):
 def test_openapi_exposes_only_current_take_and_round_contract():
     schema = create_app().openapi()
     assert "/api/auctions/{auction_address}/rounds" not in schema["paths"]
+    assert "/api/rounds/{chain_id}/{auction_address}/{round_id}" in schema["paths"]
+    assert "/api/rounds/{chain_id}/{block_hash}/{tx_hash}/{log_index}" not in schema["paths"]
     models = schema["components"]["schemas"]
     assert {"AuctionRound", "AuctionRoundsResponse"}.isdisjoint(models)
     removed = {

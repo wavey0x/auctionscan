@@ -28,7 +28,7 @@ The following work is excluded at the user's request:
 - Replacing `IndexerSettings.chains` with a single `chain`, merging `sync_once` with `sync_chain_once`, or merging `reproject` with `reproject_chain`.
 - Renaming `total_auction_profit_bps` or otherwise redesigning pricing models, pagination, common response models, or query APIs.
 
-Keep the current one-process-per-network design and shared SQLite database. Keep occurrence-based URLs, finality/reorg handling, observed-versus-estimated payment semantics, pricing eligibility, polling, and current projection calculations.
+Keep the current one-process-per-network design and shared SQLite database. Keep finality/reorg handling, observed-versus-estimated payment semantics, pricing eligibility, polling, and current projection calculations. Public round URLs now use the auction's round number; take selection and live-price requests retain exact event occurrences.
 
 Supported historical contracts remain supported: their ABIs, parameter schemas, fixed-decay behavior, legacy auction IDs, and transfer-derived take detection describe real on-chain history. Removing application compatibility does not remove those inputs from Auctionscan.
 

@@ -18,9 +18,15 @@ export function buildAuctionPath(
 export function buildRoundPath(
   chainId: number | string,
   auctionAddress: string,
-  occurrence: SourceOccurrence,
+  roundId: number,
 ): string {
-  return `/round/${chainId}/${auctionAddress}/${occurrenceKey(occurrence)}`;
+  return `/round/${chainId}/${auctionAddress}/${roundId}`;
+}
+
+export function parseRoundId(value: string | null | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const roundId = Number(value);
+  return Number.isSafeInteger(roundId) ? roundId : null;
 }
 
 export function parseRoundModalSource(value: string | null | undefined): RoundModalSource | null {
@@ -69,10 +75,10 @@ export function roundModalSourceFromLocation(location: Pick<Location, "pathname"
 export function buildRoundPathWithSource(
   chainId: number | string,
   auctionAddress: string,
-  occurrence: SourceOccurrence,
+  roundId: number,
   source: RoundModalSource | null | undefined,
 ): string {
-  const path = buildRoundPath(chainId, auctionAddress, occurrence);
+  const path = buildRoundPath(chainId, auctionAddress, roundId);
   if (!source || source === "rounds" || source === "tx") {
     return path;
   }
@@ -82,20 +88,20 @@ export function buildRoundPathWithSource(
 export function buildRoundPathFromTransaction(
   chainId: number | string,
   auctionAddress: string,
-  occurrence: SourceOccurrence,
+  roundId: number,
   txHash: string,
   takeOccurrence?: SourceOccurrence | null,
 ): string {
   const normalizedTxHash = normalizeTransactionHash(txHash);
   if (!normalizedTxHash) {
-    return buildRoundPath(chainId, auctionAddress, occurrence);
+    return buildRoundPath(chainId, auctionAddress, roundId);
   }
   const params = new URLSearchParams({
     from: "tx",
     tx: normalizedTxHash,
   });
   if (takeOccurrence) params.set("take", occurrenceKey(takeOccurrence));
-  return `${buildRoundPath(chainId, auctionAddress, occurrence)}?${params.toString()}`;
+  return `${buildRoundPath(chainId, auctionAddress, roundId)}?${params.toString()}`;
 }
 
 export function resolveRoundModalBackgroundLocation(
@@ -143,6 +149,6 @@ export function parseOccurrence(chainId: number, value: string | null | undefine
   return { chain_id: chainId, block_hash: match[1].toLowerCase(), tx_hash: match[2].toLowerCase(), log_index: logIndex };
 }
 
-export function buildTakePath(take: { chain_id: number; auction_address: string; occurrence: SourceOccurrence; round_occurrence: SourceOccurrence }): string {
-  return `${buildRoundPath(take.chain_id, take.auction_address, take.round_occurrence)}?take=${occurrenceKey(take.occurrence)}`;
+export function buildTakePath(take: { chain_id: number; auction_address: string; round_id: number; occurrence: SourceOccurrence }): string {
+  return `${buildRoundPath(take.chain_id, take.auction_address, take.round_id)}?take=${occurrenceKey(take.occurrence)}`;
 }

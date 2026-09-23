@@ -330,13 +330,13 @@ export default function AuctionPage() {
             onRoundClick={(event, round) =>
               handleRowNavigation(
                 event,
-                buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource),
+                buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource),
                 (to) => navigate(to, { state: withBackgroundLocation(location) }),
               )
             }
             onOpenRound={(round) =>
               navigate(
-                buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource),
+                buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource),
                 { state: withBackgroundLocation(location) },
               )
             }

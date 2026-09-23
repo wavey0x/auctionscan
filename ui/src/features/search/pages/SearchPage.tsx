@@ -132,7 +132,7 @@ export default function SearchPage() {
         <Panel className="space-y-2">
           <div className="metric-label">Direct round workspace</div>
           <Link
-            to={buildRoundPathWithSource(directRoundMatch.chainId, directRoundMatch.auctionAddress, directRound.occurrence, roundModalSource)}
+            to={buildRoundPathWithSource(directRoundMatch.chainId, directRoundMatch.auctionAddress, directRound.round_id, roundModalSource)}
             state={withBackgroundLocation(location)}
             className="inline-flex items-center gap-3 text-data text-primary underline-offset-4 hover:underline"
           >

@@ -1,4 +1,3 @@
-import MetricCoverage from "../../../shared/ui/MetricCoverage";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -20,6 +19,7 @@ import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { handleRowNavigation } from "../../../shared/lib/rowNavigation";
 import { occurrenceKey, buildRoundPathWithSource, roundModalSourceFromLocation, withBackgroundLocation } from "../../../shared/lib/routes";
 import { roundProgressSummary } from "../../../shared/lib/roundProgress";
+import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
@@ -111,13 +111,11 @@ function RoundPnlInline({ round }: { round: RoundListItem }) {
   const directionValue = pnlPercent ?? pnlUsdValue;
 
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5 font-mono">
+    <span className="inline-flex min-w-0 items-center gap-1.5 font-mono" title={roundPnlCoverageTitle(round)}>
       <span className={cn("truncate text-[12px] leading-none", signedMetricTone(directionValue))}>
         {formatUnsignedPercent(pnlPercent)}
       </span>
       <span className="truncate text-[10px] leading-none text-tertiary">{formatSignedUsdDelta(pnlUsdValue)}</span>
-      <MetricCoverage count={round.priced_take_count ?? 0} total={round.take_count} label="quoted" />
-      {round.usd_priced_take_count !== (round.priced_take_count ?? 0) ? <MetricCoverage count={round.usd_priced_take_count} total={round.take_count} label="USD" /> : null}
     </span>
   );
 }
@@ -131,7 +129,8 @@ function RoundPnlCell({ round }: { round: RoundListItem }) {
     pnlPercent !== null
       ? `PnL %: ${formatSignedPercent(pnlPercent)}`
       : "PnL %: —",
-  ].join("\n");
+    roundPnlCoverageTitle(round),
+  ].filter(Boolean).join("\n");
 
   return (
     <div className="flex w-[4.8rem] flex-col items-start gap-[2px] font-mono leading-[0.92rem]" title={title}>
@@ -141,8 +140,6 @@ function RoundPnlCell({ round }: { round: RoundListItem }) {
       <div className="w-full truncate whitespace-nowrap text-left font-mono text-[10px] leading-none text-tertiary">
         {formatSignedUsdDelta(pnlUsdValue)}
       </div>
-      <MetricCoverage count={round.priced_take_count ?? 0} total={round.take_count} label="quoted" />
-      {round.usd_priced_take_count !== (round.priced_take_count ?? 0) ? <MetricCoverage count={round.usd_priced_take_count} total={round.take_count} label="USD" /> : null}
     </div>
   );
 }
@@ -480,10 +477,10 @@ export default function RoundsPage() {
                 <RoundsMobileRow
                   key={`${round.chain_id}:${occurrenceKey(round.occurrence)}`}
                   round={round}
-                  href={buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource)}
+                  href={buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource)}
                   onOpen={() =>
                     navigate(
-                      buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource),
+                      buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource),
                       { state: withBackgroundLocation(location) },
                     )
                   }
@@ -528,10 +525,10 @@ export default function RoundsPage() {
                     <RoundsTableRow
                       key={`${round.chain_id}:${occurrenceKey(round.occurrence)}`}
                       round={round}
-                      href={buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource)}
+                      href={buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource)}
                       onOpen={() =>
                         navigate(
-                          buildRoundPathWithSource(round.chain_id, round.auction_address, round.occurrence, roundModalSource),
+                          buildRoundPathWithSource(round.chain_id, round.auction_address, round.round_id, roundModalSource),
                           { state: withBackgroundLocation(location) },
                         )
                       }

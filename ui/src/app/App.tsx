@@ -37,7 +37,7 @@ export default function App() {
 
 function AppRoutes() {
   const location = useLocation();
-  const roundMatch = matchPath("/round/:chainId/:auctionAddress/:occurrence", location.pathname);
+  const roundMatch = matchPath("/round/:chainId/:auctionAddress/:roundId", location.pathname);
   const routeState = (location.state as { backgroundLocation?: Location } | null) ?? null;
   const routeSearchParams = new URLSearchParams(location.search);
   const roundModalSource = parseRoundModalSource(routeSearchParams.get("from"));
@@ -80,7 +80,7 @@ function AppRoutes() {
 
       {roundMatch ? (
         <Routes>
-          <Route path="/round/:chainId/:auctionAddress/:occurrence" element={<RoundModalRoute />} />
+          <Route path="/round/:chainId/:auctionAddress/:roundId" element={<RoundModalRoute />} />
         </Routes>
       ) : null}
     </>

@@ -41,12 +41,12 @@ export default function TxResolveRoute() {
         return;
       }
 
-      if (resolution.destination.kind === "round" && resolution.destination.occurrence) {
+      if (resolution.destination.kind === "round" && resolution.destination.round_id != null) {
         navigate(
           buildRoundPathFromTransaction(
             resolution.destination.chain_id,
             resolution.destination.auction_address,
-            resolution.destination.occurrence,
+            resolution.destination.round_id,
             normalizedTxHash || txHash,
             resolution.destination.take_occurrence,
           ),

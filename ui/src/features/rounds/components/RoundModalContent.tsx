@@ -1,6 +1,6 @@
 import { ApiError } from "../../../shared/api/client";
 import { useRoundDetails } from "../useRoundDetails";
-import { buildRoundPath, occurrenceKey, parseOccurrence } from "../../../shared/lib/routes";
+import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
 import MetricCoverage from "../../../shared/ui/MetricCoverage";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -253,10 +253,10 @@ export default function RoundModalContent({
 }: {
   onClose: () => void;
 }) {
-  const { chainId, auctionAddress, occurrence: occurrenceParam } = useParams<{
+  const { chainId, auctionAddress, roundId: roundIdParam } = useParams<{
     chainId: string;
     auctionAddress: string;
-    occurrence: string;
+    roundId: string;
   }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -264,7 +264,8 @@ export default function RoundModalContent({
   const [kickedDisplayMode, setKickedDisplayMode] = useState<KickedDisplayMode>("absolute");
 
   const chain = Number(chainId);
-  const occurrence = parseOccurrence(chain, occurrenceParam);
+  const roundId = parseRoundId(roundIdParam);
+  const validRound = Number.isSafeInteger(chain) && chain > 0 && roundId !== null && !!auctionAddress;
   const selectedTakeParam = searchParams.get("take");
   const requestedPriceSource = searchParams.get("priceSource");
   const selectedOccurrence = parseOccurrence(chain, selectedTakeParam);
@@ -280,14 +281,14 @@ export default function RoundModalContent({
     selectedTakeNotFound,
     priceReference,
     displayedLivePrice,
-  } = useRoundDetails(chain, auctionAddress, occurrence, selectedOccurrence);
+  } = useRoundDetails(chain, auctionAddress, roundId, selectedOccurrence);
 
   useEffect(() => {
     const take = selectedTakeQuery.isError ? undefined : selectedTakeQuery.data;
-    if (!take || !occurrence || occurrenceKey(take.round_occurrence) === occurrenceKey(occurrence)) return;
+    if (!take || !validRound || (take.round_id === roundId && take.auction.toLowerCase() === auctionAddress?.toLowerCase())) return;
     // The transfer remains the identity even if corrected inference moves it to another round.
-    navigate({ pathname: buildRoundPath(chain, take.auction, take.round_occurrence), search: location.search }, { replace: true, state: location.state });
-  }, [selectedTakeQuery.data, selectedTakeQuery.isError, occurrenceParam, chain, location.search, location.state, navigate]);
+    navigate({ pathname: buildRoundPath(chain, take.auction, take.round_id), search: location.search }, { replace: true, state: location.state });
+  }, [selectedTakeQuery.data, selectedTakeQuery.isError, roundId, auctionAddress, validRound, chain, location.search, location.state, navigate]);
 
   const replaceModalSearchParams = (next: URLSearchParams) => {
     setSearchParams(next, { replace: true, state: location.state });
@@ -356,7 +357,7 @@ export default function RoundModalContent({
     setPriceSource(selectedPriceSource);
   }, [requestedPriceSource, selectedPriceSource, sourceOptions.length]);
 
-  if (occurrence && roundQuery.isLoading) {
+  if (validRound && roundQuery.isLoading) {
     return <RoundModalLoadingState onClose={onClose} />;
   }
 
@@ -368,9 +369,9 @@ export default function RoundModalContent({
           <ModalCloseButton onClose={onClose} autoFocus />
         </div>
         <div data-round-modal-scroll-root="true" className="flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
-          {!occurrence ? <EmptyState title="Invalid round link" /> : roundQuery.isError && !roundNotFound ? (
+          {!validRound ? <EmptyState title="Invalid round link" /> : roundQuery.isError && !roundNotFound ? (
             <RequestError message="Unable to load round." onRetry={() => { void roundQuery.refetch(); }} />
-          ) : <EmptyState title="Round not found" description="This occurrence is absent from the indexed auction." />}
+          ) : <EmptyState title="Round not found" description="This round is absent from the indexed auction." />}
         </div>
       </div>
     );

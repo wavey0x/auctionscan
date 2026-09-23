@@ -52,6 +52,11 @@ uv --project backend run pytest
 - One long-running indexer process per network.
 - SQLite is the system of record.
 - `--reproject` rebuilds projected state from stored facts.
+- Public round links use `/round/{chain_id}/{auction_address}/{round_id}`.
+  Round numbers are derived from indexed kick history; corrections to earlier
+  history can renumber rounds, so these links follow the current numbering.
+  API responses retain exact event occurrences for take selection and live-price
+  snapshot checks. Round detail uses `/api/rounds/{chain_id}/{auction_address}/{round_id}`.
 
 ## API contract and locked builds
 

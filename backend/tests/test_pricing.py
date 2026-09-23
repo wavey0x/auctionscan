@@ -1252,7 +1252,7 @@ def test_take_and_round_api_surfaces_use_canonical_pricing(tmp_path):
     assert round_item["priced_take_count"] == 1
     assert round_item["priced_volume_share"] == 1.0
 
-    round_detail_payload = client.get(f"/api/rounds/1/0x{102:064x}/0x{3:064x}/0").json()
+    round_detail_payload = client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1").json()
     assert round_detail_payload["round"]["expected_price_per_unit"] == "0.66"
     assert round_detail_payload["round"]["pricing_by_source"] == {
         "canonical": {
@@ -1529,7 +1529,7 @@ def test_pricing_list_routes_read_projections_without_pricing_facts(tmp_path, mo
     responses = [
         client.get(f"/api/auctions/{DEFAULT_AUCTION}/takes", params={"chain_id": 1}),
         client.get(f"/api/takers/{TAKER}/takes"),
-        client.get(f"/api/rounds/1/0x{102:064x}/0x{3:064x}/0"),
+        client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1"),
     ]
     assert [response.status_code for response in responses] == [200, 200, 200]
 
@@ -2124,7 +2124,7 @@ def test_payment_meaning_and_coverage_agree_across_api_views(tmp_path, actual_pa
     usd_count = int(observed and usd_available)
     client = TestClient(create_app(db_path=str(db_path)))
     take = client.get(f"/api/takes/1/0x{103:064x}/0x{4:064x}/4").json()
-    round_item = client.get(f"/api/rounds/1/0x{102:064x}/0x{3:064x}/0").json()["round"]
+    round_item = client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1").json()["round"]
     auction = client.get(f"/api/auctions/{DEFAULT_AUCTION}", params={"chain_id": 1}).json()
     taker = client.get(f"/api/takers/{TAKER}").json()
     listed_taker = client.get("/api/takers").json()["takers"][0]
@@ -2156,7 +2156,7 @@ def test_partial_payment_averages_use_their_own_contributing_takes(tmp_path):
         rebuild_pricing_projections(conn, chain_id=1)
     writer.transaction(exclude_last_usd)
     client = TestClient(create_app(db_path=str(db_path)))
-    round_item = client.get(f"/api/rounds/1/0x{102:064x}/0x{3:064x}/0").json()["round"]
+    round_item = client.get(f"/api/rounds/1/{DEFAULT_AUCTION}/1").json()["round"]
     assert round_item["sold_amount"] == "300"
     assert round_item["paid_amount"] == "190"
     assert round_item["avg_execution_price"] == "0.76"  # 190 / (200 + 50), excludes the estimated fill.

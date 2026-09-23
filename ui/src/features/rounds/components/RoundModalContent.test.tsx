@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.useRealTimers(); });
 function mount() {
-  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[buildRoundPath(1, auction, occurrence)]}><Routes><Route path="/round/:chainId/:auctionAddress/:occurrence" element={<RoundModalContent onClose={() => {}} />} /></Routes></MemoryRouter></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[buildRoundPath(1, auction, 1)]}><Routes><Route path="/round/:chainId/:auctionAddress/:roundId" element={<RoundModalContent onClose={() => {}} />} /></Routes></MemoryRouter></QueryClientProvider>);
 }
 async function settle(ms = 100) {
   await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -63,12 +63,47 @@ it("cannot display a late price from a different indexed snapshot", async () => 
     .mockResolvedValue(price(101, "222"));
   const { container } = mount();
   await settle();
-  await act(async () => { client.setQueryData(["round-detail", occurrence], details(101)); });
+  await act(async () => { client.setQueryData(["round-detail", 1, auction, 1], details(101)); });
   await settle();
   expect(container.textContent).toContain("222");
   await act(async () => { resolveOld(price(100, "111")); });
   await settle();
   expect(container.textContent).toContain("222");
+  expect(container.textContent).not.toContain("111");
+});
+
+it("resolves a numbered URL before loading takes and prices for the exact event", async () => {
+  let resolveRound!: (value: RoundDetailResponse) => void;
+  const roundRequest = vi.spyOn(api, "getRoundDetail").mockImplementation(() => new Promise((resolve) => { resolveRound = resolve; }));
+  const priceRequest = vi.spyOn(api, "getRoundLivePrice").mockResolvedValue(price(100, "123.456"));
+  mount();
+  await settle();
+  expect(roundRequest).toHaveBeenCalledWith(1, auction, 1, expect.any(AbortSignal));
+  expect(api.getAuctionTakes).not.toHaveBeenCalled();
+  expect(priceRequest).not.toHaveBeenCalled();
+  await act(async () => { resolveRound(details(100)); });
+  await settle();
+  expect(api.getAuctionTakes).toHaveBeenCalledWith(1, auction, occurrence, 200, expect.any(AbortSignal));
+  expect(priceRequest).toHaveBeenCalledWith(occurrence, expect.objectContaining({ indexed_block: 100 }), expect.any(AbortSignal));
+});
+
+it("discards a pending price when the same round number resolves to a replacement event", async () => {
+  vi.spyOn(api, "getRoundDetail").mockResolvedValue(details(100));
+  let resolveOld!: (value: RoundLivePrice) => void;
+  const replacement = { ...occurrence, block_hash: `0x${"f".repeat(64)}` };
+  vi.spyOn(api, "getRoundLivePrice")
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+    .mockResolvedValue({ ...price(100, "222"), occurrence: replacement });
+  const { container } = mount();
+  await settle();
+  await act(async () => { client.setQueryData(["round-detail", 1, auction, 1], {
+    ...details(100), round: { ...details(100).round, occurrence: replacement },
+  }); });
+  await settle();
+  expect(api.getAuctionTakes).toHaveBeenLastCalledWith(1, auction, replacement, 200, expect.any(AbortSignal));
+  expect(container.textContent).toContain("222");
+  await act(async () => { resolveOld(price(100, "111")); });
+  await settle();
   expect(container.textContent).not.toContain("111");
 });
 
@@ -92,8 +127,8 @@ it("replaces the route when a selected take moves rounds, preserving search and 
   const backgroundLocation = { pathname: `/auction/1/${auction}`, search: "?page=3", hash: "", state: null, key: "auction" };
   const state = { backgroundLocation };
   const search = `?take=${occurrenceKey(takeOccurrence)}&priceSource=canonical&from=auction`;
-  vi.spyOn(api, "getRoundDetail").mockImplementation(async (requested) => ({
-    ...details(100), round: { ...details(100).round, occurrence: requested, is_active: false },
+  vi.spyOn(api, "getRoundDetail").mockImplementation(async (_chain, _auction, requestedRoundId) => ({
+    ...details(100), round: { ...details(100).round, round_id: requestedRoundId, occurrence: requestedRoundId === 2 ? correctedOccurrence : occurrence, is_active: false },
   }));
   vi.spyOn(api, "getTake").mockResolvedValue({
     occurrence: takeOccurrence, round_occurrence: correctedOccurrence,
@@ -102,13 +137,13 @@ it("replaces the route when a selected take moves rounds, preserving search and 
     tx_hash: takeOccurrence.tx_hash, block_number: 100, confirmed: true,
   });
   const router = createMemoryRouter([
-    { path: "/round/:chainId/:auctionAddress/:occurrence", element: <RoundModalContent onClose={() => {}} /> },
-  ], { initialEntries: [{ pathname: buildRoundPath(1, auction, occurrence), search, state }] });
+    { path: "/round/:chainId/:auctionAddress/:roundId", element: <RoundModalContent onClose={() => {}} /> },
+  ], { initialEntries: [{ pathname: buildRoundPath(1, auction, 1), search, state }] });
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   await settle();
   await settle();
 
-  expect(router.state.location.pathname).toBe(buildRoundPath(1, auction, correctedOccurrence));
+  expect(router.state.location.pathname).toBe(buildRoundPath(1, auction, 2));
   expect(router.state.historyAction).toBe("REPLACE");
   expect(router.state.location.search).toBe(search);
   expect(router.state.location.state).toEqual(state);

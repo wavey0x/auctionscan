@@ -9,7 +9,7 @@ from ..db import Database
 from ..queries import load_as_of, occurrence_from_row
 from ..models import RoundDetailResponse, RoundLivePrice, RoundsResponse
 from ..pricing_sources import build_round_pricing_by_source
-from ..queries import get_round_by_occurrence, list_round_pricing_sources, list_rounds
+from ..queries import get_round, get_round_by_occurrence, list_round_pricing_sources, list_rounds
 from ..serializers import checksum_address, decimal_string, round_list_item_from_row
 
 
@@ -66,12 +66,11 @@ def get_rounds(
     )
 
 
-@router.get("/rounds/{chain_id}/{block_hash}/{tx_hash}/{log_index}", response_model=RoundDetailResponse)
+@router.get("/rounds/{chain_id}/{auction_address}/{round_id}", response_model=RoundDetailResponse)
 def get_round_detail(
     chain_id: int,
-    block_hash: str,
-    tx_hash: str,
-    log_index: int,
+    auction_address: str,
+    round_id: int,
     response: Response,
     db: Database = Depends(get_database),
 ) -> RoundDetailResponse:
@@ -79,15 +78,14 @@ def get_round_detail(
     try:
         with db.connect() as conn:
             as_of = load_as_of(conn)
-            row = get_round_by_occurrence(
+            row = get_round(
                 conn,
                 chain_id=chain_id,
-                block_hash=block_hash,
-                tx_hash=tx_hash,
-                log_index=log_index,
+                auction_address=auction_address,
+                round_id=round_id,
             )
             if row is None:
-                raise HTTPException(status_code=404, detail="Round occurrence not found")
+                raise HTTPException(status_code=404, detail="Round not found")
             source_rows = list_round_pricing_sources(
                 conn,
                 chain_id=chain_id,

@@ -1,0 +1,18 @@
+[Unit]
+Description=Auctionscan Indexer (%i)
+After=network.target
+
+[Service]
+Type=simple
+User=svc-auctionscan
+Group=svc-auctionscan
+WorkingDirectory=/home/wavey/auctionscan
+EnvironmentFile=/home/wavey/auctionscan/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/wavey/auctionscan/backend/.venv/bin/python -m backend.indexer.app --network %i --watch --log-level INFO
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

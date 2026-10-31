@@ -4,6 +4,13 @@ The API and UI ship together. Breaking changes are intentional; there are no
 old response shapes or runtime conversion paths. Use the uv release recorded
 in `backend/pyproject.toml` and `uv sync --project backend --locked` on the deployment host.
 
+On Electro, `deploy/systemd/auctionscan-api.service` and
+`deploy/systemd/auctionscan-indexer@.service` run under the non-login
+`svc-auctionscan` account. The code and virtual environment remain read-only to
+that account; the SQLite data belongs to it, and the app-read `.env` is
+`root:svc-auctionscan` mode `0640`. Install both units directly in
+`/etc/systemd/system/`; no service-identity override is required.
+
 ## Backups and restoration
 
 Use SQLite's online backup API to create a consistent snapshot of the shared

@@ -91,8 +91,9 @@ def _resolve_artifact_abi_path(paths: ProjectPaths, version: str, auction_addres
 
 def _build_paths(db_path: str | None = None) -> ProjectPaths:
     repo_root = _repo_root()
-    if db_path:
-        candidate = Path(db_path)
+    configured_db_path = db_path or os.environ.get("AUCTIONSCAN_DB_PATH")
+    if configured_db_path:
+        candidate = Path(configured_db_path)
         resolved_db_path = candidate if candidate.is_absolute() else repo_root / candidate
     else:
         resolved_db_path = _default_db_path(repo_root)

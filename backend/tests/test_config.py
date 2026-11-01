@@ -1,9 +1,17 @@
 import pytest
 
-from backend.indexer.config import _resolve_artifact_abi_path
+from backend.indexer.config import _build_paths, _resolve_artifact_abi_path
 from backend.indexer.types import ProjectPaths
 
 from backend.indexer.config import load_settings
+
+
+def test_indexer_uses_configured_database_path(monkeypatch, tmp_path):
+    configured = tmp_path / "auctionscan.sqlite3"
+    monkeypatch.setenv("AUCTIONSCAN_DB_PATH", str(configured))
+
+    assert _build_paths().db_path == configured
+    assert _build_paths(db_path=str(tmp_path / "explicit.sqlite3")).db_path == tmp_path / "explicit.sqlite3"
 
 
 def test_load_settings_canonicalizes_known_factory_versions(monkeypatch, tmp_path):

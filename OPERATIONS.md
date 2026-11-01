@@ -6,9 +6,10 @@ in `backend/pyproject.toml` and `uv sync --project backend --locked` on the depl
 
 On Electro, `deploy/systemd/auctionscan-api.service` and
 `deploy/systemd/auctionscan-indexer@.service` run under the non-login
-`svc-auctionscan` account. The code and virtual environment remain read-only to
-that account; the SQLite data belongs to it, and the app-read `.env` is
-`root:svc-auctionscan` mode `0640`. Install both units directly in
+`svc-auctionscan` account. The installed code and virtual environment under
+`/opt/auctionscan` are root-owned and read-only to that account. The SQLite
+database and writer locks live under `/var/lib/auctionscan`; systemd reads
+`/etc/auctionscan.env` (`root:svc-auctionscan`, mode `0640`). Install both units directly in
 `/etc/systemd/system/`; no service-identity override is required.
 
 ## Backups and restoration

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation } from "react-router-dom";
 import type { Location } from "react-router-dom";
@@ -13,6 +14,7 @@ import StatusPage from "../features/status/pages/StatusPage";
 import TakerProfilePage from "../features/takers/pages/TakerProfilePage";
 import TakersPage from "../features/takers/pages/TakersPage";
 import TxResolveRoute from "../features/tx/pages/TxResolveRoute";
+import { OpenRoundProvider, type OpenRound } from "../shared/lib/openRound";
 import { parseRoundModalSource, resolveRoundModalBackgroundLocation } from "../shared/lib/routes";
 
 const queryClient = new QueryClient({
@@ -64,9 +66,17 @@ function AppRoutes() {
         })()
       : null;
   const backgroundLocation = routeState?.backgroundLocation ?? synthesizedBackgroundLocation ?? undefined;
+  const openRound = useMemo<OpenRound | null>(() => {
+    if (!roundMatch) return null;
+    const chainId = Number(roundMatch.params.chainId);
+    const roundId = Number(roundMatch.params.roundId);
+    const auctionAddress = roundMatch.params.auctionAddress ?? "";
+    if (!Number.isSafeInteger(chainId) || !Number.isSafeInteger(roundId) || !auctionAddress) return null;
+    return { chainId, roundId, auctionAddress, state: location.state };
+  }, [roundMatch?.params.chainId, roundMatch?.params.roundId, roundMatch?.params.auctionAddress, location.state]);
 
   return (
-    <>
+    <OpenRoundProvider value={openRound}>
       <Routes location={backgroundLocation || location}>
         <Route element={<AppShell />}>
           <Route path="/" element={<RoundsPage />} />
@@ -86,6 +96,6 @@ function AppRoutes() {
           <Route path="/round/:chainId/:auctionAddress/:roundId" element={<RoundModalRoute />} />
         </Routes>
       ) : null}
-    </>
+    </OpenRoundProvider>
   );
 }

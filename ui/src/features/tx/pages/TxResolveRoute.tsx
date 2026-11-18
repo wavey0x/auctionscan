@@ -9,7 +9,6 @@ import {
   buildTxFilterSearch,
   normalizeTransactionHash,
 } from "../../../shared/lib/routes";
-import Panel from "../../../shared/ui/Panel";
 
 function normalizeResolvedHash(txHash: string | undefined, resolvedHash: string | null | undefined): string | null {
   return normalizeTransactionHash(resolvedHash) ?? normalizeTransactionHash(txHash);
@@ -71,18 +70,19 @@ export default function TxResolveRoute() {
 
   if (resolutionQuery.isError) {
     return (
-      <Panel className="space-y-2">
-        <div className="text-heading text-primary">Unable to resolve transaction.</div>
-        <Link to="/" className="text-data text-tertiary underline-offset-4 hover:text-primary hover:underline">
-          Return home
+      <section className="card space-y-2 px-4 py-4">
+        <div className="text-body text-primary">Unable to resolve transaction.</div>
+        <Link to="/" className="text-data text-tertiary transition-colors hover:text-primary">
+          Return to rounds
         </Link>
-      </Panel>
+      </section>
     );
   }
 
   return (
-    <Panel>
-      <div className="text-data text-tertiary">Resolving transaction...</div>
-    </Panel>
+    <section className="card flex items-center gap-3 px-4 py-4" aria-busy="true">
+      <span className="skeleton-bar w-24" />
+      <span className="text-data text-tertiary">Resolving transaction…</span>
+    </section>
   );
 }

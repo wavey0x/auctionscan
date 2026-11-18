@@ -230,7 +230,7 @@ export function formatSignedUsdDelta(value: string | number | null | undefined):
   }
   const numeric = Number(value);
   if (numeric > 0) return `+${formatUsd(Math.abs(numeric))}`;
-  if (numeric < 0) return `-${formatUsd(Math.abs(numeric))}`;
+  if (numeric < 0) return `−${formatUsd(Math.abs(numeric))}`;
   return formatUsd(0);
 }
 
@@ -241,4 +241,62 @@ export function signedMetricTone(value: number | null | undefined): string {
   if (value > 0) return "text-positive";
   if (value < 0) return "text-negative";
   return "text-primary";
+}
+
+/**
+ * Money at three significant digits, keeping zeros so a column reads evenly:
+ * $23.4M, $6.70M, $161K, $22.8. The exact value belongs in a title or a drawer.
+ */
+export function formatCompactUsd(value: string | number | null | undefined, { signed = false } = {}): string {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  const abs = Math.abs(numeric);
+  const sign = numeric < 0 ? "−" : signed && numeric > 0 ? "+" : "";
+  if (abs > 0 && abs < 1) {
+    return `${sign}$${abs.toFixed(2)}`;
+  }
+  const units: Array<[number, string]> = [[1e9, "B"], [1e6, "M"], [1e3, "K"]];
+  for (const [size, suffix] of units) {
+    if (abs >= size) {
+      const scaled = abs / size;
+      const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+      return `${sign}$${scaled.toFixed(digits)}${suffix}`;
+    }
+  }
+  const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
+  return `${sign}$${abs.toFixed(digits)}`;
+}
+
+/** A signed percent with a true minus sign, so direction never rests on colour alone. */
+export function formatSignedPercent(value: number | null | undefined, maximumFractionDigits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "—";
+  }
+  const formatted = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  }).format(Math.abs(value));
+  if (value > 0) return `+${formatted}%`;
+  if (value < 0) return `−${formatted}%`;
+  return `${formatted}%`;
+}
+
+export function formatCount(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "—";
+  }
+  return value.toLocaleString("en-US");
+}
+
+export function coerceFiniteNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }

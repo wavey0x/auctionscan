@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../../../shared/api/client";
@@ -10,39 +11,26 @@ import {
 import type { HealthChain } from "../../../shared/types/api";
 import ChainPill from "../../../shared/ui/ChainPill";
 import EmptyState from "../../../shared/ui/EmptyState";
-import Panel from "../../../shared/ui/Panel";
-import Skeleton from "../../../shared/ui/Skeleton";
-import StackedListRow from "../../../shared/ui/StackedListRow";
-import StatGrid from "../../../shared/ui/StatGrid";
+import SkeletonRows from "../../../shared/ui/SkeletonRows";
+import StatStrip, { Stat } from "../../../shared/ui/StatStrip";
 import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 
-function toneClasses(tone: ChainHealthTone) {
-  if (tone === "healthy") {
-    return {
-      dot: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.24)]",
-      chip: "border-emerald-500/25 text-emerald-700 dark:text-emerald-300",
-      text: "text-emerald-700 dark:text-emerald-300",
-    };
-  }
-  if (tone === "indexing" || tone === "degraded") {
-    return {
-      dot: "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.2)]",
-      chip: "border-amber-500/25 text-amber-700 dark:text-amber-300",
-      text: "text-amber-700 dark:text-amber-300",
-    };
-  }
-  if (tone === "error") {
-    return {
-      dot: "bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.22)]",
-      chip: "border-rose-500/25 text-rose-700 dark:text-rose-300",
-      text: "text-rose-700 dark:text-rose-300",
-    };
-  }
-  return {
-    dot: "bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.16)]",
-    chip: "border-slate-400/25 text-slate-600 dark:text-slate-400",
-    text: "text-slate-600 dark:text-slate-400",
-  };
+const TONE: Record<ChainHealthTone, string> = {
+  healthy: "var(--color-active-mark)",
+  indexing: "var(--color-warning-mark)",
+  degraded: "var(--color-warning-mark)",
+  error: "var(--color-negative)",
+  disabled: "var(--color-faint)",
+};
+
+function HealthStatus({ chain }: { chain: HealthChain }) {
+  const tone = getChainHealthTone(chain);
+  return (
+    <span className="status">
+      <span className={cn("status-dot", tone === "disabled" && "is-ring")} style={{ "--tone": TONE[tone] } as CSSProperties} aria-hidden="true" />
+      <span>{getChainHealthLabel(chain)}</span>
+    </span>
+  );
 }
 
 function syncProgress(chain: HealthChain): number | null {
@@ -81,23 +69,6 @@ function syncLabel(chain: HealthChain): string {
     return `${processed} / ${confirmed}`;
   }
   return `${processed} / ${confirmed} · ${progress.toFixed(1)}%`;
-}
-
-function SummaryMetric({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div className="min-w-20">
-      <div className="metric-label">{label}</div>
-      <div className={cn("mt-0.5 font-mono text-data text-primary", className)}>{value}</div>
-    </div>
-  );
 }
 
 function sortChains(chains: HealthChain[]): HealthChain[] {
@@ -139,56 +110,6 @@ function DiscoveryCoverage({ discovery }: { discovery: HealthChain["discovery"] 
   );
 }
 
-function StatusSkeleton() {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-end justify-between gap-3">
-        <div className="space-y-1">
-          <Skeleton className="h-3 w-20" />
-          <Skeleton className="h-5 w-24" />
-        </div>
-        <Skeleton className="h-3 w-24" />
-      </div>
-
-      <Panel className="flex flex-wrap gap-4 py-2">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="space-y-1">
-            <Skeleton className="h-3 w-14" />
-            <Skeleton className="h-4 w-12" />
-          </div>
-        ))}
-      </Panel>
-
-      <Panel padded={false}>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px]">
-            <thead>
-              <tr className="border-b border-divider-subtle">
-                {Array.from({ length: 7 }).map((_, index) => (
-                  <th key={index} className="px-3 py-2 text-left">
-                    <Skeleton className="h-3 w-16" />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 4 }).map((_, index) => (
-                <tr key={index} className="border-b border-divider-subtle last:border-b-0">
-                  {Array.from({ length: 7 }).map((__, inner) => (
-                    <td key={inner} className="px-3 py-2">
-                      <Skeleton className="h-4 w-full" />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
 export default function StatusPage() {
   const healthQuery = useQuery({
     queryKey: ["health"],
@@ -196,8 +117,30 @@ export default function StatusPage() {
     refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
 
+  const header = (
+    <div className="page-head">
+      <div>
+        <div className="text-[11px] text-tertiary">Indexer health</div>
+        <h1 className="page-title m-0">Status</h1>
+      </div>
+      <div className="text-meta text-tertiary">Refreshes every 3s</div>
+    </div>
+  );
+
   if (healthQuery.isLoading) {
-    return <StatusSkeleton />;
+    return (
+      <div className="space-y-4" aria-busy="true">
+        {header}
+        <StatStrip label="Network totals" count={5}>
+          {["Healthy", "Indexing", "Errors", "Delayed", "Max lag"].map((label) => <Stat key={label} label={label} value="" loading />)}
+        </StatStrip>
+        <section className="card card-clip">
+          <div className="table-wrap">
+            <table className="data-table"><tbody><SkeletonRows rows={3} widths={[120, 60, 40, 160, 100, 140, 120]} /></tbody></table>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   if (healthQuery.isError) {
@@ -229,139 +172,57 @@ export default function StatusPage() {
     .reduce((max, chain) => Math.max(max, chain.block_lag ?? 0), 0);
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="space-y-1">
-          <div className="metric-label">Indexer health</div>
-          <h1 className="text-heading text-primary">Status</h1>
-        </div>
-        <div className="text-meta text-tertiary">Refreshes every 3s</div>
-      </div>
+    <div className="space-y-4">
+      {header}
 
-      <Panel className="py-2">
-        <StatGrid columns={2} className="gap-x-5 gap-y-2 md:grid-cols-5">
-          <SummaryMetric label="Healthy" value={String(healthyCount)} className="text-emerald-700 dark:text-emerald-300" />
-          <SummaryMetric label="Indexing" value={String(indexingCount)} className="text-amber-700 dark:text-amber-300" />
-          <SummaryMetric label="Errors" value={String(errorCount)} className={errorCount > 0 ? "text-rose-700 dark:text-rose-300" : ""} />
-          <SummaryMetric label="Delayed" value={String(delayedCount)} className="text-slate-600 dark:text-slate-400" />
-          <SummaryMetric label="Max lag" value={`${formatAmount(maxLag, 0)} blk`} />
-        </StatGrid>
-      </Panel>
+      <StatStrip label="Network totals" count={5}>
+        <Stat label="Healthy" value={String(healthyCount)} />
+        <Stat label="Indexing" value={String(indexingCount)} />
+        <Stat label="Errors" value={String(errorCount)} />
+        <Stat label="Delayed" value={String(delayedCount)} />
+        <Stat label="Max lag" value={formatAmount(maxLag, 0)} suffix="blocks" />
+      </StatStrip>
 
-      <Panel padded={false}>
-        <div className="md:hidden">
-          {chains.map((chain) => {
-            const tone = getChainHealthTone(chain);
-            const classes = toneClasses(tone);
-
-            return (
-              <StackedListRow key={`mobile-${chain.chain_id}`} className="space-y-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className={cn("mt-1 h-2 w-2 shrink-0 rounded-full ring-1 ring-white/10", classes.dot)}
-                    />
-                    <div className="min-w-0">
-                      <ChainPill chainId={chain.chain_id} size="sm" className="min-w-0 truncate" />
-                      <div className="mt-1 text-meta text-tertiary">
-                        {chain.network_name} · chain {chain.chain_id}
-                      </div>
-                    </div>
-                  </div>
-                  <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", classes.chip)}>
-                    {getChainHealthLabel(chain)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                  <div>
-                    <div className="metric-label">Lag</div>
-                    <div className="mt-1 font-mono text-data text-primary">
-                      {chain.indexed && chain.block_lag != null ? `${formatAmount(chain.block_lag, 0)} blk` : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="metric-label">Sync</div>
-                    <div className="mt-1 font-mono text-data text-primary">{syncLabel(chain)}</div>
-                  </div>
-                </div>
-                <div>
-                  <div className="metric-label">Finality</div>
-                  <div className="mt-1 font-mono text-data text-primary">
-                    {chain.last_confirmed_processed != null ? formatAmount(chain.last_confirmed_processed, 0) : "—"} {chain.finality_mode === "finalized" ? "finalized" : "confirmed"}
-                  </div>
-                </div>
-                <div>
-                  <div className="metric-label mb-1">Discovery coverage</div>
-                  <DiscoveryCoverage discovery={chain.discovery} />
-                </div>
-                {(chain.last_error || chain.health_detail) ? (
-                  <div>
-                    <div className="metric-label">Details</div>
-                    <div className="mt-1 text-data text-negative">{(chain.last_error || chain.health_detail)}</div>
-                  </div>
-                ) : null}
-              </StackedListRow>
-            );
-          })}
-        </div>
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full min-w-[860px] text-left">
+      <section className="card card-clip" aria-label="Networks">
+        <div className="table-wrap">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-divider-subtle">
-                <th className="table-header px-3 py-2">Network</th>
-                <th className="table-header px-3 py-2">Status</th>
-                <th className="table-header px-3 py-2">Lag</th>
-                <th className="table-header px-3 py-2">Sync</th>
-                <th className="table-header px-3 py-2">Finality</th>
-                <th className="table-header px-3 py-2">Discovery coverage</th>
-                <th className="table-header px-3 py-2">Details</th>
+              <tr>
+                <th>Network</th>
+                <th>Status</th>
+                <th className="col-lo num">Lag</th>
+                <th className="col-md">Sync</th>
+                <th className="col-md">Finality</th>
+                <th className="col-lo">Discovery coverage</th>
+                <th className="col-xl">Details</th>
               </tr>
             </thead>
             <tbody>
               {chains.map((chain) => {
-                const tone = getChainHealthTone(chain);
-                const classes = toneClasses(tone);
-
+                const progress = syncProgress(chain);
+                const detail = chain.last_error || chain.health_detail;
                 return (
-                  <tr key={chain.chain_id} className="border-b border-divider-subtle last:border-b-0">
-                    <td className="px-3 py-2">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          aria-hidden="true"
-                          className={cn("h-2 w-2 shrink-0 rounded-full ring-1 ring-white/10", classes.dot)}
-                        />
-                        <ChainPill chainId={chain.chain_id} size="sm" className="min-w-0 truncate" />
-                      </div>
-                      <div className="mt-1 text-meta text-tertiary">
-                        {chain.network_name} · chain {chain.chain_id}
-                      </div>
+                  <tr key={chain.chain_id} className="align-top">
+                    <td className="!h-auto !py-2.5">
+                      <ChainPill chainId={chain.chain_id} size="sm" className="min-w-0 truncate" />
+                      <div className="mt-1 text-[11px] text-tertiary">{chain.network_name} · chain {chain.chain_id}</div>
                     </td>
-                    <td className="px-3 py-2">
-                      <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", classes.chip)}>
-                        {getChainHealthLabel(chain)}
-                      </span>
+                    <td className="!h-auto !py-2.5"><HealthStatus chain={chain} /></td>
+                    <td className="col-lo num !h-auto !py-2.5">
+                      {chain.indexed && chain.block_lag != null ? formatAmount(chain.block_lag, 0) : <span className="text-faint">—</span>}
                     </td>
-                    <td className="px-3 py-2 font-mono text-data text-primary">
-                      {chain.indexed && chain.block_lag != null ? `${formatAmount(chain.block_lag, 0)} blk` : "—"}
+                    <td className="col-md mono !h-auto !py-2.5">
+                      <div>{syncLabel(chain)}</div>
+                      {progress != null ? (
+                        <span className="bar mt-1.5 w-[140px]" aria-hidden="true"><i style={{ width: `${progress}%` }} /></span>
+                      ) : null}
                     </td>
-                    <td className="px-3 py-2 font-mono text-data text-primary">
-                      {syncLabel(chain)}
+                    <td className="col-md mono !h-auto !py-2.5">
+                      {chain.last_confirmed_processed != null ? formatAmount(chain.last_confirmed_processed, 0) : "—"} <span className="text-tertiary">{chain.finality_mode === "finalized" ? "finalized" : "confirmed"}</span>
                     </td>
-                    <td className="px-3 py-2 font-mono text-data text-primary">
-                      {chain.last_confirmed_processed != null ? formatAmount(chain.last_confirmed_processed, 0) : "—"} {chain.finality_mode === "finalized" ? "finalized" : "confirmed"}
-                    </td>
-                    <td className="px-3 py-2"><DiscoveryCoverage discovery={chain.discovery} /></td>
-                    <td
-                      className={cn(
-                        "px-3 py-2 text-data",
-                        (chain.last_error || chain.health_detail) ? "text-rose-700 dark:text-rose-300" : "text-tertiary",
-                      )}
-                      title={(chain.last_error || chain.health_detail) || undefined}
-                    >
-                      <div className="max-w-[280px] truncate">
-                        {(chain.last_error || chain.health_detail) || "—"}
-                      </div>
+                    <td className="col-lo !h-auto !py-2.5 whitespace-normal"><DiscoveryCoverage discovery={chain.discovery} /></td>
+                    <td className={cn("col-xl !h-auto !py-2.5 text-data", detail ? "text-negative" : "text-faint")} title={detail || undefined}>
+                      <div className="max-w-[260px] truncate">{detail || "—"}</div>
                     </td>
                   </tr>
                 );
@@ -369,7 +230,7 @@ export default function StatusPage() {
             </tbody>
           </table>
         </div>
-      </Panel>
+      </section>
     </div>
   );
 }

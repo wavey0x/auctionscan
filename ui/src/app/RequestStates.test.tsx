@@ -30,14 +30,14 @@ const taker: TakerSummary = { taker: address, active_chains: [1], total_takes: 1
   total_volume_usd: 25, paid_usd_take_count: 1, last_take: "2026-09-17T12:00:00Z" };
 const profile: TakerDetail = { as_of: {}, taker: address, active_chains: [1], auction_breakdown: [], rank_by_takes: 1,
   total_takes: 1, unique_auctions: 1, unique_chains: 1, total_volume_usd: 25, paid_usd_take_count: 1 };
-const roundList = { as_of: {}, rounds: [roundDetails.round], total: 1, page: 1, per_page: 10, has_next: false };
+const roundList = { as_of: {}, rounds: [roundDetails.round], total: 1, status_counts: { all: 1, live: 0, sold_out: 0, expired: 0, settled: 1 }, page: 1, per_page: 10, has_next: false };
 const takeList = { as_of: {}, takes: [take], available_price_sources: [] };
 const searchResults = { query: "SELL", results: [{ type: "token" as const, chain_id: 1, address_or_hash: address, metadata: { symbol: "SELL", name: "Search match" } }], total: 1 };
 const roundPath = buildRoundPath(1, address, 7);
 const cases = [
-  { name: "rounds", path: "/", method: "getRounds", key: "rounds", loaded: "1 matching rounds", missing: "No rounds found", data: roundList, empty: { ...roundList, rounds: [], total: 0 } },
+  { name: "rounds", path: "/", method: "getRounds", key: "rounds", loaded: "1 matching rounds", missing: "No rounds found", data: roundList, empty: { ...roundList, rounds: [], total: 0, status_counts: { all: 0, live: 0, sold_out: 0, expired: 0, settled: 0 } } },
   { name: "takers", path: "/takers", method: "getTakers", key: "takers", loaded: "1 results found", missing: "No takers found", data: { takers: [taker], total: 1, page: 1, per_page: 15, has_next: false, as_of: {} }, empty: { takers: [], total: 0, page: 1, per_page: 15, has_next: false, as_of: {} } },
-  { name: "auction", path: `/auction/1/${address}`, method: "getAuction", key: "auction", loaded: "Auction:", missing: "Auction not found", data: auction, empty: null },
+  { name: "auction", path: `/auction/1/${address}`, method: "getAuction", key: "auction", loaded: "Recent takes", missing: "Auction not found", data: auction, empty: null },
   { name: "taker profile", path: `/taker/${address}`, method: "getTaker", key: "taker", loaded: "Taker profile", missing: "Taker not found", data: profile, empty: null },
   { name: "round", path: roundPath, method: "getRoundDetail", key: "round-detail", loaded: "R7", missing: "Round not found", data: roundDetails, empty: undefined },
   { name: "search", path: "/search?q=SELL", method: "search", key: "search", loaded: "Search match", missing: "No matches", data: searchResults, empty: { query: "SELL", results: [], total: 0 } },
@@ -51,6 +51,8 @@ beforeEach(() => {
   vi.spyOn(api, "getAuctionVersions").mockResolvedValue({ as_of: {}, versions: [], count: 0 });
   vi.spyOn(api, "getAuction").mockResolvedValue(auction);
   vi.spyOn(api, "getRounds").mockResolvedValue(roundList);
+  vi.spyOn(api, "getStats").mockResolvedValue({ as_of: {}, time_window: "30d", since: null, rounds: 1, live_rounds: 0, takes: 1, takers: 1,
+    received_usd: null, received_usd_take_count: 0, auction_profit_usd: null, auction_profit_usd_take_count: 0 });
   vi.spyOn(api, "getRoundDetail").mockResolvedValue(roundDetails);
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue(takeList);
   vi.spyOn(api, "getTake").mockResolvedValue(take);
@@ -124,7 +126,7 @@ it.each([roundPath, `/auction/1/${address}`])("keeps %s visible while takes load
   let reject!: (error: Error) => void;
   vi.mocked(api.getAuctionTakes).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
   mount(path);
-  await screen.findByText(path === roundPath ? "R7" : "Auction:");
+  await screen.findByText(path === roundPath ? "R7" : "Recent takes");
   expect(screen.queryByText(/No (recent takes|takes in this round)/)).toBeNull();
   await act(async () => reject(new Error("offline")));
   await screen.findByText("Unable to load takes.");

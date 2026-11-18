@@ -8,12 +8,16 @@ interface PaginationProps {
 }
 
 export default function Pagination({ page, hasNext, onPageChange, summary }: PaginationProps) {
+  if (page <= 1 && !hasNext && !summary) {
+    return null;
+  }
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2 text-meta text-tertiary">
-      {summary ? <span className="whitespace-nowrap">{summary}</span> : null}
-      <div className="inline-flex items-center gap-0.5 rounded-md border border-divider-subtle bg-background px-1 py-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-caption text-tertiary">
+      <span className="whitespace-nowrap font-mono">{summary ?? ""}</span>
+      <div className="segmented" role="group" aria-label="Pages">
         <button
-          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-tertiary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:text-tertiary disabled:hover:bg-background"
+          type="button"
+          className="inline-flex items-center disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
           aria-label="Previous page"
@@ -21,9 +25,10 @@ export default function Pagination({ page, hasNext, onPageChange, summary }: Pag
         >
           <ChevronLeft className="h-3 w-3" strokeWidth={1.8} />
         </button>
-        <span className="min-w-[3.75rem] px-1 text-center font-mono text-[11px] text-primary">Page {page}</span>
+        <span className="px-2 py-[5px] font-mono text-[11px] leading-none text-primary">Page {page}</span>
         <button
-          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-tertiary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:text-tertiary disabled:hover:bg-background"
+          type="button"
+          className="inline-flex items-center disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => onPageChange(page + 1)}
           disabled={!hasNext}
           aria-label="Next page"

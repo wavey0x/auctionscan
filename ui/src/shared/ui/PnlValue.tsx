@@ -1,24 +1,21 @@
-import { cn, formatSignedUsdDelta, formatUnsignedPercent, signedMetricTone } from "../lib/format";
+import { cn, coerceFiniteNumber, formatSignedPercent, formatSignedUsdDelta, signedMetricTone } from "../lib/format";
 
-function coerceFiniteNumber(value: string | number | null | undefined): number | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
+/**
+ * Auction PnL against the market quote: the percent carries the tone and the
+ * sign, the USD delta follows in a quieter figure on the same line.
+ */
 export default function PnlValue({
   percent,
   usd,
   align = "left",
-  compact = false,
+  stacked = false,
   className,
   title,
 }: {
   percent: string | number | null | undefined;
   usd: string | number | null | undefined;
   align?: "left" | "right";
+  stacked?: boolean;
   compact?: boolean;
   className?: string;
   title?: string;
@@ -26,22 +23,26 @@ export default function PnlValue({
   const pnlPercent = coerceFiniteNumber(percent);
   const pnlUsdValue = coerceFiniteNumber(usd);
   const directionValue = pnlPercent ?? pnlUsdValue;
-  const alignClass = align === "right" ? "items-end text-right" : "items-start text-left";
+  const empty = pnlPercent === null && pnlUsdValue === null;
+
+  if (empty) {
+    return (
+      <span className={cn("font-mono text-faint", align === "right" && "block text-right", className)} title={title}>—</span>
+    );
+  }
 
   return (
-    <div className={cn("flex flex-col gap-[2px] font-mono leading-[0.92rem]", alignClass, className)} title={title}>
-      <div
-        className={cn(
-          "w-full truncate whitespace-nowrap leading-none",
-          compact ? "text-[12px]" : "text-[13px]",
-          signedMetricTone(directionValue),
-        )}
-      >
-        {formatUnsignedPercent(pnlPercent)}
-      </div>
-      <div className="w-full truncate whitespace-nowrap font-mono text-[10px] leading-none text-tertiary">
-        {formatSignedUsdDelta(pnlUsdValue)}
-      </div>
-    </div>
+    <span
+      className={cn(
+        "inline-flex min-w-0 font-mono",
+        stacked ? "flex-col gap-0.5" : "items-baseline gap-1.5",
+        align === "right" && (stacked ? "items-end" : "justify-end"),
+        className,
+      )}
+      title={title}
+    >
+      <span className={cn("whitespace-nowrap", signedMetricTone(directionValue))}>{formatSignedPercent(pnlPercent)}</span>
+      <span className="usd-note whitespace-nowrap">{formatSignedUsdDelta(pnlUsdValue)}</span>
+    </span>
   );
 }

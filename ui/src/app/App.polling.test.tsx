@@ -12,6 +12,8 @@ vi.mock("../shared/api/client", () => ({
     getChains: vi.fn().mockResolvedValue({ chains: {} }),
     getAuctionVersions: vi.fn().mockResolvedValue({ versions: [] }),
     getHealth: vi.fn().mockResolvedValue({ chains: [] }),
+    getStats: vi.fn().mockResolvedValue({ as_of: {}, time_window: "30d", since: null, rounds: 1, live_rounds: 1, takes: 0, takers: 0, received_usd: null, received_usd_take_count: 0, auction_profit_usd: null, auction_profit_usd_take_count: 0 }),
+    search: vi.fn().mockResolvedValue({ query: "", results: [], total: 0 }),
   },
 }));
 
@@ -41,7 +43,7 @@ afterEach(() => vi.useRealTimers());
 
 it("refreshes visible rounds without navigation or a window-focus event", async () => {
   vi.useFakeTimers();
-  const response = { as_of: {}, rounds: [round], total: 1, page: 1, per_page: 15, has_next: false };
+  const response = { as_of: {}, rounds: [round], total: 1, status_counts: { all: 1, live: 1, sold_out: 0, expired: 0, settled: 0 }, page: 1, per_page: 15, has_next: false };
   vi.mocked(api.getRounds).mockResolvedValue(response);
   const view = render(<App />);
   try {

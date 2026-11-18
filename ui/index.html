@@ -1,13 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0c0c0d" />
+    <meta name="description" content="Dutch auction rounds, takes and execution quality, indexed from chain." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Auctionscan</title>
+    <script>
+      try {
+        if (localStorage.getItem("ui_next_color_mode") === "light") document.documentElement.classList.remove("dark");
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
-  </html>
+</html>

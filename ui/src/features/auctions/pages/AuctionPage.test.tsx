@@ -36,7 +36,7 @@ let router: ReturnType<typeof createMemoryRouter>;
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "getAuction").mockResolvedValue(details);
-  vi.spyOn(api, "getRounds").mockResolvedValue({ as_of: {}, rounds: [round], total: 21, page: 1, per_page: 10, has_next: true });
+  vi.spyOn(api, "getRounds").mockResolvedValue({ as_of: {}, rounds: [round], total: 21, status_counts: { all: 21, live: 0, sold_out: 0, expired: 0, settled: 21 }, page: 1, per_page: 10, has_next: true });
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue({ as_of: {}, takes: [take], available_price_sources: [] });
   vi.spyOn(api, "getTake").mockResolvedValue(take);
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
@@ -53,7 +53,7 @@ async function mount(search = "?priceSource=canonical&keep=yes") {
 }
 
 function roundRow() {
-  return screen.getByRole("cell", { name: "R7 Settled" }).closest("tr")!;
+  return screen.getByRole("cell", { name: /^R7 Settled/ }).closest("tr")!;
 }
 
 it("changes pages while preserving selection and unrelated query parameters", async () => {
@@ -105,12 +105,19 @@ it("opens modified and middle row clicks in a new tab without navigating the pag
   expect(router.state.location).toEqual(initialLocation);
 });
 
-it("keeps display toggles within rows from opening the round", async () => {
+it("toggles the kicked column from its header without opening a round", async () => {
   await mount();
   const initialLocation = router.state.location;
-  const kickedToggle = within(roundRow()).getByRole("button", { name: /ago/ });
-  const previousLabel = kickedToggle.textContent;
-  fireEvent.click(kickedToggle);
-  expect(kickedToggle.textContent).not.toBe(previousLabel);
+  // The narrow-layout sub-line always reads relative time; the column follows the header toggle.
+  expect(within(roundRow()).getAllByText(/ago$/)).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Kicked" }));
+  expect(within(roundRow()).getAllByText(/ago$/)).toHaveLength(1);
   expect(router.state.location).toEqual(initialLocation);
+});
+
+it("opens the round from the keyboard", async () => {
+  await mount();
+  const row = roundRow();
+  fireEvent.keyDown(row, { key: "Enter" });
+  expect(router.state.location.pathname + router.state.location.search).toBe(buildRoundPathWithSource(1, auction, 7, "auction"));
 });

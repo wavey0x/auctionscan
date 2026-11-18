@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronRight } from "lucide-react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { api } from "../../../shared/api/client";
 import { formatCompactDateTime, formatDateTime } from "../../../shared/lib/format";
+import { linkRowKeyDown } from "../../../shared/lib/openRound";
+import { handleRowNavigation } from "../../../shared/lib/rowNavigation";
 import { buildRoundPathWithSource, roundModalSourceFromLocation, withBackgroundLocation } from "../../../shared/lib/routes";
+import { searchResultOpensRound, searchResultRoute, searchTypeLabel } from "../../../shared/lib/search";
 import type { SearchResult } from "../../../shared/types/api";
 import AddressValue from "../../../shared/ui/AddressValue";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
 import RequestError from "../../../shared/ui/RequestError";
-import Panel from "../../../shared/ui/Panel";
 import TokenValue from "../../../shared/ui/TokenValue";
 import TxHashValue from "../../../shared/ui/TxHashValue";
 
@@ -23,39 +26,6 @@ function groupResults(results: SearchResult[]) {
     groups[result.type].push(result);
     return groups;
   }, {});
-}
-
-function typeLabel(type: SearchResult["type"]) {
-  switch (type) {
-    case "auction":
-      return "Auctions";
-    case "taker":
-      return "Takers";
-    case "transaction":
-      return "Take transactions";
-    case "kick_transaction":
-      return "Kick transactions";
-    case "token":
-      return "Tokens";
-    default:
-      return type;
-  }
-}
-
-function buildRoute(result: SearchResult, roundModalSource: ReturnType<typeof roundModalSourceFromLocation>) {
-  if (result.type === "auction") {
-    return `/auction/${result.chain_id}/${result.address_or_hash}`;
-  }
-
-  if (result.type === "taker") {
-    return `/taker/${result.address_or_hash}`;
-  }
-
-  if (result.type === "token") {
-    return `/?chain=${result.chain_id}&filter=${encodeURIComponent(String(result.metadata?.symbol || result.address_or_hash))}`;
-  }
-
-  return `/tx/${result.address_or_hash}`;
 }
 
 export default function SearchPage() {
@@ -105,42 +75,42 @@ export default function SearchPage() {
 
   return (
     <div className="space-y-4">
-      <Panel className="space-y-3">
+      <div className="page-head">
         <div>
-          <div className="text-title text-primary">Search</div>
-          <div className="mt-1 text-data text-tertiary">
-            Fast lookup for auctions, takers, transactions, token symbols, and direct round jumps.
-          </div>
+          <h1 className="page-title m-0">Search</h1>
+          <p className="m-0 mt-1 text-data text-tertiary">Auctions, takers, transactions, token symbols, or a chain:auction:round jump.</p>
         </div>
-        <form onSubmit={submit} className="flex flex-col gap-2 md:flex-row">
-          <input
-            className="filter-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Address, tx hash, token symbol, or 1:0xAuction:29"
-          />
-          <button className="plain-button" type="submit">
-            Search
-          </button>
-        </form>
-      </Panel>
+      </div>
+      <form onSubmit={submit} className="flex items-center gap-2">
+        <input
+          className="filter-input h-9 max-w-xl font-mono"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Address, tx hash, token symbol, or 1:0xAuction:29"
+          aria-label="Search query"
+        />
+        <button className="plain-button h-9" type="submit">
+          Search
+        </button>
+      </form>
 
       {directRoundMatch && directRoundQuery.isError && <RequestError message={directRoundQuery.data ? "Could not refresh direct round lookup. Showing previously loaded data." : "Unable to look up this round."} onRetry={() => { void directRoundQuery.refetch(); }} />}
-      {directRoundMatch && directRoundQuery.isLoading && <Panel className="text-data text-tertiary">Looking up round…</Panel>}
+      {directRoundMatch && directRoundQuery.isLoading && <div className="text-data text-tertiary">Looking up round…</div>}
       {directRoundMatch && directRoundQuery.data && !directRound && <EmptyState title="Round not found" />}
       {directRoundMatch && directRound ? (
-        <Panel className="space-y-2">
-          <div className="metric-label">Direct round workspace</div>
+        <section className="card card-clip">
+          <div className="card-title"><span>Direct round workspace</span></div>
           <Link
             to={buildRoundPathWithSource(directRoundMatch.chainId, directRoundMatch.auctionAddress, directRound.round_id, roundModalSource)}
             state={withBackgroundLocation(location)}
-            className="inline-flex items-center gap-3 text-data text-primary underline-offset-4 hover:underline"
+            className="data-row flex items-center gap-3 px-4 py-2.5 text-data text-primary"
           >
             <ChainIcon chainId={directRoundMatch.chainId} />
             <span className="font-mono">R{directRoundMatch.roundId}</span>
             <span className="font-mono text-tertiary">{directRoundMatch.auctionAddress.slice(0, 8)}…</span>
+            <ChevronRight className="ml-auto h-3.5 w-3.5 text-faint" strokeWidth={1.6} />
           </Link>
-        </Panel>
+        </section>
       ) : null}
 
       {query.trim().length >= 2 && searchQuery.isError && <RequestError message={searchQuery.data ? "Could not refresh search. Showing previously loaded data." : "Unable to search."} onRetry={() => { void searchQuery.refetch(); }} />}
@@ -148,67 +118,61 @@ export default function SearchPage() {
         <EmptyState title="Start with a query" description="Use at least two characters for indexed search, or a chain:auction:round pattern for a direct jump." />
       ) : searchQuery.data?.results.length ? (
         Object.entries(groupedResults).map(([type, results]) => (
-          <Panel key={type} className="space-y-2">
-            <div className="text-heading text-primary">{typeLabel(type as SearchResult["type"])}</div>
-            <div className="space-y-1">
+          <section key={type} className="card card-clip" aria-label={searchTypeLabel(type as SearchResult["type"])}>
+            <div className="card-title">
+              <span>{searchTypeLabel(type as SearchResult["type"])}</span>
+              <strong>{results.length}</strong>
+            </div>
+            <ul className="m-0 list-none p-0">
               {results.map((result, index) => {
                 const timestamp = result.metadata?.timestamp ? String(result.metadata.timestamp) : null;
-                const hasRoundDestination =
-                  result.type !== "auction" &&
-                  result.type !== "taker" &&
-                  Boolean(result.metadata?.auction_address) &&
-                  result.metadata?.round_id !== null &&
-                  result.metadata?.round_id !== undefined;
-
+                const route = searchResultRoute(result);
+                const open = () => navigate(route, searchResultOpensRound(result) ? { state: withBackgroundLocation(location) } : undefined);
                 return (
-                  <div
+                  <li
                     key={`${result.type}-${result.address_or_hash}-${index}`}
-                    className="cursor-pointer rounded-md border border-divider-subtle px-3 py-2 text-data text-secondary hover:bg-background"
-                    onClick={() =>
-                      navigate(
-                        buildRoute(result, roundModalSource),
-                        hasRoundDestination ? { state: withBackgroundLocation(location) } : undefined,
-                      )
-                    }
+                    className="data-row reveal-row flex items-center gap-3 border-b border-divider-subtle px-4 py-2.5 text-data last:border-b-0"
+                    tabIndex={0}
+                    data-row=""
+                    onClick={(event) => handleRowNavigation(event, route, open)}
+                    onKeyDown={linkRowKeyDown(open)}
                   >
-                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <ChainIcon chainId={result.chain_id} />
-                        {result.type === "transaction" || result.type === "kick_transaction" ? (
-                          <TxHashValue txHash={result.address_or_hash} chainId={result.chain_id} />
-                        ) : result.type === "auction" ? (
-                          <AuctionAddressValue address={result.address_or_hash} chainId={result.chain_id} width={8} />
-                        ) : result.type === "token" ? (
-                          <TokenValue
-                            address={result.address_or_hash}
-                            symbol={String(result.metadata?.symbol || result.address_or_hash)}
-                            logoUrl={String(result.metadata?.logo_url || "")}
-                            chainId={result.chain_id}
-                            showCopy={false}
-                          />
-                        ) : (
-                          <AddressValue address={result.address_or_hash} chainId={result.chain_id} width={8} />
-                        )}
-                      </div>
-                      <div className="text-meta text-tertiary md:shrink-0">{type}</div>
-                    </div>
-                    <div className="mt-1 text-meta text-tertiary">
+                    <ChainIcon chainId={result.chain_id} />
+                    <span className="min-w-0">
+                      {result.type === "transaction" || result.type === "kick_transaction" ? (
+                        <TxHashValue txHash={result.address_or_hash} chainId={result.chain_id} />
+                      ) : result.type === "auction" ? (
+                        <AuctionAddressValue address={result.address_or_hash} chainId={result.chain_id} width={8} />
+                      ) : result.type === "token" ? (
+                        <TokenValue
+                          address={result.address_or_hash}
+                          symbol={String(result.metadata?.symbol || result.address_or_hash)}
+                          logoUrl={String(result.metadata?.logo_url || "")}
+                          chainId={result.chain_id}
+                          showCopy={false}
+                        />
+                      ) : (
+                        <AddressValue address={result.address_or_hash} chainId={result.chain_id} width={8} />
+                      )}
+                    </span>
+                    <span className="min-w-0 truncate text-tertiary" title={timestamp ? formatDateTime(timestamp) : undefined}>
                       {timestamp
-                        ? `${formatCompactDateTime(timestamp)} · ${formatDateTime(timestamp)}`
+                        ? formatCompactDateTime(timestamp)
                         : result.metadata?.round_id
                           ? `Round ${String(result.metadata.round_id)}`
                           : result.type === "token"
                             ? String(result.metadata?.name || "Indexed token")
                             : "Indexed match"}
-                    </div>
-                  </div>
+                    </span>
+                    <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={1.6} aria-hidden="true" />
+                  </li>
                 );
               })}
-            </div>
-          </Panel>
+            </ul>
+          </section>
         ))
       ) : searchQuery.isLoading ? (
-        <Panel className="text-data text-tertiary">Searching…</Panel>
+        <div className="text-data text-tertiary">Searching…</div>
       ) : searchQuery.isError && !searchQuery.data ? null : (
         <EmptyState title="No matches" description="No indexed auctions, takers, transactions, or token symbols matched this query." />
       )}

@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 
-import { formatAmount, formatCompactDateTime, formatDateTime, formatPrice, formatUsd } from "../lib/format";
+import { formatAmount, formatDateTime, formatPrice } from "../lib/format";
 import { getTakePricingBySource, DEFAULT_PRICE_SOURCE } from "../lib/pricingSource";
 import type { TakeDetail } from "../types/api";
 import AddressValue from "./AddressValue";
+import PnlValue from "./PnlValue";
 import TokenAmountValue from "./TokenAmountValue";
 import TokenValue from "./TokenValue";
 import TxHashValue from "./TxHashValue";
@@ -17,8 +18,8 @@ function TakeExpandedField({
 }) {
   return (
     <div className="min-w-0">
-      <div className="metric-label">{label}</div>
-      <div className="mt-1 min-w-0 text-data text-primary">{value}</div>
+      <div className="text-[11px] text-tertiary">{label}</div>
+      <div className="mt-0.5 min-w-0 text-data text-primary">{value}</div>
     </div>
   );
 }
@@ -33,18 +34,14 @@ export default function TakeExpandedContent({
   const pricing = getTakePricingBySource(take, priceSource);
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="reveal-row grid grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-4">
       <TakeExpandedField
         label="Taker"
         value={<AddressValue address={take.taker} chainId={take.chain_id} />}
       />
       <TakeExpandedField
         label="Time"
-        value={
-          <div className="font-mono" title={formatDateTime(take.timestamp)}>
-            {formatCompactDateTime(take.timestamp)}
-          </div>
-        }
+        value={<span className="font-mono">{formatDateTime(take.timestamp)}</span>}
       />
       <TakeExpandedField
         label="Sold"
@@ -72,18 +69,11 @@ export default function TakeExpandedContent({
       />
       <TakeExpandedField
         label="Execution price"
-        value={<div className="font-mono">{formatPrice(take.price)}</div>}
+        value={<span className="font-mono">{formatPrice(take.price)}</span>}
       />
       <TakeExpandedField
         label="Delta"
-        value={
-          <div className="font-mono">
-            {pricing.pnl_usd ? formatUsd(pricing.pnl_usd) : "—"}
-            {pricing.pnl_percent !== null && pricing.pnl_percent !== undefined
-              ? ` (${pricing.pnl_percent.toFixed(2)}%)`
-              : ""}
-          </div>
-        }
+        value={<PnlValue percent={pricing.pnl_percent} usd={pricing.pnl_usd} />}
       />
       <TakeExpandedField
         label="Transaction"

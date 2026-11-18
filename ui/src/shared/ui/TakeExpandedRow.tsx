@@ -1,5 +1,4 @@
 import type { TakeDetail } from "../types/api";
-import Skeleton from "./Skeleton";
 import TakeExpandedContent from "./TakeExpandedContent";
 
 interface TakeExpandedRowProps {
@@ -16,15 +15,15 @@ export default function TakeExpandedRow({
   priceSource,
 }: TakeExpandedRowProps) {
   return (
-    <tr className="bg-background">
-      <td colSpan={colSpan} className="border-b border-divider-subtle px-3 py-3 md:px-4">
-        <div className="rounded-md border border-divider-subtle bg-surface px-3 py-3">
-          {isLoading ? (
-            <Skeleton className="h-32 w-full" />
-          ) : take ? (
-            <TakeExpandedContent take={take} priceSource={priceSource} />
-          ) : null}
-        </div>
+    <tr className="bg-inset">
+      <td colSpan={colSpan} className="!h-auto border-b border-divider-subtle !py-3.5">
+        {isLoading ? (
+          <div className="grid grid-cols-2 gap-3">
+            {Array.from({ length: 6 }).map((_, index) => <span key={index} className="skeleton-bar w-32" />)}
+          </div>
+        ) : take ? (
+          <TakeExpandedContent take={take} priceSource={priceSource} />
+        ) : null}
       </td>
     </tr>
   );

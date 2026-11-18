@@ -1,247 +1,187 @@
-import { ApiError } from "../../../shared/api/client";
-import { useRoundDetails } from "../useRoundDetails";
-import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
-import MetricCoverage from "../../../shared/ui/MetricCoverage";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { Link2, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { cn, formatAmount, formatDateTime, formatFullAmount, formatUsd, renderKickedValue, toggleKickedDisplayMode } from "../../../shared/lib/format";
+import { ApiError } from "../../../shared/api/client";
+import {
+  cn,
+  formatAmount,
+  formatCompactUsd,
+  formatDateTime,
+  formatFullAmount,
+  renderKickedValue,
+  toggleKickedDisplayMode,
+} from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
+import { formatPercent, getRoundProgressMetrics } from "../../../shared/lib/roundProgress";
+import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
+import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
+import AuctionVersionBadge from "../../../shared/ui/AuctionVersionBadge";
+import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
-import RequestError from "../../../shared/ui/RequestError";
-import Panel from "../../../shared/ui/Panel";
 import PnlValue from "../../../shared/ui/PnlValue";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
-import Skeleton from "../../../shared/ui/Skeleton";
-import StackedListRow from "../../../shared/ui/StackedListRow";
+import RequestError from "../../../shared/ui/RequestError";
+import RoundProgressMini from "../../../shared/ui/RoundProgressMini";
 import StatusBadge from "../../../shared/ui/StatusBadge";
-import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenValue from "../../../shared/ui/TokenValue";
-
+import { useRoundDetails } from "../useRoundDetails";
+import DecayChart from "./DecayChart";
 import RoundSettingsPanel from "./RoundSettingsPanel";
 import RoundTakesTable from "./RoundTakesTable";
 
-function HeaderMetric({
+function IconButton({
   label,
-  value,
-  detail,
-  valueClassName,
-  detailClassName,
-}: {
-  label: string;
-  value: ReactNode;
-  detail?: ReactNode;
-  valueClassName?: string;
-  detailClassName?: string;
-}) {
-  return (
-    <div className="min-w-0 space-y-1">
-      <div className="metric-label">{label}</div>
-      <div className={cn("min-w-0 font-mono text-data", valueClassName ?? "text-primary")}>{value}</div>
-      {detail ? (
-        <div className={cn("truncate font-mono text-[10px] leading-none text-tertiary", detailClassName)}>
-          {detail}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function formatDisplayVersion(version?: string | null): string | null {
-  if (!version) {
-    return null;
-  }
-
-  return version.startsWith("v") ? version : `v${version}`;
-}
-
-function ModalCloseButton({
-  onClose,
+  onClick,
+  children,
   autoFocus = false,
 }: {
-  onClose: () => void;
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
   autoFocus?: boolean;
 }) {
   return (
     <button
       type="button"
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-divider-strong text-tertiary transition-colors hover:bg-surface hover:text-primary"
-      aria-label="Close round detail"
+      className="icon-button"
+      aria-label={label}
+      title={label}
       data-autofocus={autoFocus ? "true" : undefined}
-      onClick={onClose}
+      onClick={onClick}
     >
-      <X className="h-4 w-4" strokeWidth={1.8} />
+      {children}
     </button>
   );
 }
 
-function LoadingSettingsRow({
-  label,
-  valueWidth,
-  noteWidth,
-}: {
-  label: string;
-  valueWidth: string;
-  noteWidth?: string;
-}) {
+function ModalCloseButton({ onClose }: { onClose: () => void; autoFocus?: boolean }) {
   return (
-    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2 md:px-4">
-      <div className="metric-label">{label}</div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Skeleton className={cn("h-4", valueWidth)} />
-        {noteWidth ? <Skeleton className={cn("h-2.5", noteWidth)} /> : null}
+    <IconButton label="Close round detail" onClick={onClose}>
+      <X className="h-4 w-4" strokeWidth={1.6} />
+    </IconButton>
+  );
+}
+
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <IconButton
+      label={copied ? "Link copied" : "Copy link to this round"}
+      onClick={() => {
+        void navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true), () => undefined);
+      }}
+    >
+      <Link2 className={cn("h-4 w-4", copied && "text-positive")} strokeWidth={1.6} />
+    </IconButton>
+  );
+}
+
+function SummaryItem({ label, children, title }: { label: string; children: ReactNode; title?: string }) {
+  return (
+    <dl className="summary-item m-0 min-w-0" title={title}>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </dl>
+  );
+}
+
+function SectionHead({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+  return (
+    <h3 className="sec-head">
+      <span className="font-medium text-tertiary">{children}</span>
+      {aside}
+    </h3>
+  );
+}
+
+function ProgressSection({ round }: { round: RoundListItem }) {
+  const metrics = getRoundProgressMetrics({
+    status: round.status,
+    kickedAt: round.kicked_at,
+    scheduledEndAt: round.scheduled_end_at,
+    endAt: round.end_at,
+    availableAmount: round.available_amount,
+    initialAvailable: round.initial_available,
+    soldAmount: round.sold_amount,
+    fromTokenSymbol: round.from_token_symbol,
+  });
+  const common = {
+    status: round.status,
+    kickedAt: round.kicked_at,
+    scheduledEndAt: round.scheduled_end_at,
+    endAt: round.end_at,
+    availableAmount: round.available_amount,
+    initialAvailable: round.initial_available,
+    soldAmount: round.sold_amount,
+    fromTokenSymbol: round.from_token_symbol,
+    takeCount: round.take_count,
+    width: 132,
+    showFigure: false,
+  };
+  return (
+    <div className="grid grid-cols-2 gap-x-6 px-5 pb-1">
+      <div className="min-w-0">
+        <div className="flex items-baseline justify-between text-[11px] text-tertiary">
+          <span>Time</span>
+          <span className="font-mono text-secondary">{formatPercent(metrics.timePercent)}</span>
+        </div>
+        <RoundProgressMini {...common} mode="time" className="mt-1.5 w-full [&_.bar]:!w-full" />
+        <div className="mt-1 truncate text-[11px] text-tertiary">{metrics.timeDetail}</div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-baseline justify-between text-[11px] text-tertiary">
+          <span>Sold</span>
+          <span className="font-mono text-secondary">{formatPercent(metrics.soldPercent)}</span>
+        </div>
+        <RoundProgressMini {...common} mode="take" className="mt-1.5 w-full [&_.bar]:!w-full" />
+        <div className="mt-1 truncate text-[11px] text-tertiary">{metrics.soldDetail}</div>
       </div>
     </div>
   );
 }
 
-function RoundSettingsLoadingPanel() {
+function DrawerSkeleton({ onClose }: { onClose: () => void }) {
   return (
-    <Panel className="min-h-[16rem] overflow-hidden p-0">
-      <div className="space-y-2 px-3 py-3 md:px-4">
-        <div className="text-heading text-primary">Round Settings</div>
-      </div>
-
-      <div className="divide-y divide-divider-subtle border-t border-divider-subtle">
-        <LoadingSettingsRow label="Lot" valueWidth="w-32 max-w-full" noteWidth="w-12" />
-        <LoadingSettingsRow label="Start" valueWidth="w-20" />
-        <LoadingSettingsRow label="Kick quote" valueWidth="w-20" />
-        <LoadingSettingsRow label="Cutoff" valueWidth="w-40 max-w-full" />
-        <LoadingSettingsRow label="Decay" valueWidth="w-24" />
-        <LoadingSettingsRow label="Live" valueWidth="w-20" />
-        <LoadingSettingsRow label="Execution" valueWidth="w-20" />
-        <LoadingSettingsRow label="Receiver" valueWidth="w-40 max-w-full" />
-      </div>
-    </Panel>
-  );
-}
-
-function TakesLoadingPanel() {
-  return (
-    <Panel className="space-y-3 min-h-[12rem]" padded={false}>
-      <div className="px-3 pt-3 md:px-4">
-        <div className="text-heading text-primary">Takes</div>
-      </div>
-
-      <div className="md:hidden">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <StackedListRow key={`take-loading-mobile-${index}`} className="space-y-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Skeleton className="h-4 w-8" />
-                <Skeleton className="h-4 w-20" />
-              </div>
-              <Skeleton className="h-3 w-14" />
-            </div>
-            <Skeleton className="h-4 w-32 max-w-full" />
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <Skeleton className="h-3 w-7" />
-                <Skeleton className="h-4 w-36 max-w-full" />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Skeleton className="h-3 w-8" />
-                <Skeleton className="h-4 w-40 max-w-full" />
-              </div>
-            </div>
-          </StackedListRow>
-        ))}
-      </div>
-
-      <div className="hidden md:block table-wrap">
-        <TableHoverScope>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Take</th>
-                <th>Tx</th>
-                <th>Taker</th>
-                <th>Time</th>
-                <th>Sold</th>
-                <th>Received</th>
-                <th>Price</th>
-                <th>PnL</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 4 }).map((_, index) => (
-                <tr key={`take-loading-desktop-${index}`}>
-                  <td><Skeleton className="h-4 w-6" /></td>
-                  <td><Skeleton className="h-4 w-20" /></td>
-                  <td><Skeleton className="h-4 w-24" /></td>
-                  <td><Skeleton className="h-4 w-14" /></td>
-                  <td><Skeleton className="h-4 w-28" /></td>
-                  <td><Skeleton className="h-4 w-32" /></td>
-                  <td><Skeleton className="ml-auto h-4 w-14" /></td>
-                  <td><Skeleton className="h-4 w-12" /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableHoverScope>
-      </div>
-    </Panel>
-  );
-}
-
-function RoundModalLoadingState({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="sticky top-0 z-10 border-b border-divider-strong bg-background/95 px-3 pb-3 pt-2 backdrop-blur-sm md:px-4">
-        <div className="relative space-y-2 pr-10">
-          <div className="absolute right-0 top-0">
-            <ModalCloseButton onClose={onClose} autoFocus />
+    <div className="flex min-h-0 flex-1 flex-col" aria-busy="true">
+      <header className="drawer-head">
+        <span className="skeleton-bar w-10" />
+        <span className="skeleton-bar w-16" />
+        <span className="skeleton-bar w-28" />
+        <div className="ml-auto"><ModalCloseButton onClose={onClose} /></div>
+      </header>
+      <div className="drawer-scroll">
+        <div className="drawer-summary">
+          <div className="summary-main space-y-2">
+            <span className="skeleton-bar w-10" />
+            <span className="skeleton-bar h-[22px] w-40" />
           </div>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
-            <HeaderMetric
-              label="Auction"
-              value={<Skeleton className="h-4 w-24" />}
-              detail={<Skeleton className="h-2.5 w-10" />}
-            />
-            <HeaderMetric
-              label="Round"
-              value={
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Skeleton className="h-4 w-8" />
-                    <Skeleton className="h-5 w-14 rounded-[4px]" />
-                  </div>
-                  <Skeleton className="h-2.5 w-16" />
-                </div>
-              }
-            />
-            <HeaderMetric
-              label="Total Sold / Received"
-              value={
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <Skeleton className="h-4 w-32 max-w-full" />
-                    <Skeleton className="h-2.5 w-12" />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Skeleton className="h-4 w-36 max-w-full" />
-                    <Skeleton className="h-2.5 w-12" />
-                  </div>
-                </div>
-              }
-            />
-            <HeaderMetric
-              label="PnL"
-              value={<Skeleton className="h-4 w-12" />}
-              detail={<Skeleton className="h-2.5 w-10" />}
-            />
-          </div>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="space-y-2">
+              <span className="skeleton-bar w-10" />
+              <span className="skeleton-bar w-16" />
+            </div>
+          ))}
         </div>
-      </div>
-
-      <div data-round-modal-scroll-root="true" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
-        <div className="min-h-[29rem] space-y-4 md:min-h-[31rem]">
-          <RoundSettingsLoadingPanel />
-          <TakesLoadingPanel />
+        <div className="space-y-3 px-5 pt-4">
+          <span className="skeleton-bar w-16" />
+          <span className="skeleton-block block h-28 w-full" />
+        </div>
+        <div className="space-y-4 px-5 pt-6">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="flex gap-6">
+              <span className="skeleton-bar w-16" />
+              <span className="skeleton-bar" style={{ width: `${120 - index * 9}px` }} />
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -336,9 +276,9 @@ export default function RoundModalContent({
   const takesNotFound = takesQuery.error instanceof ApiError && takesQuery.error.status === 404;
   const takes = takesNotFound ? [] : takesQuery.data?.takes || [];
   const selectedTakeNotice = !selectedTakeParam ? null : !selectedOccurrence ? (
-    <EmptyState title="Invalid take link" />
+    <EmptyState title="Invalid take link" className="py-4" />
   ) : selectedTakeNotFound || (selectedTakeQuery.isSuccess && !selectedTake) ? (
-    <EmptyState title="Take not found" description="This occurrence is absent from the indexed round." />
+    <EmptyState title="Take not found" description="This occurrence is absent from the indexed round." className="py-4" />
   ) : selectedTakeQuery.isError ? (
     <RequestError message={selectedTake ? "Could not refresh take. Showing previously loaded data." : "Unable to load take."} onRetry={() => { void selectedTakeQuery.refetch(); }} />
   ) : null;
@@ -358,17 +298,17 @@ export default function RoundModalContent({
   }, [requestedPriceSource, selectedPriceSource, sourceOptions.length]);
 
   if (validRound && roundQuery.isLoading) {
-    return <RoundModalLoadingState onClose={onClose} />;
+    return <DrawerSkeleton onClose={onClose} />;
   }
 
   if (!round) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-divider-strong bg-background/95 px-3 py-3 backdrop-blur-sm md:px-4">
-          <div className="text-heading text-primary">Round detail</div>
-          <ModalCloseButton onClose={onClose} autoFocus />
-        </div>
-        <div data-round-modal-scroll-root="true" className="flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
+        <header className="drawer-head">
+          <span className="text-heading font-medium text-primary">Round detail</span>
+          <div className="ml-auto"><ModalCloseButton onClose={onClose} /></div>
+        </header>
+        <div className="drawer-scroll">
           {!validRound ? <EmptyState title="Invalid round link" /> : roundQuery.isError && !roundNotFound ? (
             <RequestError message="Unable to load round." onRetry={() => { void roundQuery.refetch(); }} />
           ) : <EmptyState title="Round not found" description="This round is absent from the indexed auction." />}
@@ -378,90 +318,82 @@ export default function RoundModalContent({
   }
 
   const roundPricing = getRoundPricingBySource(round, selectedPriceSource);
-  const soldUsd = roundPricing.total_market_quote_usd ? `~${formatUsd(roundPricing.total_market_quote_usd)}` : "—";
-  const receivedUsd = round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : "—";
-  const displayVersion = formatDisplayVersion(round.version ?? auctionQuery.data?.version);
+  const lotAmount = round.initial_available ?? round.sold_amount;
+  const lotUsd = round.kick_market_quote_usd ?? roundPricing.total_market_quote_usd ?? null;
+  const receivedUsd = round.total_actual_paid_usd ? formatCompactUsd(round.total_actual_paid_usd) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="sticky top-0 z-10 border-b border-divider-strong bg-background/95 px-3 pb-3 pt-2 backdrop-blur-sm md:px-4">
-        <div className="relative space-y-2 pr-10">
-          <div className="absolute right-0 top-0">
-            <ModalCloseButton onClose={onClose} autoFocus />
-          </div>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
-            <HeaderMetric
-              label="Auction"
-              value={<AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />}
-              detail={displayVersion}
-            />
-            <HeaderMetric
-              label="Round"
-              value={
-                <div className="space-y-1">
-                  <span className="inline-flex items-center gap-2">
-                    <span>R{round.round_id}</span>
-                    <StatusBadge status={round.status} />
-                  </span>
-                  <button
-                    type="button"
-                    className="block font-mono text-[10px] leading-none text-tertiary underline-offset-4 transition-colors hover:text-secondary hover:underline"
-                    title={formatDateTime(round.kicked_at)}
-                    onClick={() =>
-                      setKickedDisplayMode(toggleKickedDisplayMode)
-                    }
-                  >
-                    {renderKickedValue(round.kicked_at, kickedDisplayMode)}
-                  </button>
-                </div>
-              }
-            />
-            <HeaderMetric
-              label="Total Sold / Received"
-              detail={<span className="flex gap-2"><MetricCoverage count={round.paid_take_count} total={round.take_count} label="paid" /><MetricCoverage count={round.paid_usd_take_count} total={round.take_count} label="USD" /></span>}
-              value={
-                <div className="space-y-1.5">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <TokenValue
-                      address={round.from_token}
-                      symbol={[formatAmount(round.sold_amount), round.from_token_symbol].filter(Boolean).join(" ").trim() || "—"}
-                      logoUrl={round.from_token_logo_url}
-                      chainId={round.chain_id}
-                      className="min-w-0"
-                      showCopy={false}
-                      tooltip={[formatFullAmount(round.sold_amount), round.from_token_symbol].filter(Boolean).join(" ").trim() || null}
-                    />
-                    <span className="shrink-0 font-mono text-[10px] leading-none text-tertiary">{soldUsd}<MetricCoverage count={roundPricing.usd_priced_take_count} total={round.take_count} /></span>
-                  </div>
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <TokenValue
-                      address={round.want_token}
-                      symbol={[formatAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ").trim() || "—"}
-                      logoUrl={round.want_token_logo_url}
-                      chainId={round.chain_id}
-                      className="min-w-0"
-                      showCopy={false}
-                      tooltip={[formatFullAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ").trim() || null}
-                    />
-                    <span className="shrink-0 font-mono text-[10px] leading-none text-tertiary">{receivedUsd}</span>
-                  </div>
-                </div>
-              }
-            />
-            <HeaderMetric
-              label="PnL"
-              value={<PnlValue percent={roundPricing.total_auction_profit_bps} usd={roundPricing.total_auction_profit_usd} />}
-              detail={<span className="flex gap-2"><MetricCoverage count={roundPricing.priced_take_count} total={round.take_count} label="quoted" /><MetricCoverage count={roundPricing.usd_priced_take_count} total={round.take_count} label="USD" /></span>}
-            />
-          </div>
+      <header className="drawer-head">
+        <ChainIcon chainId={round.chain_id} />
+        <span className="font-mono text-[15px] font-semibold text-primary">R{round.round_id}</span>
+        <StatusBadge status={round.status} className="ml-1" />
+        <span className="ml-2 hidden min-w-0 items-center gap-1.5 sm:inline-flex">
+          <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
+          <AuctionVersionBadge version={round.version ?? auctionQuery.data?.version} />
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <ShareButton />
+          <ModalCloseButton onClose={onClose} />
         </div>
-      </div>
+      </header>
 
-      <div data-round-modal-scroll-root="true" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3 md:p-4">
-        <div className="space-y-4">
-          {roundQuery.isError && <RequestError message="Could not refresh round. Showing previously loaded data." onRetry={() => { void roundQuery.refetch(); }} />}
-          {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
-          {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" />}
+      <div data-round-modal-scroll-root="true" className="drawer-scroll">
+        {roundQuery.isError && <RequestError message="Could not refresh round. Showing previously loaded data." onRetry={() => { void roundQuery.refetch(); }} />}
+        {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
+        {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" className="py-4" />}
+
+        <div className="drawer-summary">
+          <div className="summary-main" title={[formatFullAmount(lotAmount), round.from_token_symbol].filter(Boolean).join(" ")}>
+            <span className="summary-label">Lot</span>
+            <span className="summary-figure">
+              {formatAmount(lotAmount)}
+              <small>{round.from_token_symbol ?? ""}{lotUsd ? ` · ${formatCompactUsd(lotUsd)}` : ""}</small>
+            </span>
+          </div>
+          <SummaryItem label="Sold" title={[formatFullAmount(round.sold_amount), round.from_token_symbol].filter(Boolean).join(" ")}>
+            {formatAmount(round.sold_amount)} <span className="text-tertiary">{round.from_token_symbol}</span>
+          </SummaryItem>
+          <SummaryItem
+            label="Received"
+            title={`${[formatFullAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ")}${round.paid_take_count < round.take_count ? ` · payment observed for ${round.paid_take_count} of ${round.take_count} takes` : ""}`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <TokenValue
+                address={round.want_token}
+                symbol={[formatAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ").trim() || "—"}
+                logoUrl={round.want_token_logo_url}
+                chainId={round.chain_id}
+                showCopy={false}
+              />
+              {receivedUsd ? <span className="usd-note">{receivedUsd}</span> : null}
+            </span>
+          </SummaryItem>
+          <SummaryItem label="PnL" title={`Quoted for ${roundPricing.priced_take_count ?? 0} of ${round.take_count} takes; USD for ${roundPricing.usd_priced_take_count ?? 0}`}>
+            <PnlValue percent={roundPricing.total_auction_profit_bps} usd={roundPricing.total_auction_profit_usd} />
+          </SummaryItem>
+          <SummaryItem label="Kicked" title={formatDateTime(round.kicked_at)}>
+            <button
+              type="button"
+              className="font-mono underline-offset-4 hover:underline"
+              onClick={() => setKickedDisplayMode(toggleKickedDisplayMode)}
+            >
+              {renderKickedValue(round.kicked_at, kickedDisplayMode)}
+            </button>
+          </SummaryItem>
+        </div>
+
+        <ProgressSection round={round} />
+
+        <DecayChart
+          round={round}
+          takes={takes}
+          livePrice={displayedLivePrice?.current_price ?? null}
+          title={<SectionHead aside={<span>{round.want_token_symbol ?? "want"} per {round.from_token_symbol ?? "unit"}</span>}>Price</SectionHead>}
+        />
+
+        <section className="sec">
+          <SectionHead>Settings</SectionHead>
           <RoundSettingsPanel
             round={round}
             chainId={chain}
@@ -475,30 +407,33 @@ export default function RoundModalContent({
             isLivePriceError={roundQuery.isError || livePriceQuery.isError || !priceReference}
             livePriceError={livePriceQuery.error}
           />
+        </section>
 
-          <Panel className="space-y-3" padded={false}>
-            <div className="flex items-center justify-between gap-3 px-3 pt-3 md:px-4">
-              <div className="text-heading text-primary">Takes</div>
-              {showPriceSourceSelector ? (
-                <PriceSourceSelect
-                  value={selectedPriceSource}
-                  options={sourceOptions}
-                  onChange={setPriceSource}
-                />
-              ) : null}
+        <section className="sec">
+          <SectionHead
+            aside={showPriceSourceSelector ? (
+              <PriceSourceSelect value={selectedPriceSource} options={sourceOptions} onChange={setPriceSource} />
+            ) : <span>{takes.length ? `${takes.length}` : ""}</span>}
+          >
+            Takes
+          </SectionHead>
+          {selectedTakeNotice}
+          {takesNotFound ? <EmptyState title="Round not found" description="Takes are unavailable for this occurrence." className="py-4" /> : takesQuery.isError ? <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} /> : null}
+          {takesQuery.isLoading ? (
+            <div className="space-y-3 px-5 py-3">
+              {Array.from({ length: 3 }).map((_, index) => <span key={index} className="skeleton-bar w-full" />)}
             </div>
-            {selectedTakeNotice}
-            {takesNotFound ? <EmptyState title="Round not found" description="Takes are unavailable for this occurrence." /> : takesQuery.isError ? <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} /> : null}
-            {takesQuery.isLoading ? <div className="p-3"><Skeleton className="h-32 w-full" /></div> : takesNotFound || (takesQuery.isError && !takesQuery.data) ? null : <RoundTakesTable
+          ) : takesNotFound || (takesQuery.isError && !takesQuery.data) ? null : (
+            <RoundTakesTable
               takes={takes}
               priceSource={selectedPriceSource}
               selectedOccurrenceKey={selectedTakeParam}
               selectedTake={selectedTake}
               isSelectedTakeLoading={selectedTakeQuery.isLoading}
               onSelect={(key) => setSelectedTake(selectedTakeParam === key ? undefined : key)}
-            />}
-          </Panel>
-        </div>
+            />
+          )}
+        </section>
       </div>
     </div>
   );

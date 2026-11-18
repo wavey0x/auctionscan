@@ -1,7 +1,7 @@
 import type { Location } from "react-router-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import RoundModal from "../components/RoundModal";
+import RoundDrawer from "../components/RoundDrawer";
 import RoundModalContent from "../components/RoundModalContent";
 import {
   buildLocationHref,
@@ -43,8 +43,8 @@ export default function RoundModalRoute() {
   };
 
   return (
-    <RoundModal ariaLabel="Round detail" onClose={handleClose}>
+    <RoundDrawer ariaLabel="Round detail" onClose={handleClose}>
       <RoundModalContent onClose={handleClose} />
-    </RoundModal>
+    </RoundDrawer>
   );
 }

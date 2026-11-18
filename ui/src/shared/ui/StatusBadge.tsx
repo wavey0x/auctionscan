@@ -2,21 +2,25 @@ import type { CSSProperties } from "react";
 
 import { cn } from "../lib/format";
 
+export type StatusKind =
+  | "active"
+  | "completed"
+  | "kickable"
+  | "idle"
+  | "degraded"
+  | "live"
+  | "sold_out"
+  | "expired"
+  | "settled";
+
 interface StatusBadgeProps {
-  status:
-    | "active"
-    | "completed"
-    | "kickable"
-    | "idle"
-    | "degraded"
-    | "live"
-    | "sold_out"
-    | "expired"
-    | "settled";
+  status: StatusKind;
   className?: string;
+  /** Hide the word and keep the dot, for the narrowest layouts. The word stays in the title. */
+  dotOnly?: boolean;
 }
 
-const labelMap: Record<StatusBadgeProps["status"], string> = {
+const labelMap: Record<StatusKind, string> = {
   active: "Live",
   completed: "Complete",
   kickable: "Kickable",
@@ -28,33 +32,42 @@ const labelMap: Record<StatusBadgeProps["status"], string> = {
   settled: "Settled",
 };
 
-const toneMap: Record<StatusBadgeProps["status"], string> = {
-  active: "border-divider-strong text-active",
-  completed: "border-divider-strong text-complete",
-  kickable: "border-divider-strong text-kickable",
-  idle: "border-divider-strong text-secondary",
-  degraded: "border-divider-strong text-negative",
-  live: "border-divider-strong text-active",
-  sold_out: "border-divider-strong text-complete",
-  expired: "border-divider-strong text-warning",
-  settled: "border-divider-strong",
+/**
+ * Quiet normal, loud exception: a live round is the one mark that moves, an
+ * expired lot is the one that warns, and finished rounds stay neutral.
+ */
+const toneMap: Record<StatusKind, { tone: string; ring?: boolean; live?: boolean }> = {
+  active: { tone: "var(--color-active-mark)", live: true },
+  live: { tone: "var(--color-active-mark)", live: true },
+  completed: { tone: "var(--color-primary)" },
+  sold_out: { tone: "color-mix(in srgb, var(--color-primary) 62%, transparent)" },
+  settled: { tone: "var(--color-faint)", ring: true },
+  expired: { tone: "var(--color-warning-mark)" },
+  kickable: { tone: "var(--color-kickable)" },
+  idle: { tone: "var(--color-faint)", ring: true },
+  degraded: { tone: "var(--color-negative)" },
 };
 
-const styleMap: Partial<Record<StatusBadgeProps["status"], CSSProperties>> = {
-  settled: { color: "var(--color-settled)" },
-};
+export function statusLabel(status: StatusKind): string {
+  return labelMap[status];
+}
 
-export default function StatusBadge({ status, className }: StatusBadgeProps) {
+export function StatusDot({ status, className }: { status: StatusKind; className?: string }) {
+  const tone = toneMap[status];
   return (
     <span
-      className={cn(
-        "inline-flex min-w-[4.5rem] items-center justify-center rounded-md border px-1.5 py-0.5 text-[11px] leading-4",
-        toneMap[status],
-        className,
-      )}
-      style={styleMap[status]}
-    >
-      {labelMap[status]}
+      aria-hidden="true"
+      className={cn("status-dot", tone.ring && "is-ring", tone.live && "is-live", className)}
+      style={{ "--tone": tone.tone } as CSSProperties}
+    />
+  );
+}
+
+export default function StatusBadge({ status, className, dotOnly = false }: StatusBadgeProps) {
+  return (
+    <span className={cn("status", className)} title={dotOnly ? labelMap[status] : undefined}>
+      <StatusDot status={status} />
+      {dotOnly ? <span className="sr-only">{labelMap[status]}</span> : <span>{labelMap[status]}</span>}
     </span>
   );
 }

@@ -1,132 +1,104 @@
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "../../../shared/lib/format";
 
-interface RoundModalProps {
-  ariaLabel: string;
-  children: ReactNode;
-  onClose: () => void;
-  className?: string;
+const SHEET_QUERY = "(max-width: 700px)";
+
+function useIsSheet(): boolean {
+  const [matches, setMatches] = useState(() => typeof window !== "undefined" && window.matchMedia?.(SHEET_QUERY).matches === true);
+  useEffect(() => {
+    const query = window.matchMedia?.(SHEET_QUERY);
+    if (!query) return undefined;
+    const update = () => setMatches(query.matches);
+    update();
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
+  return matches;
 }
 
-function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
-  if (!root) {
-    return [];
-  }
+/** Anything a pointer can act on keeps the drawer open: it either moves it or works inside it. */
+const KEEP_OPEN_SELECTOR = [
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "label",
+  "[role='button']",
+  "[role='listbox']",
+  "[role='option']",
+  "[data-row]",
+  "[data-keep-drawer]",
+  ".topbar",
+].join(",");
 
-  const selectors = [
-    "a[href]",
-    "button:not([disabled])",
-    "input:not([disabled])",
-    "select:not([disabled])",
-    "textarea:not([disabled])",
-    "[tabindex]:not([tabindex='-1'])",
-  ];
-
-  return Array.from(root.querySelectorAll<HTMLElement>(selectors.join(","))).filter(
-    (element) => !element.hasAttribute("disabled") && !element.getAttribute("aria-hidden"),
-  );
-}
-
-export default function RoundModal({
+/**
+ * The round workspace floats over the right of the list without a scrim, so
+ * the list never moves when it opens. Under 700px it becomes a bottom sheet
+ * over a dimmed page.
+ */
+export default function RoundDrawer({
   ariaLabel,
   children,
   onClose,
   className,
-}: RoundModalProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  onClose: () => void;
+  className?: string;
+}) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const isSheet = useIsSheet();
 
   useEffect(() => {
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const scrollY = window.scrollY;
-    const bodyStyle = document.body.style;
-    const previous = {
-      position: bodyStyle.position,
-      top: bodyStyle.top,
-      left: bodyStyle.left,
-      right: bodyStyle.right,
-      width: bodyStyle.width,
-      overflow: bodyStyle.overflow,
-    };
-
-    bodyStyle.position = "fixed";
-    bodyStyle.top = `-${scrollY}px`;
-    bodyStyle.left = "0";
-    bodyStyle.right = "0";
-    bodyStyle.width = "100%";
-    bodyStyle.overflow = "hidden";
-
-    const focusTarget =
-      dialogRef.current?.querySelector<HTMLElement>("[data-autofocus]") ?? dialogRef.current;
-    focusTarget?.focus();
-
+    const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    drawerRef.current?.focus({ preventScroll: true });
+    document.body.classList.add("has-drawer");
     return () => {
-      bodyStyle.position = previous.position;
-      bodyStyle.top = previous.top;
-      bodyStyle.left = previous.left;
-      bodyStyle.right = previous.right;
-      bodyStyle.width = previous.width;
-      bodyStyle.overflow = previous.overflow;
-      window.scrollTo(0, scrollY);
-      restoreFocusRef.current?.focus?.();
+      document.body.classList.remove("has-drawer");
+      if (restore && document.contains(restore)) restore.focus({ preventScroll: true });
     };
   }, []);
 
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Tab") {
-      return;
-    }
+  useEffect(() => {
+    if (!isSheet) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [isSheet]);
 
-    const focusables = getFocusableElements(dialogRef.current);
-    if (!focusables.length) {
-      event.preventDefault();
-      dialogRef.current?.focus();
-      return;
-    }
-
-    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const currentIndex = activeElement ? focusables.indexOf(activeElement) : -1;
-
-    if (event.shiftKey) {
-      if (currentIndex <= 0) {
-        event.preventDefault();
-        focusables[focusables.length - 1]?.focus();
-      }
-      return;
-    }
-
-    if (currentIndex === -1 || currentIndex === focusables.length - 1) {
-      event.preventDefault();
-      focusables[0]?.focus();
-    }
-  };
+  useEffect(() => {
+    if (isSheet) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (drawerRef.current?.contains(target)) return;
+      if (target.closest(KEEP_OPEN_SELECTOR)) return;
+      onCloseRef.current();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [isSheet]);
 
   return (
-    <div className="fixed inset-0 z-[70]">
-      <div
-        className="absolute inset-0 bg-black/45 md:bg-black/40 xl:bg-black/50"
-        onClick={onClose}
-      />
-      <div className="pointer-events-none absolute inset-0 flex items-end justify-center px-2 pb-0 pt-[max(env(safe-area-inset-top),0.5rem)] md:items-center md:p-4 xl:p-6">
-        <div
-          ref={dialogRef}
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
-          aria-label={ariaLabel}
-          onKeyDown={handleKeyDown}
-          className={cn(
-            "pointer-events-auto flex h-full w-full flex-col overflow-hidden overscroll-y-contain border border-divider-strong bg-surface shadow-2xl",
-            "rounded-t-[20px] border-b-0 md:h-auto md:max-h-[86vh] md:max-w-[calc(100vw-2rem)] md:rounded-lg md:border-b xl:max-h-[84vh] xl:max-w-6xl",
-            className,
-          )}
-        >
-          {children}
-        </div>
-      </div>
-    </div>
+    <>
+      {isSheet ? <div className="scrim" aria-hidden="true" onClick={onClose} /> : null}
+      <aside
+        ref={drawerRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal={isSheet}
+        aria-label={ariaLabel}
+        className={cn("drawer", className)}
+      >
+        {children}
+      </aside>
+    </>
   );
 }

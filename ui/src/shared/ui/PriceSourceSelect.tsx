@@ -90,8 +90,8 @@ export default function PriceSourceSelect({
         ref={buttonRef}
         type="button"
         className={cn(
-          "inline-flex h-7 min-w-[6.25rem] items-center justify-between gap-2 rounded-md border border-divider-strong bg-background px-2 font-mono text-[12px] leading-none text-primary transition-colors hover:bg-surface focus-visible:border-primary focus-visible:outline-none",
-          open && "border-primary",
+          "inline-flex h-6 min-w-[6.25rem] items-center justify-between gap-2 rounded-[6px] bg-hover px-2 font-mono text-[11px] font-normal leading-none text-primary transition-colors hover:bg-selected",
+          open && "bg-selected",
         )}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -104,7 +104,7 @@ export default function PriceSourceSelect({
       {open && menuPosition ? createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[95] overflow-hidden rounded-md border border-divider-strong bg-surface"
+          className="fixed z-[95] overflow-hidden rounded-[8px] border border-divider bg-surface p-1 shadow-[var(--menu-shadow)]"
           style={{
             left: menuPosition.left,
             top: menuPosition.top,
@@ -123,8 +123,8 @@ export default function PriceSourceSelect({
                   aria-selected={active}
                   title={`${option.priced_take_count}/${option.total_take_count} takes with observed payment and quote; ${option.usd_priced_take_count}/${option.total_take_count} with USD comparison`}
                   className={cn(
-                    "flex w-full items-center justify-between gap-3 border-b border-divider-subtle px-2.5 py-1.5 text-left font-mono text-[12px] leading-none text-secondary transition-colors last:border-b-0 hover:bg-background hover:text-primary",
-                    active && "bg-background text-primary",
+                    "flex w-full items-center justify-between gap-3 rounded-[5px] px-2 py-1.5 text-left font-mono text-[12px] leading-none text-secondary transition-colors hover:bg-hover hover:text-primary",
+                    active && "text-primary",
                   )}
                   onClick={() => {
                     onChange(option.id);

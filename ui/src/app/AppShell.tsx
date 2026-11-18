@@ -1,42 +1,18 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { api } from "../shared/api/client";
 import { cn } from "../shared/lib/format";
-import { summarizeNetworkHealth, type ChainHealthTone } from "../shared/lib/health";
 import { LIVE_REFETCH_INTERVAL_MS } from "../shared/lib/polling";
+import { currentColorMode, setColorMode, type ColorMode } from "../shared/lib/theme";
+import DataAge from "./DataAge";
+import GlobalSearch from "./GlobalSearch";
 
 const primaryLinks = [
   { to: "/", label: "Rounds", exact: true },
   { to: "/takers", label: "Takers" },
 ];
-
-function footerStatusDotClass(tone: ChainHealthTone): string {
-  if (tone === "healthy") {
-    return "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.28)]";
-  }
-  if (tone === "indexing" || tone === "degraded") {
-    return "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.24)]";
-  }
-  if (tone === "error") {
-    return "bg-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.24)]";
-  }
-  return "bg-slate-500 shadow-[0_0_8px_rgba(148,163,184,0.18)]";
-}
-
-function footerStatusLabel(tone: ChainHealthTone): string {
-  if (tone === "degraded") return "Updates delayed";
-  if (tone === "healthy") {
-    return "System healthy";
-  }
-  if (tone === "indexing") {
-    return "Indexing in progress";
-  }
-  if (tone === "error") {
-    return "Status issues detected";
-  }
-  return "No active indexed networks";
-}
 
 function resolveApiDocsHref(): string {
   const explicit = (import.meta.env.VITE_API_DOCS_URL || "").trim();
@@ -56,73 +32,90 @@ function resolveApiDocsHref(): string {
   return "/docs";
 }
 
+function ThemeToggle() {
+  const [mode, setMode] = useState<ColorMode>(() => (typeof document === "undefined" ? "dark" : currentColorMode()));
+  const next = mode === "dark" ? "light" : "dark";
+  return (
+    <button
+      type="button"
+      className="icon-button"
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
+      onClick={() => {
+        setColorMode(next);
+        setMode(next);
+      }}
+    >
+      {mode === "dark" ? (
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="2.8" />
+          <path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1Z" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function useLifted(): boolean {
+  const [lifted, setLifted] = useState(false);
+  useEffect(() => {
+    const update = () => setLifted(window.scrollY > 4);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
+  return lifted;
+}
+
 export default function AppShell() {
   const docsHref = resolveApiDocsHref();
+  const lifted = useLifted();
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: ({ signal }) => api.getHealth(signal),
     refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
-  const statusTone = summarizeNetworkHealth(healthQuery.data?.chains, healthQuery.isError);
-  const statusLabel = footerStatusLabel(statusTone);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 border-b border-divider-strong bg-background backdrop-blur-sm">
-        <div className="mx-auto flex max-w-shell items-center px-4 py-3 md:px-6">
-          <div className="flex items-center gap-6">
-            <NavLink to="/" className="text-heading text-primary">
-              AUCTION SCAN
-            </NavLink>
-            <nav className="flex items-center gap-4">
-              {primaryLinks.map((link) => (
-                <NavLink
-                  key={link.label}
-                  to={link.to}
-                  end={link.exact}
-                  className={({ isActive }) =>
-                    `nav-link ${isActive ? "nav-link-active" : ""}`
-                  }
-                >
-                  {link.label}
-                </NavLink>
-              ))}
-            </nav>
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className={cn("topbar", lifted && "is-lifted")}>
+        <div className="shell flex h-full items-center gap-3">
+          <NavLink to="/" className="brand" aria-label="Auctionscan home">
+            <span className="brand-mark" aria-hidden="true">A</span>
+            <span className="hidden sm:inline">auctionscan</span>
+          </NavLink>
+          <nav className="nav" aria-label="Primary">
+            {primaryLinks.map((link) => (
+              <NavLink
+                key={link.label}
+                to={link.to}
+                end={link.exact}
+                className={({ isActive }) => cn("nav-pill", isActive && "is-active")}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-1.5">
+            <GlobalSearch />
+            <DataAge chains={healthQuery.data?.chains} hasError={healthQuery.isError} docsHref={docsHref} />
+            <ThemeToggle />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-shell px-4 py-4 pb-14 md:px-6 md:py-5 md:pb-14">
+      <main className="shell flex-1 pb-4 pt-5">
         <Outlet />
       </main>
 
-      <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-divider-subtle bg-surface/95 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-shell items-center justify-center px-4 py-1 text-meta text-tertiary md:px-6">
-          <div className="flex items-center gap-2">
-            <NavLink
-              to="/status"
-              className="inline-flex items-center gap-2 transition-colors hover:text-primary"
-              title={statusLabel}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "h-2 w-2 rounded-full ring-1 ring-white/10 transition-colors",
-                  footerStatusDotClass(statusTone),
-                )}
-              />
-              Status
-            </NavLink>
-            <span aria-hidden="true">|</span>
-            <NavLink to="/pricing" className="transition-colors hover:text-primary">
-              Docs
-            </NavLink>
-            <span aria-hidden="true">|</span>
-            <a href={docsHref} target="_blank" rel="noreferrer" className="transition-colors hover:text-primary">
-              API Docs
-            </a>
-          </div>
-        </div>
+      <footer className="shell site-footer">
+        <NavLink to="/status">Status</NavLink>
+        <NavLink to="/pricing">Pricing method</NavLink>
+        <a href={docsHref} target="_blank" rel="noreferrer">API docs</a>
       </footer>
     </div>
   );

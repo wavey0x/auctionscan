@@ -1360,3 +1360,68 @@ def test_read_only_api_advertises_no_credentialed_cors(tmp_path, monkeypatch):
     allowed = response.headers["access-control-allow-methods"]
     assert "DELETE" not in allowed and "POST" not in allowed
     assert "GET" in allowed
+
+
+def test_rounds_report_counts_by_status_under_the_other_filters(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    writer = _seed_api_db(db_path)
+    writer.transaction(lambda conn: apply_batch(conn, [make_prepared(
+        event_name="AuctionKicked", tx_nonce=5, block_number=104,
+        payload={"from": DEFAULT_FROM_TOKEN, "available": 500 * ONE_ETHER},
+        snapshot=make_snapshot(block_number=104),
+    )]))
+    writer.transaction(lambda conn: (
+        conn.execute("UPDATE rounds SET status = 'sold_out' WHERE round_id = 1"),
+        conn.execute("UPDATE rounds SET status = 'live' WHERE round_id = 2"),
+    ))
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    everything = client.get("/api/rounds", params={"chain_id": 1}).json()
+    assert everything["total"] == 2
+    assert everything["status_counts"] == {"all": 2, "live": 1, "sold_out": 1, "expired": 0, "settled": 0}
+
+    live = client.get("/api/rounds", params={"chain_id": 1, "status": "live"}).json()
+    assert live["total"] == 1
+    assert [item["round_id"] for item in live["rounds"]] == [2]
+    assert live["status_counts"] == everything["status_counts"]
+
+    other_chain = client.get("/api/rounds", params={"chain_id": 10}).json()
+    assert other_chain["status_counts"] == {"all": 0, "live": 0, "sold_out": 0, "expired": 0, "settled": 0}
+
+
+def test_stats_total_the_rounds_active_in_the_window(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    writer = _seed_api_db(db_path)
+    writer.transaction(lambda conn: conn.execute(
+        """
+        INSERT OR REPLACE INTO round_pricing (
+            chain_id, auction_address, round_id, total_actual_paid_usd, paid_usd_take_count,
+            total_auction_profit_usd, usd_priced_take_count, total_take_count
+        ) VALUES (1, ?, 1, '150.004', 1, '-1.255', 1, 1)
+        """,
+        (DEFAULT_AUCTION,),
+    ))
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    response = client.get("/api/stats", params={"time_window": "all"})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=2"
+    stats = response.json()
+    assert stats["time_window"] == "all"
+    assert stats["since"] is None
+    assert stats["rounds"] == 1
+    assert stats["takes"] == 1
+    assert stats["takers"] == 1
+    assert stats["received_usd"] == "150.00"
+    assert stats["received_usd_take_count"] == 1
+    assert stats["auction_profit_usd"] in {"-1.26", "-1.25"}
+    assert stats["auction_profit_usd_take_count"] == 1
+
+    recent = client.get("/api/stats").json()
+    assert recent["time_window"] == "30d"
+    assert recent["since"] is not None
+    assert recent["rounds"] == 0
+    assert recent["takers"] == 0
+    assert recent["received_usd"] is None
+
+    assert client.get("/api/stats", params={"time_window": "1y"}).status_code == 422

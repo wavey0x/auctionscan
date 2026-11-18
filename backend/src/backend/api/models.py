@@ -191,12 +191,38 @@ class RoundListItem(BaseModel):
     pricing_by_source: dict[str, RoundPricingBySource] | None = None
 
 
+class RoundStatusCounts(BaseModel):
+    """Rounds matching every list filter except status, by stored status."""
+
+    all: int
+    live: int
+    sold_out: int
+    expired: int
+    settled: int
+
+
 class RoundsResponse(IndexedResponse):
     rounds: list[RoundListItem]
     total: int
+    status_counts: RoundStatusCounts
     page: int
     per_page: int
     has_next: bool
+
+
+class StatsResponse(IndexedResponse):
+    """Totals over rounds whose latest activity falls inside the window."""
+
+    time_window: TimeWindowFilter
+    since: int | None
+    rounds: int
+    live_rounds: int
+    takes: int
+    takers: int
+    received_usd: str | None
+    received_usd_take_count: int
+    auction_profit_usd: str | None
+    auction_profit_usd_take_count: int
 
 
 class RoundLivePrice(BaseModel):

@@ -170,6 +170,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Stats */
+        get: operations["get_stats_api_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/takers": {
         parameters: {
             query?: never;
@@ -822,6 +839,22 @@ export interface components {
              */
             usd_priced_take_count: number;
         };
+        /**
+         * RoundStatusCounts
+         * @description Rounds matching every list filter except status, by stored status.
+         */
+        RoundStatusCounts: {
+            /** All */
+            all: number;
+            /** Expired */
+            expired: number;
+            /** Live */
+            live: number;
+            /** Settled */
+            settled: number;
+            /** Sold Out */
+            sold_out: number;
+        };
         /** RoundsResponse */
         RoundsResponse: {
             /** As Of */
@@ -836,6 +869,7 @@ export interface components {
             per_page: number;
             /** Rounds */
             rounds: components["schemas"]["RoundListItem"][];
+            status_counts: components["schemas"]["RoundStatusCounts"];
             /** Total */
             total: number;
         };
@@ -874,6 +908,39 @@ export interface components {
             log_index: number;
             /** Tx Hash */
             tx_hash: string;
+        };
+        /**
+         * StatsResponse
+         * @description Totals over rounds whose latest activity falls inside the window.
+         */
+        StatsResponse: {
+            /** As Of */
+            as_of: {
+                [key: string]: components["schemas"]["IndexedCheckpoint"];
+            };
+            /** Auction Profit Usd */
+            auction_profit_usd: string | null;
+            /** Auction Profit Usd Take Count */
+            auction_profit_usd_take_count: number;
+            /** Live Rounds */
+            live_rounds: number;
+            /** Received Usd */
+            received_usd: string | null;
+            /** Received Usd Take Count */
+            received_usd_take_count: number;
+            /** Rounds */
+            rounds: number;
+            /** Since */
+            since: number | null;
+            /** Takers */
+            takers: number;
+            /** Takes */
+            takes: number;
+            /**
+             * Time Window
+             * @enum {string}
+             */
+            time_window: "all" | "24h" | "7d" | "30d" | "90d";
         };
         /** TakeDetail */
         TakeDetail: {
@@ -1603,6 +1670,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_api_stats_get: {
+        parameters: {
+            query?: {
+                chain_id?: number | null;
+                time_window?: "all" | "24h" | "7d" | "30d" | "90d";
+                version?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
                 };
             };
             /** @description Validation Error */

@@ -155,11 +155,20 @@ _TIME_WINDOW_SECONDS: dict[str, int] = {
 }
 
 
-def _time_window_clause(time_window: str | None) -> tuple[str, list[Any]]:
+ROUND_STATUSES: tuple[str, ...] = ("live", "sold_out", "expired", "settled")
+
+
+def _time_window_cutoff(time_window: str | None) -> int | None:
     duration = _TIME_WINDOW_SECONDS.get(time_window or "all")
     if duration is None:
+        return None
+    return int(time.time()) - duration
+
+
+def _time_window_clause(time_window: str | None) -> tuple[str, list[Any]]:
+    cutoff = _time_window_cutoff(time_window)
+    if cutoff is None:
         return "", []
-    cutoff = int(time.time()) - duration
     return f" AND {_activity_expr()} >= ?", [cutoff]
 
 
@@ -260,22 +269,78 @@ def list_rounds(
     versions: list[str] | tuple[str, ...] | None,
     page: int,
     limit: int,
-) -> tuple[int, list[sqlite3.Row]]:
+) -> tuple[int, dict[str, int], list[sqlite3.Row]]:
+    """Return the matching total, counts by status under the other filters, and one page of rows."""
+    filters = {
+        "chain_id": chain_id,
+        "auction_address": auction_address,
+        "round_id": round_id,
+        "pair": pair,
+        "tx_hash": tx_hash,
+        "time_window": time_window,
+        "versions": versions,
+    }
+    unfiltered_sql, unfiltered_params = build_round_filters(status=None, **filters)
+    counts = dict.fromkeys(ROUND_STATUSES, 0)
+    count_sql = f"SELECT r.status AS status, COUNT(*) AS count {_round_from_clause()} {unfiltered_sql} GROUP BY r.status"
+    for row in conn.execute(count_sql, unfiltered_params):
+        if row["status"] in counts:
+            counts[row["status"]] = int(row["count"])
+    counts["all"] = sum(counts.values())
+    total = counts.get(status or "all", 0)
+    where_sql, params = build_round_filters(status=status, **filters)
+    query_sql = _round_select_clause() + where_sql + " ORDER BY r.kicked_at DESC, r.round_id DESC LIMIT ? OFFSET ?"
+    rows = list(conn.execute(query_sql, (*params, limit, (page - 1) * limit)).fetchall())
+    return total, counts, rows
+
+
+def round_stats(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: int | None,
+    time_window: str | None,
+    versions: list[str] | tuple[str, ...] | None,
+) -> dict[str, Any]:
+    """Aggregate the rounds a rounds-list query with the same filters would return."""
     where_sql, params = build_round_filters(
         chain_id=chain_id,
-        auction_address=auction_address,
-        round_id=round_id,
-        status=status,
-        pair=pair,
-        tx_hash=tx_hash,
+        auction_address=None,
+        round_id=None,
+        status=None,
+        pair=None,
+        tx_hash=None,
         time_window=time_window,
         versions=versions,
     )
-    count_sql = f"SELECT COUNT(*) AS count {_round_from_clause()} {where_sql}"
-    total = int(conn.execute(count_sql, params).fetchone()["count"])
-    query_sql = _round_select_clause() + where_sql + " ORDER BY r.kicked_at DESC, r.round_id DESC LIMIT ? OFFSET ?"
-    rows = list(conn.execute(query_sql, (*params, limit, (page - 1) * limit)).fetchall())
-    return total, rows
+    rows = conn.execute(
+        f"""
+        SELECT r.status,
+               r.take_count,
+               rp.total_actual_paid_usd,
+               rp.paid_usd_take_count,
+               rp.total_auction_profit_usd,
+               rp.usd_priced_take_count
+        {_round_from_clause()} {where_sql}
+        """,
+        params,
+    ).fetchall()
+    takers = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT tk.chain_id || ':' || tk.taker) AS count
+        {_round_from_clause()}
+        JOIN takes tk
+          ON tk.chain_id = r.chain_id
+         AND tk.auction_address = r.auction_address
+         AND tk.round_id = r.round_id
+        {where_sql}
+        """,
+        params,
+    ).fetchone()
+    return {
+        "rows": rows,
+        "takers": int(takers["count"]) if takers else 0,
+        "since": _time_window_cutoff(time_window),
+    }
 
 
 def get_round(

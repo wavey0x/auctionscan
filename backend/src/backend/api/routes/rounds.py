@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from backend.indexer.live_price import read_live_round_price
@@ -12,12 +14,14 @@ from ..models import (
     MAX_SEARCH_LENGTH,
     RoundDetailResponse,
     RoundLivePrice,
+    RoundStatusCounts,
     RoundStatusFilter,
     RoundsResponse,
+    StatsResponse,
     TimeWindowFilter,
 )
 from ..pricing_sources import build_round_pricing_by_source
-from ..queries import get_round, get_round_by_occurrence, list_round_pricing_sources, list_rounds
+from ..queries import get_round, get_round_by_occurrence, list_round_pricing_sources, list_rounds, round_stats
 from ..serializers import checksum_address, decimal_string, round_list_item_from_row
 
 
@@ -46,7 +50,7 @@ def get_rounds(
     set_cache_policy(response, PERSISTED)
     with db.connect() as conn:
         as_of = load_as_of(conn)
-        total, rows = list_rounds(
+        total, status_counts, rows = list_rounds(
             conn,
             chain_id=chain_id,
             auction_address=auction_address,
@@ -65,9 +69,54 @@ def get_rounds(
         as_of=as_of,
         rounds=rounds,
         total=total,
+        status_counts=RoundStatusCounts(**status_counts),
         page=page,
         per_page=limit,
         has_next=(page * limit) < total,
+    )
+
+
+def _sum_usd(values: list[str | None]) -> str | None:
+    total: Decimal | None = None
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            amount = Decimal(str(value))
+        except InvalidOperation:
+            continue
+        total = amount if total is None else total + amount
+    if total is None:
+        return None
+    return str(total.quantize(Decimal("0.01")))
+
+
+@router.get("/stats", response_model=StatsResponse)
+def get_stats(
+    response: Response,
+    chain_id: int | None = Query(default=None),
+    time_window: TimeWindowFilter = Query(default="30d"),
+    version: list[str] | None = Query(default=None),
+    db: Database = Depends(get_database),
+) -> StatsResponse:
+    set_cache_policy(response, PERSISTED)
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        stats = round_stats(conn, chain_id=chain_id, time_window=time_window, versions=version)
+
+    rows = stats["rows"]
+    return StatsResponse(
+        as_of=as_of,
+        time_window=time_window,
+        since=stats["since"],
+        rounds=len(rows),
+        live_rounds=sum(1 for row in rows if row["status"] == "live"),
+        takes=sum(int(row["take_count"] or 0) for row in rows),
+        takers=stats["takers"],
+        received_usd=_sum_usd([row["total_actual_paid_usd"] for row in rows]),
+        received_usd_take_count=sum(int(row["paid_usd_take_count"] or 0) for row in rows),
+        auction_profit_usd=_sum_usd([row["total_auction_profit_usd"] for row in rows]),
+        auction_profit_usd_take_count=sum(int(row["usd_priced_take_count"] or 0) for row in rows),
     )
 
 

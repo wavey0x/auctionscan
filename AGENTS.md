@@ -242,70 +242,37 @@ Reproject intent:
 
 ## Deployment Notes
 
-Production is split between Vercel for the static React UI and `electro` for
-the FastAPI API plus indexer.
-
-Frontend:
+Production is split between Vercel, which serves the static React UI from
+`ui`, and a single Linux host running the FastAPI API and the Ethereum
+indexer under systemd. The unit files live in `deploy/systemd/`.
 
 - Public site: `https://auctionscan.info`
-- Served by Vercel from `ui`
+- Public API: `https://api.auctionscan.info` (`/docs`, `/api/health`)
 - Pushes to `master` trigger the Vercel Git integration
 - `VITE_API_BASE_URL` must be set in the Vercel project environment to
   `https://api.auctionscan.info/api`; the repo default `/api` is for
   same-origin local development and would 404 in production
 - Only `VITE_`-prefixed variables reach the browser bundle. Never give an RPC
   URL or API key that prefix
-- The local Vercel CLI may not be logged in; do not create or relink a Vercel
-  project from defaults
-- Verify with:
-  - `curl -I https://auctionscan.info`
-  - expect `server: Vercel`
 
-Backend/API/indexer:
+The API is read-only and binds loopback only; TLS and the public hostname are
+handled by a reverse proxy shared with unrelated services on that host, so its
+configuration is not vendored here.
 
-- Public API host: `https://api.auctionscan.info`
-- API docs: `https://api.auctionscan.info/docs`
-- API health: `https://api.auctionscan.info/api/health`
-- Server SSH host: `electro`
-- Production checkout: `/opt/auctionscan` (root-owned, readable by `svc-auctionscan`)
-- Production SQLite DB: `/var/lib/auctionscan/auctionscan.sqlite3`
-- Production credentials: `/etc/auctionscan.env` (`root:svc-auctionscan`, mode `0640`)
-- Systemd services:
-  - `auctionscan-api.service`
-  - `auctionscan-indexer@ethereum.service`
+Host names, filesystem layout, credentials and the step-by-step release and
+verification commands are in `OPERATIONS.private.md`, which is deliberately
+untracked because this repository is public. Follow that runbook for any
+deployment; do not re-add host specifics to this file.
 
-Backend deploy procedure:
+Release cautions that matter when changing code:
 
-1. Locally run the relevant checks before pushing:
-   - `uv --project backend run pytest`
-   - if UI changed: `cd ui && npm run typecheck && npm run build`
-2. Commit and push to `origin master`.
-3. On production:
-   - `ssh electro`
-   - `sudo -n git -C /opt/auctionscan fetch origin`
-   - `sudo -n git -C /opt/auctionscan status --short --branch`
-   - only continue if the checkout is clean
-   - stop both units for the update and preserve the current database
-   - `sudo -n git -C /opt/auctionscan merge --ff-only origin/master`
-   - `sudo -n uv sync --project /opt/auctionscan/backend --locked`
-   - `sudo -n chown -R root:svc-auctionscan /opt/auctionscan`
-   - `sudo -n chmod -R u=rwX,g=rX,o= /opt/auctionscan`
-   - `sudo -n chmod -R go= /opt/auctionscan/.git`
-   - reinstall the units into `/etc/systemd/system/` if
-     `deploy/systemd/*.service` changed, then `sudo -n systemctl daemon-reload`
-4. Restart services:
-   - `sudo -n systemctl restart auctionscan-api.service auctionscan-indexer@ethereum.service`
-5. Verify:
-   - `systemctl is-active auctionscan-api.service auctionscan-indexer@ethereum.service`
-   - `curl -sS https://api.auctionscan.info/api/health`
-   - `journalctl -u auctionscan-indexer@ethereum.service --since "10 minutes ago" --no-pager`
-
-Production cautions:
-
-- `uv sync --locked` must not change `backend/uv.lock`; resolve a lock/version
-  mismatch before restarting either service.
+- `uv sync --locked` must not change `backend/uv.lock`; resolve a lock or uv
+  version mismatch before restarting either service. `exclude-newer` in
+  `backend/pyproject.toml` is recorded in the lockfile, so changing it
+  invalidates the lock on the deployment host.
+- Changing a file in `deploy/systemd/` means the units must be reinstalled and
+  `systemctl daemon-reload` run before the restart.
 - When a new registry factory is first supported, the indexer may rewind to the
-  factory deploy block. Temporary API block lag is expected until the scan
-  catches up.
-- Do not run `--reproject` in production as part of a normal deploy unless the
-  change specifically requires rebuilding projections from stored facts.
+  factory deploy block. Temporary API block lag is expected until it catches up.
+- Do not run `--reproject` as part of a normal deploy unless the change
+  specifically requires rebuilding projections from stored facts.

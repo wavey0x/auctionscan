@@ -4,32 +4,32 @@ The API and UI ship together. Breaking changes are intentional; there are no
 old response shapes or runtime conversion paths. Use the uv release recorded
 in `backend/pyproject.toml` and `uv sync --project backend --locked` on the deployment host.
 
-On Electro, `deploy/systemd/auctionscan-api.service` and
-`deploy/systemd/auctionscan-indexer@.service` run under the non-login
-`svc-auctionscan` account. The installed code and virtual environment under
-`/opt/auctionscan` are root-owned and read-only to that account. The SQLite
-database and writer locks live under `/var/lib/auctionscan`; systemd reads
-`/etc/auctionscan.env` (`root:svc-auctionscan`, mode `0640`). Install both units directly in
-`/etc/systemd/system/`; no service-identity override is required.
+Host names, filesystem layout, credentials and the release command sequence
+live in `OPERATIONS.private.md`, which is untracked because this repository is
+public. This file covers policy and mechanism only.
+
+Both services run under a dedicated non-login account. The installed code and
+virtual environment are root-owned and read-only to it; the SQLite database
+and writer locks live on a separate writable path, and systemd supplies
+credentials from an environment file readable only by root and that account.
+The unit files in `deploy/systemd/` are installed directly, with no
+service-identity override.
 
 The units are sandboxed (`ProtectSystem=strict`, an empty capability bounding
-set, a `@system-service` syscall filter and `/var/lib/auctionscan` as the only
+set, a `@system-service` syscall filter and the database directory as the only
 writable path). Changing a unit file requires `systemctl daemon-reload` before
-the restart, and `systemd-analyze security auctionscan-api.service` reports the
-effective exposure.
+the restart, and `systemd-analyze security` reports the effective exposure.
 
 The production checkout pulls with a repository-scoped, read-only deploy key
 held by root on the deployment host, so `git fetch origin` in the release
 procedure works unattended and the host cannot push. The key is generated on
-the host and its private half never leaves it; record its identity and
-rotation in the private operations runbook.
+the host and its private half never leaves it.
 
-The API listens on `127.0.0.1:8010` only. TLS termination and the public
-`api.auctionscan.info` hostname are host-level concerns handled by the shared
-reverse proxy on Electro, which serves unrelated services from the same
-configuration file; that file is therefore not vendored here. Record its
-details in the private operations runbook. A deployment only has to keep the
-loopback bind and port in the unit aligned with the proxy upstream.
+The API is read-only and listens on loopback only. TLS termination and the
+public API hostname are handled by a reverse proxy shared with unrelated
+services on that host, so its configuration is not vendored here. A deployment
+only has to keep the loopback bind and port in the unit aligned with the proxy
+upstream.
 
 ## Backups and restoration
 

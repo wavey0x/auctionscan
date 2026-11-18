@@ -27,6 +27,7 @@ import Skeleton from "../../../shared/ui/Skeleton";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenPairValue from "../../../shared/ui/TokenPairValue";
 import TokenValue from "../../../shared/ui/TokenValue";
+import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 
 const PAGE_SIZE = 10;
 const RECENT_TAKES_LIMIT = 12;
@@ -103,12 +104,14 @@ export default function AuctionPage() {
 
   const auctionQuery = useQuery({
     queryKey: ["auction", chain, address],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getAuction(chain, address!, signal),
     enabled: Number.isFinite(chain) && !!address,
   });
 
   const roundsQuery = useQuery({
     queryKey: ["auction-rounds-index", chain, address, page],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) =>
       api.getRounds({
         chain_id: chain,
@@ -121,12 +124,14 @@ export default function AuctionPage() {
 
   const recentTakesQuery = useQuery({
     queryKey: ["auction-recent-takes", chain, address],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getAuctionTakes(chain, address!, undefined, RECENT_TAKES_LIMIT, signal),
     enabled: Number.isFinite(chain) && !!address,
   });
 
   const selectedTakeQuery = useQuery({
     queryKey: ["take-detail", selectedOccurrence],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getTake(selectedOccurrence!, signal),
     enabled: Boolean(selectedOccurrence),
   });

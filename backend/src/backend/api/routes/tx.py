@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from ..cache_policy import PERSISTED, set_cache_policy
 from ..db import Database
@@ -26,11 +26,8 @@ def resolve_tx(
     db: Database = Depends(get_database),
 ) -> TxResolveResponse:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            payload = resolve_transaction(conn, tx_hash=tx_hash, chain_id=chain_id, block_hash=block_hash, log_index=log_index)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        payload = resolve_transaction(conn, tx_hash=tx_hash, chain_id=chain_id, block_hash=block_hash, log_index=log_index)
 
     destination_payload = payload.get("destination")
     destination = (

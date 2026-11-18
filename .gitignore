@@ -1,12 +1,13 @@
 .env
 .env.*
 !.env.example
-AGENTS.md
 OPERATIONS.private.md
 venv/
 .venv/
 !backend/.python-version
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 *.pyc
 *.pyo
 *.egg-info/

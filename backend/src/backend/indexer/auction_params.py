@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 
-from .versioning import param_schema_for_version
-
 
 FIXED_DECAY_FACTOR = Decimal("0.988514020352896135356867505")
 
@@ -89,7 +87,8 @@ def decode_params(param_schema: str | None, raw: RawAuctionParams) -> DecodedAuc
                 step_decay_percent = _decimal_text(step_decay_raw / Decimal("100"))
         return DecodedAuctionParams(
             starting_price=_scaled_decimal(raw.starting_price_raw, 0),
-            minimum_price=None if raw.minimum_price_raw is None else _scaled_decimal(raw.minimum_price_raw, 0),
+            # 1.0.3/1.0.3cc expose no minimumPrice getter, so this is always absent.
+            minimum_price=None,
             step_decay_percent=step_decay_percent,
             step_duration_seconds=_seconds_int(raw.step_duration_raw),
             auction_length_seconds=_seconds_int(raw.auction_length_raw),

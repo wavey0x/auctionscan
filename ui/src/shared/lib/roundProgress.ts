@@ -25,6 +25,7 @@ export function getRoundProgressMetrics({
   endAt,
   availableAmount,
   initialAvailable,
+  soldAmount,
   fromTokenSymbol,
 }: {
   status: RoundProgressStatus;
@@ -33,6 +34,7 @@ export function getRoundProgressMetrics({
   endAt?: string | null;
   availableAmount?: string | null;
   initialAvailable?: string | null;
+  soldAmount?: string | null;
   fromTokenSymbol?: string | null;
 }) {
   const kickedAtSec = toUnixSeconds(kickedAt);
@@ -79,7 +81,8 @@ export function getRoundProgressMetrics({
     ? Math.min(initial, Math.max(0, initial - Math.max(0, available)))
     : 0;
   const soldPercent = hasInventory ? clampPercent((sold / initial) * 100) : 0;
-  const formattedSold = formatAmount(sold);
+  // The API already derives this exactly; only the percentage needs arithmetic.
+  const formattedSold = formatAmount(soldAmount ?? sold);
   const formattedInitial = formatAmount(initialAvailable);
   const tokenSuffix = fromTokenSymbol ? ` ${fromTokenSymbol}` : "";
   const soldDetail = hasInventory
@@ -108,6 +111,7 @@ export function roundProgressSummary(
     end_at?: string | null;
     available_amount?: string | null;
     initial_available?: string | null;
+    sold_amount?: string | null;
     from_token_symbol?: string | null;
   },
   mode: "time" | "take",
@@ -119,6 +123,7 @@ export function roundProgressSummary(
     endAt: round.end_at,
     availableAmount: round.available_amount,
     initialAvailable: round.initial_available,
+    soldAmount: round.sold_amount,
     fromTokenSymbol: round.from_token_symbol,
   });
 

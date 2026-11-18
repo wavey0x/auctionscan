@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from ..cache_policy import NO_STORE, set_cache_policy
 from ..db import Database
@@ -71,11 +71,8 @@ def get_database(request: Request) -> Database:
 @router.get("/health", response_model=HealthResponse)
 def get_health(response: Response, db: Database = Depends(get_database)) -> HealthResponse:
     set_cache_policy(response, NO_STORE)
-    try:
-        with db.connect() as conn:
-            rows = {int(row["chain_id"]): row for row in load_sync_state(conn)}
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        rows = {int(row["chain_id"]): row for row in load_sync_state(conn)}
 
     payload = []
     now = int(time.time())

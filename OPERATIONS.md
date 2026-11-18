@@ -12,6 +12,19 @@ database and writer locks live under `/var/lib/auctionscan`; systemd reads
 `/etc/auctionscan.env` (`root:svc-auctionscan`, mode `0640`). Install both units directly in
 `/etc/systemd/system/`; no service-identity override is required.
 
+The units are sandboxed (`ProtectSystem=strict`, an empty capability bounding
+set, a `@system-service` syscall filter and `/var/lib/auctionscan` as the only
+writable path). Changing a unit file requires `systemctl daemon-reload` before
+the restart, and `systemd-analyze security auctionscan-api.service` reports the
+effective exposure.
+
+The API listens on `127.0.0.1:8010` only. TLS termination and the public
+`api.auctionscan.info` hostname are host-level concerns handled by the shared
+reverse proxy on Electro, which serves unrelated services from the same
+configuration file; that file is therefore not vendored here. Record its
+details in the private operations runbook. A deployment only has to keep the
+loopback bind and port in the unit aligned with the proxy upstream.
+
 ## Backups and restoration
 
 Use SQLite's online backup API to create a consistent snapshot of the shared

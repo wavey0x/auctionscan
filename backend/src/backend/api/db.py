@@ -41,7 +41,15 @@ class ChainMetadata:
     start_block: int | None
 
 
-class SchemaOutdatedError(FileNotFoundError):
+class DatabaseUnavailableError(RuntimeError):
+    """The read-only database cannot serve queries right now."""
+
+
+class DatabaseMissingError(DatabaseUnavailableError):
+    """Raised when the configured SQLite file does not exist."""
+
+
+class SchemaOutdatedError(DatabaseUnavailableError):
     """Raised when the DB exists but has unapplied schema migrations."""
 
 
@@ -89,7 +97,7 @@ class Database:
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         if not self.db_path.exists():
-            raise FileNotFoundError("SQLite database not found")
+            raise DatabaseMissingError("SQLite database not found")
         if has_pending_migrations(self.db_path):
             raise SchemaOutdatedError(
                 "SQLite database schema is outdated: apply pending indexer migrations"

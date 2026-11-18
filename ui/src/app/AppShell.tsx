@@ -4,6 +4,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { api } from "../shared/api/client";
 import { cn } from "../shared/lib/format";
 import { summarizeNetworkHealth, type ChainHealthTone } from "../shared/lib/health";
+import { LIVE_REFETCH_INTERVAL_MS } from "../shared/lib/polling";
 
 const primaryLinks = [
   { to: "/", label: "Rounds", exact: true },
@@ -60,7 +61,7 @@ export default function AppShell() {
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: ({ signal }) => api.getHealth(signal),
-    refetchInterval: 3_000,
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
   const statusTone = summarizeNetworkHealth(healthQuery.data?.chains, healthQuery.isError);
   const statusLabel = footerStatusLabel(statusTone);

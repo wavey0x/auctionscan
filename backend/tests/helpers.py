@@ -14,13 +14,13 @@ UPDATED_RECEIVER = "0x0000000000000000000000000000000000000eff"
 
 
 def capture_due_pricing(pricing, writer, *, chain_id: int) -> int:
-    """Wait for the real single-job worker when building deterministic fixtures."""
+    """Drain the real worker pool when building deterministic fixtures."""
     processed = 0
     pricing.poll(writer, chain_id=chain_id)
-    while pricing._outstanding is not None:
-        pricing._outstanding.result(timeout=10)
+    while pricing.in_flight:
+        processed += pricing.in_flight
+        pricing.wait_for_outstanding(timeout=10)
         pricing.poll(writer, chain_id=chain_id)
-        processed += 1
     return processed
 
 

@@ -5,6 +5,13 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+RoundStatusFilter = Literal["all", "live", "sold_out", "expired", "settled"]
+TimeWindowFilter = Literal["all", "24h", "7d", "30d", "90d"]
+TakerSortKey = Literal["volume", "taker", "chains", "auctions", "takes", "recent"]
+MAX_PAGE = 1000
+MAX_SEARCH_LENGTH = 100
+
+
 class IndexedCheckpoint(BaseModel):
     """Aggregate values include all indexed events; they can extend beyond finality."""
     indexed_block: int | None

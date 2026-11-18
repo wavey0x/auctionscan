@@ -16,6 +16,7 @@ interface RoundProgressMiniProps {
   endAt?: string | null;
   availableAmount?: string | null;
   initialAvailable?: string | null;
+  soldAmount?: string | null;
   fromTokenSymbol?: string | null;
   takeCount?: number | null;
   mode?: RoundProgressMiniMode;
@@ -43,6 +44,7 @@ export default function RoundProgressMini({
   endAt,
   availableAmount,
   initialAvailable,
+  soldAmount,
   fromTokenSymbol,
   takeCount,
   mode = "time",
@@ -64,6 +66,7 @@ export default function RoundProgressMini({
     endAt,
     availableAmount,
     initialAvailable,
+    soldAmount,
     fromTokenSymbol,
   });
 

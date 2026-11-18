@@ -118,13 +118,25 @@ def _round_select_clause() -> str:
     """
 
 
+def like_pattern(value: str, *, prefix: bool = False) -> str:
+    """Escape LIKE metacharacters so user input matches literally, not as a wildcard."""
+    escaped = (
+        value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"{escaped}%" if prefix else f"%{escaped}%"
+
+
 def _token_term_clause(alias: str, term: str) -> tuple[str, list[str]]:
     lowered = term.lower()
-    params = [f"%{lowered}%", f"%{lowered}%"]
-    clause = f"(LOWER(COALESCE({alias}.symbol, '')) LIKE ? OR LOWER(COALESCE({alias}.name, '')) LIKE ?"
+    contains = like_pattern(lowered)
+    params = [contains, contains]
+    clause = (
+        f"(LOWER(COALESCE({alias}.symbol, '')) LIKE ? ESCAPE '\\'"
+        f" OR LOWER(COALESCE({alias}.name, '')) LIKE ? ESCAPE '\\'"
+    )
     if lowered.startswith("0x"):
-        clause += f" OR LOWER(COALESCE({alias}.token_address, '')) LIKE ?"
-        params.append(f"{lowered}%")
+        clause += f" OR LOWER(COALESCE({alias}.token_address, '')) LIKE ? ESCAPE '\\'"
+        params.append(like_pattern(lowered, prefix=True))
     clause += ")"
     return clause, params
 
@@ -132,23 +144,19 @@ def _token_term_clause(alias: str, term: str) -> tuple[str, list[str]]:
 def _status_clause(status: str | None) -> tuple[str, list[Any]]:
     if not status or status == "all":
         return "", []
-    if status == "active":
-        return " AND r.status = ?", ["live"]
-    if status == "completed":
-        return " AND r.status IN (?, ?, ?)", ["sold_out", "expired", "settled"]
     return " AND r.status = ?", [status]
 
 
+_TIME_WINDOW_SECONDS: dict[str, int] = {
+    "24h": 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+    "30d": 30 * 24 * 60 * 60,
+    "90d": 90 * 24 * 60 * 60,
+}
+
+
 def _time_window_clause(time_window: str | None) -> tuple[str, list[Any]]:
-    if not time_window or time_window == "all":
-        return "", []
-    windows = {
-        "24h": 24 * 60 * 60,
-        "7d": 7 * 24 * 60 * 60,
-        "30d": 30 * 24 * 60 * 60,
-        "90d": 90 * 24 * 60 * 60,
-    }
-    duration = windows.get(time_window)
+    duration = _TIME_WINDOW_SECONDS.get(time_window or "all")
     if duration is None:
         return "", []
     cutoff = int(time.time()) - duration
@@ -980,12 +988,12 @@ def search_index(
         results.append(item)
 
     if q.startswith("0x"):
-        prefix = f"{q}%"
+        prefix = like_pattern(q, prefix=True)
         auction_rows = conn.execute(
             """
             SELECT chain_id, auction_address
               FROM auctions
-             WHERE auction_address LIKE ? COLLATE NOCASE
+             WHERE auction_address LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY deployment_block DESC
              LIMIT ?
             """,
@@ -1005,7 +1013,7 @@ def search_index(
             """
             SELECT taker, MIN(chain_id) AS chain_id
               FROM taker_summary
-             WHERE taker LIKE ? COLLATE NOCASE
+             WHERE taker LIKE ? ESCAPE '\\' COLLATE NOCASE
              GROUP BY taker
              ORDER BY MAX(last_seen_at) DESC
              LIMIT ?
@@ -1026,7 +1034,7 @@ def search_index(
             """
             SELECT chain_id, tx_hash, auction_address, round_id, timestamp
               FROM takes
-             WHERE tx_hash LIKE ? COLLATE NOCASE
+             WHERE tx_hash LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY timestamp DESC
              LIMIT ?
             """,
@@ -1050,7 +1058,7 @@ def search_index(
             """
             SELECT chain_id, snapshot_tx_hash, auction_address, round_id
               FROM round_param_snapshot
-             WHERE snapshot_tx_hash LIKE ? COLLATE NOCASE
+             WHERE snapshot_tx_hash LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY snapshot_block DESC
              LIMIT ?
             """,
@@ -1073,7 +1081,7 @@ def search_index(
             """
             SELECT chain_id, token_address, symbol, name, decimals
               FROM tokens
-             WHERE token_address LIKE ? COLLATE NOCASE
+             WHERE token_address LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY chain_id ASC, token_address ASC
              LIMIT ?
             """,
@@ -1097,12 +1105,12 @@ def search_index(
         """
         SELECT chain_id, token_address, symbol, name, decimals
           FROM tokens
-         WHERE symbol LIKE ? COLLATE NOCASE
-            OR name LIKE ? COLLATE NOCASE
+         WHERE symbol LIKE ? ESCAPE '\\' COLLATE NOCASE
+            OR name LIKE ? ESCAPE '\\' COLLATE NOCASE
          ORDER BY CASE
                       WHEN symbol = ? COLLATE NOCASE THEN 0
-                      WHEN symbol LIKE ? COLLATE NOCASE THEN 1
-                      WHEN name LIKE ? COLLATE NOCASE THEN 2
+                      WHEN symbol LIKE ? ESCAPE '\\' COLLATE NOCASE THEN 1
+                      WHEN name LIKE ? ESCAPE '\\' COLLATE NOCASE THEN 2
                       ELSE 3
                   END,
                   symbol COLLATE NOCASE ASC,
@@ -1110,7 +1118,7 @@ def search_index(
                   token_address ASC
          LIMIT ?
         """,
-        (f"%{q}%", f"%{q}%", q, f"{q}%", f"{q}%", limit),
+        (like_pattern(q), like_pattern(q), q, like_pattern(q, prefix=True), like_pattern(q, prefix=True), limit),
     ).fetchall()
     for row in token_text_rows:
         add(

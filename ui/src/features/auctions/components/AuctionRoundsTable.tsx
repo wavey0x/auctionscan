@@ -192,6 +192,7 @@ export default function AuctionRoundsTable({
                       endAt={round.end_at}
                       availableAmount={round.available_amount}
                       initialAvailable={round.initial_available}
+                      soldAmount={round.sold_amount}
                       fromTokenSymbol={round.from_token_symbol}
                       mode={progressDisplayMode}
                       onToggleMode={onToggleProgressDisplayMode}

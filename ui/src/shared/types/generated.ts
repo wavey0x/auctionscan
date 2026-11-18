@@ -1479,10 +1479,10 @@ export interface operations {
                 chain_id?: number | null;
                 auction_address?: string | null;
                 round_id?: number | null;
-                status?: string | null;
+                status?: "all" | "live" | "sold_out" | "expired" | "settled";
                 pair?: string | null;
                 tx_hash?: string | null;
-                time_window?: string | null;
+                time_window?: "all" | "24h" | "7d" | "30d" | "90d";
                 version?: string[] | null;
                 page?: number;
                 limit?: number;
@@ -1622,7 +1622,7 @@ export interface operations {
                 chain_id?: number | null;
                 page?: number;
                 limit?: number;
-                sort_by?: string;
+                sort_by?: "volume" | "taker" | "chains" | "auctions" | "takes" | "recent";
                 q?: string | null;
             };
             header?: never;

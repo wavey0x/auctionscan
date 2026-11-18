@@ -17,7 +17,9 @@ class ChainState:
 
     @classmethod
     def from_config(cls, config: ChainConfig) -> "ChainState":
-        provider = HTTPProvider(config.rpc_url, request_kwargs={"timeout": 60})
+        provider = HTTPProvider(
+            config.rpc_url, request_kwargs={"timeout": config.request_timeout_seconds},
+        )
         w3 = Web3(provider)
         if config.poa:
             w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
@@ -28,7 +30,7 @@ class ChainState:
 
     @property
     def finality_mode(self) -> str:
-        return "finalized" if self.config.chain_id == 1 else "confirmations"
+        return self.config.finality_mode
 
     def confirmed_header(self, latest_head: int) -> IndexedBlockRecord:
         if self.finality_mode == "finalized":

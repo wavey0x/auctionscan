@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation } from "
 import type { Location } from "react-router-dom";
 
 import AppShell from "./AppShell";
+import ErrorBoundary from "./ErrorBoundary";
 import AuctionPage from "../features/auctions/pages/AuctionPage";
 import DocsPage from "../features/docs/pages/DocsPage";
 import RoundModalRoute from "../features/rounds/pages/RoundModalRoute";
@@ -20,18 +21,20 @@ const queryClient = new QueryClient({
       retry: 1,
       refetchOnWindowFocus: false,
       staleTime: 2_000,
-      refetchInterval: 3_000,
+      refetchInterval: false,
     },
   },
 });
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AppRoutes />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

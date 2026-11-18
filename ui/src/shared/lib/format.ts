@@ -61,6 +61,26 @@ export function formatCompactRelativeTime(value: string | number | Date | null |
   return formatUnit(yearMs, "y");
 }
 
+const DECIMAL_PATTERN = /^-?\d+(\.\d+)?$/;
+
+/**
+ * Group an exact decimal string without going through float64. The API sends
+ * amounts as exact decimal strings, and Number() would silently round anything
+ * past ~17 significant digits -- which an 18-decimal token amount exceeds.
+ */
+function formatExactDecimal(value: string, maximumFractionDigits: number): string | null {
+  const trimmed = value.trim();
+  if (!DECIMAL_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const negative = trimmed.startsWith("-");
+  const [whole, fraction = ""] = (negative ? trimmed.slice(1) : trimmed).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const kept = fraction.slice(0, maximumFractionDigits).replace(/0+$/, "");
+  const sign = negative && /[1-9]/.test(whole + fraction) ? "-" : "";
+  return `${sign}${grouped}${kept ? `.${kept}` : ""}`;
+}
+
 export function formatAmount(value: string | number | null | undefined, maximumFractionDigits = 4): string {
   if (value === null || value === undefined || value === "") {
     return "—";
@@ -85,6 +105,12 @@ export function formatAmount(value: string | number | null | undefined, maximumF
 export function formatFullAmount(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") {
     return "—";
+  }
+  if (typeof value === "string") {
+    const exact = formatExactDecimal(value, 18);
+    if (exact !== null) {
+      return exact;
+    }
   }
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -125,8 +151,8 @@ export function formatUsd(value: string | number | null | undefined): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits: numeric >= 100 ? 0 : 2,
-    maximumFractionDigits: numeric >= 100 ? 0 : 2,
+    minimumFractionDigits: Math.abs(numeric) >= 100 ? 0 : 2,
+    maximumFractionDigits: Math.abs(numeric) >= 100 ? 0 : 2,
   }).format(numeric);
 }
 

@@ -15,6 +15,7 @@ from ..models import (
     AuctionVersionOption,
     AuctionVersionsResponse,
     AuctionsResponse,
+    MAX_PAGE,
     TokenModel,
 )
 from ..pricing_sources import build_take_pricing_maps
@@ -53,12 +54,9 @@ def get_auction_versions(
     db: Database = Depends(get_database),
 ) -> AuctionVersionsResponse:
     set_cache_policy(response, REFERENCE)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            rows = list_auction_versions(conn, chain_id=chain_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        rows = list_auction_versions(conn, chain_id=chain_id)
     versions = [
         AuctionVersionOption(
             version=row["version"],
@@ -75,23 +73,20 @@ def get_auctions(
     response: Response,
     chain_id: int | None = Query(default=None),
     version: list[str] | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=50, ge=1, le=200),
     db: Database = Depends(get_database),
 ) -> AuctionsResponse:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            total, rows = list_auctions(
-                conn,
-                chain_id=chain_id,
-                versions=version,
-                page=page,
-                limit=limit,
-            )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        total, rows = list_auctions(
+            conn,
+            chain_id=chain_id,
+            versions=version,
+            page=page,
+            limit=limit,
+        )
     return AuctionsResponse(
         as_of=as_of,
         auctions=[auction_list_item_from_row(row) for row in rows],
@@ -110,16 +105,13 @@ def get_auction_detail(
     db: Database = Depends(get_database),
 ) -> AuctionDetails | None:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            row = get_auction(conn, chain_id=chain_id, auction_address=auction_address)
-            if row is None:
-                return None
-            from_token_rows = list_auction_from_tokens(conn, chain_id=chain_id, auction_address=auction_address)
-            activity = get_auction_activity(conn, chain_id=chain_id, auction_address=auction_address)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        row = get_auction(conn, chain_id=chain_id, auction_address=auction_address)
+        if row is None:
+            return None
+        from_token_rows = list_auction_from_tokens(conn, chain_id=chain_id, auction_address=auction_address)
+        activity = get_auction_activity(conn, chain_id=chain_id, auction_address=auction_address)
 
     want_token = token_payload(
         chain_id=chain_id,
@@ -186,31 +178,28 @@ def get_auction_takes(
     db: Database = Depends(get_database),
 ) -> AuctionTakesResponse:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            round_id = None
-            if any(value is not None for value in (kick_block_hash, kick_tx_hash, kick_log_index)):
-                if kick_block_hash is None or kick_tx_hash is None or kick_log_index is None:
-                    raise HTTPException(status_code=422, detail="Complete kick occurrence required")
-                round_row = get_round_by_occurrence(conn, chain_id=chain_id, block_hash=kick_block_hash, tx_hash=kick_tx_hash, log_index=kick_log_index)
-                if round_row is None or round_row["auction_address"] != normalize_address(auction_address):
-                    raise HTTPException(status_code=404, detail="Round occurrence not found")
-                round_id = int(round_row["round_id"])
-            rows = list_auction_takes(
-                conn,
-                chain_id=chain_id,
-                auction_address=auction_address,
-                round_id=round_id,
-                limit=limit,
-            )
-            take_keys = [
-                (int(item["chain_id"]), str(item["auction_address"]), int(item["round_id"]), int(item["take_seq"]))
-                for item in rows
-            ]
-            source_rows = list_take_pricing_sources_for_keys(conn, take_keys=take_keys)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        round_id = None
+        if any(value is not None for value in (kick_block_hash, kick_tx_hash, kick_log_index)):
+            if kick_block_hash is None or kick_tx_hash is None or kick_log_index is None:
+                raise HTTPException(status_code=422, detail="Complete kick occurrence required")
+            round_row = get_round_by_occurrence(conn, chain_id=chain_id, block_hash=kick_block_hash, tx_hash=kick_tx_hash, log_index=kick_log_index)
+            if round_row is None or round_row["auction_address"] != normalize_address(auction_address):
+                raise HTTPException(status_code=404, detail="Round occurrence not found")
+            round_id = int(round_row["round_id"])
+        rows = list_auction_takes(
+            conn,
+            chain_id=chain_id,
+            auction_address=auction_address,
+            round_id=round_id,
+            limit=limit,
+        )
+        take_keys = [
+            (int(item["chain_id"]), str(item["auction_address"]), int(item["round_id"]), int(item["take_seq"]))
+            for item in rows
+        ]
+        source_rows = list_take_pricing_sources_for_keys(conn, take_keys=take_keys)
     take_pricing_maps, options = build_take_pricing_maps(rows, source_rows)
     return AuctionTakesResponse(
         as_of=as_of,

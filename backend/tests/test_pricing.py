@@ -745,7 +745,9 @@ def test_pricing_worker_keeps_network_outside_transactions(
         processed = capture_due_pricing(pricing, writer, chain_id=1)
 
     assert processed == 8
-    assert rebuild_calls == [1] * 8
+    # One rebuild per commit batch, not one per job: concurrent captures commit together.
+    assert set(rebuild_calls) == {1}
+    assert 0 < len(rebuild_calls) <= processed
     assert writer.fetchone("SELECT COUNT(*) AS count FROM pricing_capture_queue")["count"] == 0
     assert writer.fetchone("SELECT COUNT(*) AS count FROM pricing_quote_facts")["count"] == 4
     assert writer.fetchone("SELECT COUNT(*) AS count FROM pricing_price_facts")["count"] == 4
@@ -2062,7 +2064,9 @@ def test_background_pricing_is_bounded_and_does_not_hold_writer(tmp_path):
     from threading import Event
 
     writer, _events = _seed_pricing_db(tmp_path / "auctionscan.sqlite3")
-    pricing = PricingCaptureRuntime(client=_FakePricingClient(), max_capture_lag_seconds=10**9)
+    pricing = PricingCaptureRuntime(
+        client=_FakePricingClient(), max_capture_lag_seconds=10**9, max_concurrency=1,
+    )
     started, release = Event(), Event()
     calls = []
     original = pricing._attempt
@@ -2083,7 +2087,7 @@ def test_background_pricing_is_bounded_and_does_not_hold_writer(tmp_path):
         writer.transaction(lambda conn: conn.execute("UPDATE sync_state SET last_success_at = 42"))
         assert writer.fetchone("SELECT COUNT(*) FROM pricing_capture_queue")[0] == 4
         release.set()
-        pricing._outstanding.result(timeout=3)
+        pricing.wait_for_outstanding(timeout=3)
         assert pricing.poll(writer, chain_id=1) == 1
         assert writer.fetchone("SELECT COUNT(*) FROM pricing_capture_queue")[0] == 3
     finally:
@@ -2095,7 +2099,7 @@ def test_pricing_restart_retries_pending_work_without_resetting_capture_age(tmp_
     writer, _events = _seed_pricing_db(tmp_path / "auctionscan.sqlite3")
     pricing = PricingCaptureRuntime(client=_FakePricingClient(), max_capture_lag_seconds=10**9)
     pricing.poll(writer, chain_id=1)
-    pricing._outstanding.result(timeout=3)
+    pricing.wait_for_outstanding(timeout=3)
     pricing.discard()
     assert writer.fetchone("SELECT COUNT(*) FROM pricing_quote_facts")[0] == 0
     assert writer.fetchone("SELECT COUNT(*) FROM pricing_capture_queue")[0] == 4
@@ -2203,3 +2207,38 @@ def test_audit_uses_canonical_tie_breaking_but_keeps_stale_attempts_inspectable(
     assert detail["market_quote_out"] is None
     assert detail["quote_facts"][0]["canonical_amount_out"] == "130"
     assert detail["quote_facts"][0]["capture_state"] == "stale"
+
+
+def test_pricing_pool_fills_every_slot_without_redispatching(tmp_path):
+    from threading import Event
+
+    writer, _events = _seed_pricing_db(tmp_path / "auctionscan.sqlite3")
+    assert writer.fetchone("SELECT COUNT(*) FROM pricing_capture_queue")[0] == 4
+    pricing = PricingCaptureRuntime(
+        client=_FakePricingClient(), max_capture_lag_seconds=10**9, max_concurrency=3,
+    )
+    release = Event()
+    calls = []
+    original = pricing._attempt
+
+    def blocked_attempt(selected):
+        calls.append(selected.job.id)
+        assert release.wait(timeout=5)
+        return original(selected)
+
+    pricing._attempt = blocked_attempt
+    try:
+        assert pricing.poll(writer, chain_id=1) == 0
+        assert pricing.in_flight == 3
+        # Slots stay occupied; a queued row in flight is never handed out twice.
+        for _ in range(3):
+            assert pricing.poll(writer, chain_id=1) == 0
+            assert pricing.in_flight == 3
+        release.set()
+        pricing.wait_for_outstanding(timeout=5)
+        assert len(calls) == len(set(calls)) == 3
+        assert pricing.poll(writer, chain_id=1) == 3
+        assert pricing.in_flight == 1
+    finally:
+        release.set()
+        pricing.discard()

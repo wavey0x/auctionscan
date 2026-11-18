@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "../../shared/api/client";
 import { occurrenceKey } from "../../shared/lib/routes";
 import type { SourceOccurrence } from "../../shared/types/api";
+import { LIVE_REFETCH_INTERVAL_MS } from "../../shared/lib/polling";
 
 export function useRoundDetails(
   chain: number,
@@ -16,6 +17,7 @@ export function useRoundDetails(
 
   const roundQuery = useQuery({
     queryKey: ["round-detail", chain, auctionAddress?.toLowerCase(), roundId],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getRoundDetail(chain, auctionAddress!, roundId!, signal),
     enabled: validRound,
   });
@@ -33,12 +35,14 @@ export function useRoundDetails(
 
   const takesQuery = useQuery({
     queryKey: ["round-takes", occurrence],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getAuctionTakes(chain, auctionAddress!, occurrence!, 200, signal),
     enabled: Boolean(occurrence) && !!auctionAddress,
   });
 
   const selectedTakeQuery = useQuery({
     queryKey: ["take-detail", selectedOccurrence],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) => api.getTake(selectedOccurrence!, signal),
     enabled: validRound && Boolean(selectedOccurrence),
   });
@@ -66,7 +70,7 @@ export function useRoundDetails(
     },
     enabled: Boolean(occurrence && priceReference && round?.is_active && !roundQuery.isError),
     retry: false,
-    refetchInterval: 3_000,
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   });
   const price = livePriceQuery.isError ? undefined : livePriceQuery.data;

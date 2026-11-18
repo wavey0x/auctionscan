@@ -117,3 +117,41 @@ def test_resolve_artifact_abi_path_matches_case_insensitively(tmp_path):
     )
 
     assert resolved == abi_path
+
+
+def test_ethereum_finality_policy_comes_from_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("ETHEREUM_RPC_URL", "http://localhost:8545")
+
+    ethereum = load_settings(
+        db_path=str(tmp_path / "auctionscan.sqlite3"),
+        target_network="ethereum",
+    ).chains["ethereum"]
+
+    assert ethereum.finality_mode == "finalized"
+    assert ethereum.request_timeout_seconds == 60.0
+
+
+def test_load_settings_rejects_unknown_finality_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("ETHEREUM_RPC_URL", "http://localhost:8545")
+    import backend.indexer.config as config_module
+
+    original = config_module._load_yaml
+
+    def patched(path):
+        payload = original(path)
+        payload["networks"]["ethereum"]["finality_mode"] = "eventually"
+        return payload
+
+    monkeypatch.setattr(config_module, "_load_yaml", patched)
+    with pytest.raises(ValueError, match="unknown finality_mode"):
+        load_settings(db_path=str(tmp_path / "a.sqlite3"), target_network="ethereum")
+
+
+def test_load_settings_refuses_networks_without_an_indexer(monkeypatch, tmp_path):
+    monkeypatch.setenv("POLYGON_RPC_URL", "http://localhost:8545")
+
+    with pytest.raises(ValueError, match="is disabled"):
+        load_settings(
+            db_path=str(tmp_path / "auctionscan.sqlite3"),
+            target_network="polygon",
+        )

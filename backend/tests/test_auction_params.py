@@ -1,4 +1,5 @@
-from backend.indexer.auction_params import RawAuctionParams, decode_params, param_schema_for_version
+from backend.indexer.auction_params import RawAuctionParams, decode_params
+from backend.indexer.versioning import param_schema_for_version
 
 
 def test_decode_params_scales_1_0_5_starting_and_minimum_prices_from_wad():

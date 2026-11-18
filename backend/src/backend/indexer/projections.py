@@ -5,7 +5,8 @@ import logging
 import time
 
 from .facts import _deterministic_round_id, _resolve_event_from_token, persist_prepared_events, persist_snapshot_facts
-from .auction_params import RawAuctionParams, decode_params, param_schema_for_version
+from .auction_params import RawAuctionParams, decode_params
+from .versioning import param_schema_for_version
 from .types import AuctionSnapshot, ChainConfig, FactorySeed, IndexedBlockRecord, PreparedEvent, decimal_text
 
 

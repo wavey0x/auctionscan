@@ -5,6 +5,8 @@ from typing import Any
 
 from backend.indexer.types import normalize_address
 
+from .queries import like_pattern
+
 
 def _taker_ctes(
     *,
@@ -19,7 +21,7 @@ def _taker_ctes(
         auction_filter = "WHERE chain_id = ?"
         params.extend([chain_id, chain_id])
     normalized_query = (taker_query or "").strip().lower()
-    params.extend([normalized_query, f"%{normalized_query}%"])
+    params.extend([normalized_query, like_pattern(normalized_query)])
     return (
         f"""
         WITH chain_summaries AS (
@@ -93,7 +95,7 @@ def _taker_ctes(
         filtered AS (
             SELECT *
               FROM metrics
-             WHERE (? = '' OR taker LIKE ? COLLATE NOCASE)
+             WHERE (? = '' OR taker LIKE ? ESCAPE '\\' COLLATE NOCASE)
         )
         """,
         tuple(params),

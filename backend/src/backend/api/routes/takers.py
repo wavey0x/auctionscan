@@ -1,13 +1,22 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from backend.indexer.types import normalize_address
 
 from ..cache_policy import PERSISTED, set_cache_policy
 from ..db import Database
 from ..queries import load_as_of, occurrence_from_row, list_take_pricing_sources_for_keys
-from ..models import TakerDetail, TakerListResponse, TakerSummary, TakerTake, TakerTakesResponse
+from ..models import (
+    MAX_PAGE,
+    MAX_SEARCH_LENGTH,
+    TakerDetail,
+    TakerListResponse,
+    TakerSortKey,
+    TakerSummary,
+    TakerTake,
+    TakerTakesResponse,
+)
 from ..pricing_sources import build_take_pricing_maps
 from ..taker_queries import get_taker_detail, list_taker_takes, list_takers
 from ..serializers import checksum_address, decimal_string, float_value, iso_utc, quote_price
@@ -24,26 +33,23 @@ def get_database(request: Request) -> Database:
 def get_takers(
     response: Response,
     chain_id: int | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
-    sort_by: str = Query(default="volume"),
-    q: str | None = Query(default=None),
+    sort_by: TakerSortKey = Query(default="volume"),
+    q: str | None = Query(default=None, max_length=MAX_SEARCH_LENGTH),
     db: Database = Depends(get_database),
 ) -> TakerListResponse:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            total, page_items = list_takers(
-                conn,
-                chain_id=chain_id,
-                sort_by=sort_by,
-                taker_query=q,
-                page=page,
-                limit=limit,
-            )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        total, page_items = list_takers(
+            conn,
+            chain_id=chain_id,
+            sort_by=sort_by,
+            taker_query=q,
+            page=page,
+            limit=limit,
+        )
     payload = [
         TakerSummary(
             taker=checksum_address(item["taker"]) or item["taker"],
@@ -86,12 +92,9 @@ def get_taker(
     db: Database = Depends(get_database),
 ) -> TakerDetail | None:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            item = get_taker_detail(conn, taker_address=taker_address)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        item = get_taker_detail(conn, taker_address=taker_address)
     if item is None:
         return None
     return TakerDetail(
@@ -137,27 +140,24 @@ def get_taker(
 def get_taker_takes(
     taker_address: str,
     response: Response,
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
     db: Database = Depends(get_database),
 ) -> TakerTakesResponse:
     set_cache_policy(response, PERSISTED)
-    try:
-        with db.connect() as conn:
-            as_of = load_as_of(conn)
-            total_count, rows = list_taker_takes(
-                conn,
-                taker_address=taker_address,
-                page=page,
-                limit=limit,
-            )
-            take_keys = [
-                (int(item["chain_id"]), str(item["auction_address"]), int(item["round_id"]), int(item["take_seq"]))
-                for item in rows
-            ]
-            source_rows = list_take_pricing_sources_for_keys(conn, take_keys=take_keys)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        as_of = load_as_of(conn)
+        total_count, rows = list_taker_takes(
+            conn,
+            taker_address=taker_address,
+            page=page,
+            limit=limit,
+        )
+        take_keys = [
+            (int(item["chain_id"]), str(item["auction_address"]), int(item["round_id"]), int(item["take_seq"]))
+            for item in rows
+        ]
+        source_rows = list_take_pricing_sources_for_keys(conn, take_keys=take_keys)
 
     take_pricing_maps, options = build_take_pricing_maps(rows, source_rows)
     takes = []

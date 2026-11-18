@@ -15,10 +15,10 @@ def test_expired_backlog_cannot_delay_a_fresh_quote(tmp_path, monkeypatch):
     take = replace(take, raw_log=replace(take.raw_log, timestamp=now),
                    domain_event=replace(take.domain_event, timestamp=now))
     writer.transaction(lambda conn: enqueue_pricing_work(conn, apply_batch_with_results(conn, [take])))
-    runtime = PricingCaptureRuntime(client=_FakePricingClient())
+    runtime = PricingCaptureRuntime(client=_FakePricingClient(), max_concurrency=1)
     try:
         runtime.poll(writer, chain_id=1)
-        attempt = runtime._outstanding.result(timeout=3)
+        attempt = runtime.wait_for_outstanding(timeout=3)[0]
         assert attempt.job.source_tx_hash == take.raw_log.tx_hash
         assert attempt.fact_kind == 'quote'
         assert writer.fetchone('SELECT COUNT(*) FROM pricing_capture_queue')[0] == 2

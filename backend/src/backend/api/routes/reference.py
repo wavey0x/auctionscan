@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from ..cache_policy import CHAINS, REFERENCE, set_cache_policy
 from ..db import Database
@@ -41,11 +41,8 @@ def get_tokens(
     db: Database = Depends(get_database),
 ) -> TokensResponse:
     set_cache_policy(response, REFERENCE)
-    try:
-        with db.connect() as conn:
-            rows = list_tokens(conn, chain_id=chain_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with db.connect() as conn:
+        rows = list_tokens(conn, chain_id=chain_id)
 
     tokens = [
         TokenModel(

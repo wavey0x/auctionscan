@@ -35,12 +35,20 @@ import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 import TokenValue from "../../../shared/ui/TokenValue";
 import VersionMultiSelect from "../../../shared/ui/VersionMultiSelect";
+import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 
 const PAGE_SIZE = 15;
-const ROUND_STATUS_FILTERS = new Set(["all", "live", "sold_out", "expired", "settled"]);
+const ROUND_STATUS_FILTERS = ["all", "live", "sold_out", "expired", "settled"] as const;
+type RoundStatusFilter = (typeof ROUND_STATUS_FILTERS)[number];
+
+function parseRoundStatus(value: string | null): RoundStatusFilter {
+  return (ROUND_STATUS_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as RoundStatusFilter)
+    : "all";
+}
 
 type Filters = {
-  status: string;
+  status: RoundStatusFilter;
   chainId?: number;
   versions: string[];
   query: string;
@@ -258,10 +266,10 @@ function RoundsMobileRow({
 function readFilters(searchParams: URLSearchParams): Filters {
   const page = Number(searchParams.get("page") || "1");
   const chainId = searchParams.get("chain") ? Number(searchParams.get("chain")) : undefined;
-  const status = searchParams.get("status") || "all";
+
 
   return {
-    status: ROUND_STATUS_FILTERS.has(status) ? status : "all",
+    status: parseRoundStatus(searchParams.get("status")),
     chainId: Number.isFinite(chainId) ? chainId : undefined,
     versions: readVersionFilters(searchParams),
     query: searchParams.get("filter") || searchParams.get("pair") || "",
@@ -326,6 +334,7 @@ function RoundsTableRow({
           endAt={round.end_at}
           availableAmount={round.available_amount}
           initialAvailable={round.initial_available}
+          soldAmount={round.sold_amount}
           fromTokenSymbol={round.from_token_symbol}
           takeCount={round.take_count}
           mode={progressDisplayMode}
@@ -374,6 +383,7 @@ export default function RoundsPage() {
 
   const roundsQuery = useQuery({
     queryKey: ["rounds", filters],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
     queryFn: ({ signal }) =>
       api.getRounds({
         status: filters.status,
@@ -405,7 +415,7 @@ export default function RoundsPage() {
             <select
               className="filter-select w-full"
               value={filters.status}
-              onChange={(event) => updateFilters({ status: event.target.value, page: 1 })}
+              onChange={(event) => updateFilters({ status: parseRoundStatus(event.target.value), page: 1 })}
             >
               <option value="all">All</option>
               <option value="live">Live</option>

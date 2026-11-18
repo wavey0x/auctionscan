@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 
-from .auction_params import param_schema_for_version
+from .versioning import param_schema_for_version
 from .types import AuctionSnapshot, IndexedBlockRecord, PreparedEvent
 
 

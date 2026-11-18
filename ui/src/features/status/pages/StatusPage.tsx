@@ -14,6 +14,7 @@ import Panel from "../../../shared/ui/Panel";
 import Skeleton from "../../../shared/ui/Skeleton";
 import StackedListRow from "../../../shared/ui/StackedListRow";
 import StatGrid from "../../../shared/ui/StatGrid";
+import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 
 function toneClasses(tone: ChainHealthTone) {
   if (tone === "healthy") {
@@ -192,7 +193,7 @@ export default function StatusPage() {
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: ({ signal }) => api.getHealth(signal),
-    refetchInterval: 3_000,
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
 
   if (healthQuery.isLoading) {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -302,14 +301,10 @@ class TakeDetector:
         auction_to_tokens: dict[str, list[str]],
         token_to_auctions: dict[str, list[str]],
     ) -> tuple[str, int]:
-        auction_calls = sum(max(1, len(tokens) + ADDRESS_CHUNK - 1) // ADDRESS_CHUNK for tokens in auction_to_tokens.values())
-        token_calls = sum(max(1, len(auctions) + TOPIC_CHUNK - 1) // TOPIC_CHUNK for auctions in token_to_auctions.values())
-        matrix_calls = (
-            max(1, len(token_to_auctions) + ADDRESS_CHUNK - 1)
-            // ADDRESS_CHUNK
-        ) * (
-            max(1, len(auction_to_tokens) + TOPIC_CHUNK - 1)
-            // TOPIC_CHUNK
+        auction_calls = sum(max(1, -(-len(tokens) // ADDRESS_CHUNK)) for tokens in auction_to_tokens.values())
+        token_calls = sum(max(1, -(-len(auctions) // TOPIC_CHUNK)) for auctions in token_to_auctions.values())
+        matrix_calls = max(1, -(-len(token_to_auctions) // ADDRESS_CHUNK)) * max(
+            1, -(-len(auction_to_tokens) // TOPIC_CHUNK)
         )
         if matrix_calls < min(auction_calls, token_calls):
             return "matrix", matrix_calls
@@ -375,6 +370,8 @@ class TakeDetector:
         receipt = chain.reader.receipt(raw_log)
         input_hex = normalize_hex(transaction.get("input", "0x"))
         tx_selector = input_hex[:10] if len(input_hex) >= 10 else None
+        if not self._should_derive_take(tx_selector):
+            return None
         if raw_log.topic0 != TRANSFER_TOPIC or not raw_log.topic1 or not raw_log.topic2:
             return None
 
@@ -446,8 +443,6 @@ class TakeDetector:
             block_number=raw_log.block_number,
             timestamp=raw_log.timestamp,
         )
-        if not self._should_derive_take(tx_selector):
-            return None
         if matched_amount_raw is None and expected_amount_paid_raw is not None:
             matching_method = "amount_needed"
 

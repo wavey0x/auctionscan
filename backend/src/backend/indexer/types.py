@@ -83,6 +83,8 @@ class ChainConfig:
     finality_depth: int
     block_batch_size: int
     poll_interval_seconds: float
+    finality_mode: str = "confirmations"
+    request_timeout_seconds: float = 60.0
     poa: bool = False
     registry: Optional[RegistryConfig] = None
     factories: tuple[FactorySeed, ...] = ()

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CAPTURE_LAG_SECONDS = 600
 DEFAULT_TIMEOUT_MS = 7000
 DEFAULT_RETRY_SECONDS = 60
+DEFAULT_MAX_CONCURRENCY = 4
 
 
 def _now() -> int:
@@ -364,6 +365,7 @@ def _select_due_queue_jobs(
     chain_id: int,
     limit: int,
     max_capture_lag_seconds: int,
+    exclude_job_ids: tuple[int, ...] = (),
 ) -> list[SelectedPricingJob]:
     now = _now()
     # Catch-up can enqueue many old events. Expire them together so they cannot
@@ -372,8 +374,9 @@ def _select_due_queue_jobs(
         "DELETE FROM pricing_capture_queue WHERE chain_id = ? AND event_timestamp <= ?",
         (chain_id, now - max_capture_lag_seconds),
     )
+    excluded = ",".join("?" for _ in exclude_job_ids)
     rows = conn.execute(
-        """
+        f"""
         SELECT *
           FROM pricing_capture_queue
          WHERE chain_id = ?
@@ -381,10 +384,11 @@ def _select_due_queue_jobs(
                 status = 'pending'
                 OR (status = 'failed' AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?)
          )
+           {f"AND id NOT IN ({excluded})" if exclude_job_ids else ""}
          ORDER BY priority DESC, created_at ASC, id ASC
          LIMIT ?
         """,
-        (chain_id, now, limit),
+        (chain_id, now, *exclude_job_ids, limit),
     ).fetchall()
     jobs = [_queue_job_from_row(row) for row in rows]
     return [
@@ -646,6 +650,17 @@ def _persist_price_fact(
     return fact_id
 
 
+def _classify_prices_api_error(exc: Exception, *, default_code: str) -> tuple[str, int | None]:
+    """Surface auth and rate-limit failures distinctly from transport errors."""
+    if isinstance(exc, PricesApiAuthError):
+        return "auth_failed", None
+    if isinstance(exc, PricesApiRateLimitError):
+        return "rate_limited", exc.retry_after_ms
+    if isinstance(exc, PricesApiError):
+        return default_code, exc.retry_after_ms
+    return default_code, None
+
+
 class PricingCaptureRuntime:
     def __init__(
         self,
@@ -654,46 +669,63 @@ class PricingCaptureRuntime:
         max_capture_lag_seconds: int = DEFAULT_MAX_CAPTURE_LAG_SECONDS,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
         retry_seconds: int = DEFAULT_RETRY_SECONDS,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         use_underlying: bool = True,
     ) -> None:
         self.client = client or PricingApiClient()
         self.max_capture_lag_seconds = max_capture_lag_seconds
         self.timeout_ms = timeout_ms
         self.retry_seconds = retry_seconds
+        self.max_concurrency = max(1, max_concurrency)
         self.use_underlying = use_underlying
         self._executor: ThreadPoolExecutor | None = None
-        self._outstanding: Future[PricingAttemptResult] | None = None
+        self._outstanding: dict[int, Future[PricingAttemptResult]] = {}
 
     def poll(self, writer, *, chain_id: int) -> int:
-        """Commit a ready result and dispatch at most one HTTP job; never wait."""
+        """Commit whatever finished and refill the worker pool; never wait."""
         committed = 0
-        if self._outstanding is not None:
-            if not self._outstanding.done():
-                return 0
-            try:
-                attempt = self._outstanding.result()
-            except BaseException:
-                self._outstanding = None
-                raise
+        finished = [job_id for job_id, future in self._outstanding.items() if future.done()]
+        if finished:
+            attempts = []
+            for job_id in finished:
+                future = self._outstanding.pop(job_id)
+                try:
+                    attempts.append(future.result())
+                except BaseException:
+                    self._outstanding.clear()
+                    raise
             summary = writer.transaction(lambda conn: self._commit_attempts(
-                conn, chain_id=chain_id, attempts=(attempt,),
+                conn, chain_id=chain_id, attempts=tuple(attempts),
             ))
             committed = summary.facts_written
-            self._outstanding = None
 
-        selected = writer.transaction(lambda conn: _select_due_queue_jobs(
-            conn, chain_id=chain_id, limit=1, max_capture_lag_seconds=self.max_capture_lag_seconds,
-        ))
-        if selected:
-            if self._executor is None:
-                self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pricing")
-            # The durable queue row remains pending until its result is committed.
-            self._outstanding = self._executor.submit(self._attempt, selected[0])
+        capacity = self.max_concurrency - len(self._outstanding)
+        if capacity > 0:
+            selected = writer.transaction(lambda conn: _select_due_queue_jobs(
+                conn, chain_id=chain_id, limit=capacity,
+                max_capture_lag_seconds=self.max_capture_lag_seconds,
+                exclude_job_ids=tuple(self._outstanding),
+            ))
+            if selected and self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self.max_concurrency, thread_name_prefix="pricing",
+                )
+            for item in selected:
+                # The durable queue row remains pending until its result is committed.
+                self._outstanding[item.job.id] = self._executor.submit(self._attempt, item)
         return committed
+
+    @property
+    def in_flight(self) -> int:
+        return len(self._outstanding)
+
+    def wait_for_outstanding(self, *, timeout: float = 10.0) -> list[PricingAttemptResult]:
+        """Block until in-flight attempts finish; for fixtures and maintenance."""
+        return [future.result(timeout=timeout) for future in list(self._outstanding.values())]
 
     def discard(self) -> None:
         """Maintenance discards results; pending durable jobs remain retryable."""
-        self._outstanding = None
+        self._outstanding = {}
         if self._executor is not None:
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._executor = None
@@ -742,8 +774,10 @@ class PricingCaptureRuntime:
         message: str,
         retryable: bool,
         capture_state: str = "failed",
+        retry_after_ms: int | None = None,
     ) -> PricingAttemptResult:
         captured_at = _now()
+        retry_seconds = self.retry_seconds if retry_after_ms is None else max(1, retry_after_ms // 1000)
         return PricingAttemptResult(
             job=job,
             fact_kind=fact_kind,
@@ -754,7 +788,7 @@ class PricingCaptureRuntime:
             aggregate_error_json=_json_dumps({"code": code, "message": message}),
             queue_action="retry" if retryable else "delete",
             last_error=message,
-            next_attempt_at=captured_at + self.retry_seconds if retryable else None,
+            next_attempt_at=captured_at + retry_seconds if retryable else None,
         )
 
     def _attempt_quote(self, job: PricingQueueJob) -> PricingAttemptResult:
@@ -765,13 +799,15 @@ class PricingCaptureRuntime:
                 kind="quote",
             )
         except Exception as exc:
+            code, retry_after_ms = _classify_prices_api_error(exc, default_code="provider_discovery_failed")
             return self._failed_attempt(
                 job,
                 fact_kind="quote",
                 provider_scope=(),
-                code="provider_discovery_failed",
+                code=code,
                 message=str(exc),
                 retryable=True,
+                retry_after_ms=retry_after_ms,
             )
         frozen_scope = tuple(provider_scope)
         if not provider_scope:
@@ -805,13 +841,15 @@ class PricingCaptureRuntime:
             )
             payload_json = _json_dumps(payload)
         except Exception as exc:
+            code, retry_after_ms = _classify_prices_api_error(exc, default_code="request_failed")
             return self._failed_attempt(
                 job,
                 fact_kind="quote",
                 provider_scope=frozen_scope,
-                code="request_failed",
+                code=code,
                 message=str(exc),
                 retryable=True,
+                retry_after_ms=retry_after_ms,
             )
         captured_at = _now()
         return PricingAttemptResult(
@@ -839,13 +877,15 @@ class PricingCaptureRuntime:
                 kind="price",
             )
         except Exception as exc:
+            code, retry_after_ms = _classify_prices_api_error(exc, default_code="provider_discovery_failed")
             return self._failed_attempt(
                 job,
                 fact_kind="price",
                 provider_scope=(),
-                code="provider_discovery_failed",
+                code=code,
                 message=str(exc),
                 retryable=True,
+                retry_after_ms=retry_after_ms,
             )
         frozen_scope = tuple(provider_scope)
         if not provider_scope:
@@ -877,13 +917,15 @@ class PricingCaptureRuntime:
             )
             payload_json = _json_dumps(payload)
         except Exception as exc:
+            code, retry_after_ms = _classify_prices_api_error(exc, default_code="request_failed")
             return self._failed_attempt(
                 job,
                 fact_kind="price",
                 provider_scope=frozen_scope,
-                code="request_failed",
+                code=code,
                 message=str(exc),
                 retryable=True,
+                retry_after_ms=retry_after_ms,
             )
         captured_at = _now()
         return PricingAttemptResult(

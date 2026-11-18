@@ -58,7 +58,7 @@ def decimal_string(raw_value: str | int | None, decimals: int | None = 0) -> str
             context.prec = 80
             value = Decimal(str(raw_value)) / (Decimal(10) ** decimals)
     except (InvalidOperation, ValueError):
-        return str(raw_value)
+        return None
     text = format(value, "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
@@ -432,7 +432,7 @@ def _price_fact_models(price_fact_rows, price_provider_rows) -> list[PricingPric
                 capture_lag_seconds=int(fact["capture_lag_seconds"]),
                 request_id=fact["request_id"],
                 canonical_price_usd=summary.price_usd if summary else None,
-                provider_success_count=sum(item.participation_status == "ok" and item.price_usd is not None for item in provider_models),
+                provider_success_count=summary.success_count if summary else 0,
                 providers=provider_models,
             )
         )

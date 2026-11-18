@@ -22,14 +22,9 @@ from .versioning import VERSION_METADATA, require_version_metadata
 
 ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::([^}]*))?\}")
 
-DEFAULT_FINALITY_DEPTHS: dict[int, int] = {
-    1: 64,
-    10: 128,
-    137: 256,
-    8453: 128,
-    42161: 128,
-    80094: 128,
-}
+FINALITY_MODES = ("finalized", "confirmations")
+DEFAULT_FINALITY_DEPTH = 64
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 60.0
 
 
 def _repo_root() -> Path:
@@ -219,13 +214,19 @@ def load_settings(
         _canonicalize_factory(entry, artifact_factories=artifact_factories)
         for entry in (raw_network.get("factories") or [])
     )
+    finality_mode = str(raw_network.get("finality_mode") or "confirmations")
+    if finality_mode not in FINALITY_MODES:
+        raise ValueError(
+            f"network {target_network!r} has unknown finality_mode {finality_mode!r}"
+        )
     chain = ChainConfig(
         name=target_network,
         chain_id=chain_id,
         rpc_url=rpc_url,
-        finality_depth=int(
-            raw_network.get("finality_depth")
-            or DEFAULT_FINALITY_DEPTHS.get(chain_id, 64)
+        finality_mode=finality_mode,
+        finality_depth=int(raw_network.get("finality_depth") or DEFAULT_FINALITY_DEPTH),
+        request_timeout_seconds=float(
+            raw_network.get("request_timeout_seconds") or DEFAULT_REQUEST_TIMEOUT_SECONDS
         ),
         block_batch_size=int(raw_network.get("block_batch_size") or 5_000),
         poll_interval_seconds=float(raw_network.get("poll_interval") or global_poll_interval),

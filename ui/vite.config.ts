@@ -52,5 +52,18 @@ export default defineConfig(({ mode }) => {
         "@": "/src",
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          // Dependencies change far less often than app code, so keeping them
+          // in their own chunk lets a deploy reuse the cached vendor bundle.
+          manualChunks: {
+            react: ["react", "react-dom", "react-router-dom"],
+            query: ["@tanstack/react-query"],
+            address: ["viem", "blo"],
+          },
+        },
+      },
+    },
   };
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 from yoyo import get_backend, read_migrations
@@ -17,6 +18,12 @@ def _sqlite_url(path: Path) -> str:
 
 def _read_migrations():
     return read_migrations(str(_migration_dir()))
+
+
+@lru_cache(maxsize=1)
+def _migration_hashes() -> tuple[str, ...]:
+    """Parsed once per process; the migration directory ships with the code."""
+    return tuple(str(migration.hash) for migration in _read_migrations())
 
 
 def _connect_read_only(path: Path) -> sqlite3.Connection:
@@ -36,8 +43,8 @@ def apply_pending_migrations(db_path: str | Path) -> None:
 
 def has_pending_migrations(db_path: str | Path) -> bool:
     path = Path(db_path)
-    migrations = list(_read_migrations())
-    if not migrations:
+    migration_hashes = _migration_hashes()
+    if not migration_hashes:
         return False
     if not path.exists():
         raise FileNotFoundError(f"SQLite database not found: {path}")
@@ -57,4 +64,4 @@ def has_pending_migrations(db_path: str | Path) -> bool:
             str(row["migration_hash"])
             for row in connection.execute("SELECT migration_hash FROM _yoyo_migration").fetchall()
         }
-    return any(str(migration.hash) not in applied_hashes for migration in migrations)
+    return any(migration_hash not in applied_hashes for migration_hash in migration_hashes)

@@ -8,7 +8,7 @@ networks:
   ethereum:
     chain_id: 1
     rpc_url: ${ETHEREUM_RPC_URL}
-    finality_depth: 12
+    finality_mode: finalized # Uses the `finalized` block tag; finality_depth is unused
     poll_interval: 2 # Follow Ethereum head promptly
     name: "Ethereum"
     short_name: "Ethereum"
@@ -17,7 +17,6 @@ networks:
     icon: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg"
     block_batch_size: 50000
     disabled: false
-    # Block lag tolerances for health monitoring
     # AuctionRegistry - primary source for factory discovery
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
@@ -34,6 +33,8 @@ networks:
   polygon:
     chain_id: 137
     rpc_url: ${POLYGON_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 256
     name: "Polygon"
     short_name: "Polygon"
     emoji: "🟣"
@@ -41,7 +42,7 @@ networks:
     icon: "https://icons.llamao.fi/icons/chains/rsz_polygon.jpg"
     block_batch_size: 50000
     poa: true
-    disabled: false
+    disabled: true # No indexer unit deployed yet
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 77215119
@@ -56,13 +57,15 @@ networks:
   arbitrum:
     chain_id: 42161
     rpc_url: ${ARBITRUM_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 128
     name: "Arbitrum One"
     short_name: "Arbitrum"
     emoji: "🧊"
     explorer: "https://arbiscan.io"
     icon: "https://icons.llamao.fi/icons/chains/rsz_arbitrum.jpg"
     block_batch_size: 50000
-    disabled: false
+    disabled: true # No indexer unit deployed yet
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 385690411
@@ -81,13 +84,15 @@ networks:
   optimism:
     chain_id: 10
     rpc_url: ${OPTIMISM_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 128
     name: "Optimism"
     short_name: "Optimism"
     emoji: "🔴"
     explorer: "https://optimistic.etherscan.io"
     icon: "https://icons.llamao.fi/icons/chains/rsz_optimism.jpg"
     block_batch_size: 50000
-    disabled: false
+    disabled: true # No indexer unit deployed yet
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 141955023
@@ -102,13 +107,15 @@ networks:
   base:
     chain_id: 8453
     rpc_url: ${BASE_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 128
     name: "Base"
     short_name: "Base"
     emoji: "🟦"
     explorer: "https://basescan.org"
     icon: "https://icons.llamao.fi/icons/chains/rsz_base.jpg"
     block_batch_size: 50000
-    disabled: false
+    disabled: true # No indexer unit deployed yet
     registry:
       address: "0x94F44706A61845a4f9e59c4Bc08cEA4503e48D12"
       start_block: 36359570
@@ -126,6 +133,8 @@ networks:
   berachain:
     chain_id: 80094
     rpc_url: ${BERACHAIN_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 128
     disabled: true
     name: "Berachain"
     short_name: "Berachain"
@@ -146,6 +155,9 @@ networks:
   katana:
     chain_id: 747474
     rpc_url: ${KATANA_RPC_URL}
+    finality_mode: confirmations
+    finality_depth: 64
+    disabled: true # No indexer unit deployed yet
     name: "Katana"
     short_name: "Katana"
     emoji: "🟪"

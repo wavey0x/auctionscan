@@ -1,7 +1,6 @@
 from backend.indexer import collection as collection_module
 import json
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient

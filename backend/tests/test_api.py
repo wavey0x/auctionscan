@@ -462,6 +462,19 @@ def test_api_rounds_auction_take_taker_and_search_routes(tmp_path):
     tx_search_payload = tx_search.json()
     assert tx_search_payload["results"][0]["type"] == "transaction"
 
+    # LIKE metacharacters must match literally rather than act as wildcards.
+    wildcard_search = client.get("/api/search", params={"q": "%"})
+    assert wildcard_search.status_code == 200
+    assert wildcard_search.json()["results"] == []
+
+    underscore_search = client.get("/api/search", params={"q": "0x_000000000000000000000000000000000000aaa"})
+    assert underscore_search.status_code == 200
+    assert underscore_search.json()["results"] == []
+
+    # Over-long and empty queries are rejected by the contract, not the SQL.
+    assert client.get("/api/search", params={"q": "x" * 101}).status_code == 422
+    assert client.get("/api/search", params={"q": ""}).status_code == 422
+
 
 def test_search_handles_mixed_case_prefixes_tokens_deduplication_and_limits(tmp_path):
     db_path = tmp_path / "auctionscan.sqlite3"
@@ -1284,3 +1297,66 @@ def test_openapi_exposes_only_current_take_and_round_contract():
     }
     for name, keys in removed.items():
         assert keys.isdisjoint(models[name]["properties"])
+
+
+def test_filter_contract_rejects_values_instead_of_silently_widening(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    _seed_api_db(db_path)
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    # Unknown filter values used to fall back to "unfiltered" or a different sort.
+    assert client.get("/api/rounds", params={"status": "active"}).status_code == 422
+    assert client.get("/api/rounds", params={"status": "nonsense"}).status_code == 422
+    assert client.get("/api/rounds", params={"time_window": "7y"}).status_code == 422
+    assert client.get("/api/takers", params={"sort_by": "nonsense"}).status_code == 422
+
+    # The stored vocabulary is the only one.
+    for status in ("all", "live", "sold_out", "expired", "settled"):
+        assert client.get("/api/rounds", params={"status": status}).status_code == 200
+
+    # Deep offsets are bounded.
+    assert client.get("/api/rounds", params={"page": 1000}).status_code == 200
+    assert client.get("/api/rounds", params={"page": 1001}).status_code == 422
+    assert client.get("/api/rounds", params={"limit": 201}).status_code == 422
+
+
+def test_openapi_publishes_the_filter_vocabularies(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    _seed_api_db(db_path)
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    schema = client.get("/openapi.json").json()
+
+    def enum_for(path: str, name: str) -> list[str]:
+        parameter = next(
+            item for item in schema["paths"][path]["get"]["parameters"] if item["name"] == name
+        )
+        return parameter["schema"]["enum"]
+
+    assert enum_for("/api/rounds", "status") == ["all", "live", "sold_out", "expired", "settled"]
+    assert enum_for("/api/rounds", "time_window") == ["all", "24h", "7d", "30d", "90d"]
+    assert enum_for("/api/takers", "sort_by") == [
+        "volume", "taker", "chains", "auctions", "takes", "recent",
+    ]
+
+
+def test_read_only_api_advertises_no_credentialed_cors(tmp_path, monkeypatch):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    _seed_api_db(db_path)
+    # Pin the origin list so a developer's local .env cannot change the result.
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000")
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "access-control-allow-credentials" not in response.headers
+    allowed = response.headers["access-control-allow-methods"]
+    assert "DELETE" not in allowed and "POST" not in allowed
+    assert "GET" in allowed

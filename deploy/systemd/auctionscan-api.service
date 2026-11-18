@@ -1,6 +1,7 @@
 [Unit]
 Description=Auctionscan API (Fast API)
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -12,6 +13,26 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/auctionscan/backend/.venv/bin/uvicorn backend.api.app:app --host 127.0.0.1 --port 8010
 ProtectSystem=strict
 ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RemoveIPC=yes
 ReadWritePaths=/var/lib/auctionscan
 Restart=on-failure
 RestartSec=3

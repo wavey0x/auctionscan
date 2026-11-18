@@ -36,45 +36,42 @@ def get_take_detail(
     db: Database = Depends(get_database),
 ) -> TakeDetail:
     set_cache_policy(response, NO_STORE)
-    try:
-        with db.connect() as conn:
-            row = get_take_by_occurrence(
+    with db.connect() as conn:
+        row = get_take_by_occurrence(
+            conn,
+            chain_id=chain_id,
+            block_hash=block_hash,
+            tx_hash=tx_hash,
+            log_index=log_index,
+        )
+        if row is not None:
+            auction_address, round_id, take_seq = row["auction_address"], row["round_id"], row["take_seq"]
+            quote_fact_rows = list_take_quote_facts(
                 conn,
                 chain_id=chain_id,
-                block_hash=block_hash,
-                tx_hash=tx_hash,
-                log_index=log_index,
+                auction_address=auction_address,
+                round_id=round_id,
+                take_seq=take_seq,
             )
-            if row is not None:
-                auction_address, round_id, take_seq = row["auction_address"], row["round_id"], row["take_seq"]
-                quote_fact_rows = list_take_quote_facts(
-                    conn,
-                    chain_id=chain_id,
-                    auction_address=auction_address,
-                    round_id=round_id,
-                    take_seq=take_seq,
-                )
-                quote_provider_rows = list_take_quote_provider_facts(
-                    conn,
-                    quote_fact_ids=[int(item["id"]) for item in quote_fact_rows],
-                )
-                price_fact_rows = list_take_price_facts(
-                    conn,
-                    chain_id=chain_id,
-                    auction_address=auction_address,
-                    round_id=round_id,
-                    take_seq=take_seq,
-                )
-                price_provider_rows = list_take_price_provider_facts(
-                    conn,
-                    price_fact_ids=[int(item["id"]) for item in price_fact_rows],
-                )
-                source_rows = list_take_pricing_sources_for_keys(
-                    conn,
-                    take_keys=[(chain_id, auction_address, round_id, take_seq)],
-                )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+            quote_provider_rows = list_take_quote_provider_facts(
+                conn,
+                quote_fact_ids=[int(item["id"]) for item in quote_fact_rows],
+            )
+            price_fact_rows = list_take_price_facts(
+                conn,
+                chain_id=chain_id,
+                auction_address=auction_address,
+                round_id=round_id,
+                take_seq=take_seq,
+            )
+            price_provider_rows = list_take_price_provider_facts(
+                conn,
+                price_fact_ids=[int(item["id"]) for item in price_fact_rows],
+            )
+            source_rows = list_take_pricing_sources_for_keys(
+                conn,
+                take_keys=[(chain_id, auction_address, round_id, take_seq)],
+            )
     if row is None:
         raise HTTPException(status_code=404, detail="Take occurrence not found")
     take_pricing_maps, _options = build_take_pricing_maps([row], source_rows)

@@ -64,6 +64,8 @@ from .writer import ProcessLock, Writer
 
 logger = logging.getLogger(__name__)
 FACTORY_REFRESH_INTERVAL_SECONDS = 300.0
+# Sustained failure should restart the unit rather than look healthy forever.
+MAX_CONSECUTIVE_SYNC_FAILURES = 30
 
 
 class IndexerRuntime:
@@ -90,15 +92,29 @@ class IndexerRuntime:
 
     def watch(self, *, max_blocks: int | None = None) -> None:
         sleep_seconds = self.chain.config.poll_interval_seconds
+        consecutive_failures = 0
         while True:
             try:
                 self.sync_chain_once(max_blocks=max_blocks)
+                consecutive_failures = 0
                 state = self._load_sync_state_row()
                 if any(factory.enabled for factory in self._factory_seeds or ()) and state["latest_rpc_head"] is not None and int(state["last_live_processed"]) < int(state["latest_rpc_head"]):
                     continue
             except Exception as exc:
-                logger.exception("watch loop failed for chain %s", self.network_name)
+                consecutive_failures += 1
+                logger.exception(
+                    "watch loop failed for chain %s (%d consecutive)",
+                    self.network_name,
+                    consecutive_failures,
+                )
                 self._mark_chain_error(exc)
+                if consecutive_failures >= MAX_CONSECUTIVE_SYNC_FAILURES:
+                    logger.error(
+                        "giving up after %d consecutive sync failures for chain %s; exiting for restart",
+                        consecutive_failures,
+                        self.network_name,
+                    )
+                    raise
             time.sleep(sleep_seconds)
 
     def reproject(self, *, takes_only: bool = False) -> int:

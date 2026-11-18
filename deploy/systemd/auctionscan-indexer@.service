@@ -1,6 +1,7 @@
 [Unit]
 Description=Auctionscan Indexer (%i)
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -12,6 +13,26 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/auctionscan/backend/.venv/bin/python -m backend.indexer.app --network %i --watch --log-level INFO
 ProtectSystem=strict
 ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RemoveIPC=yes
 ReadWritePaths=/var/lib/auctionscan
 Restart=on-failure
 RestartSec=5

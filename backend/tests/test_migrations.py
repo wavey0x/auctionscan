@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.api.app import create_app
 from backend.indexer.migrations import _read_migrations, apply_pending_migrations, has_pending_migrations
 
-from .helpers import capture_due_pricing, DEFAULT_AUCTION, DEFAULT_FACTORY, DEFAULT_FROM_TOKEN, DEFAULT_GOVERNANCE, DEFAULT_RECEIVER, DEFAULT_WANT_TOKEN
+from .helpers import capture_due_pricing, DEFAULT_AUCTION, DEFAULT_FROM_TOKEN, DEFAULT_RECEIVER, DEFAULT_WANT_TOKEN
 
 
 def _table_names(db_path) -> set[str]:
@@ -77,7 +77,9 @@ def test_cleanup_preserves_populated_database_and_incremental_writes(tmp_path, m
     assert "auction_param_history" not in _table_names(path)
     # SQLite may change SQL whitespace on DROP COLUMN; definitions and indexes
     # must otherwise be identical to fresh bootstrap.
-    normalize = lambda rows: [(row[0], "".join((row[1] or "").split())) for row in rows]
+    def normalize(rows):
+        return [(row[0], "".join((row[1] or "").split())) for row in rows]
+
     assert normalize(conn.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name")) == normalize(current_schema)
     for table, old_rows in before.items():
         columns = [row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')]

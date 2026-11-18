@@ -12,8 +12,13 @@ from urllib import error, parse, request
 DEFAULT_PRICES_API_BASE_URL = "https://prices.wavey.info"
 
 
+MAX_ERROR_DETAIL_CHARS = 500
+
+
 class PricesApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retry_after_ms: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_ms = retry_after_ms
 
 
 class PricesApiAuthError(PricesApiError):
@@ -22,6 +27,16 @@ class PricesApiAuthError(PricesApiError):
 
 class PricesApiRateLimitError(PricesApiError):
     pass
+
+
+def _retry_after_ms(headers) -> int | None:
+    """Only whole-second Retry-After values; HTTP-date form is not worth decoding."""
+    raw = headers.get("Retry-After") if headers else None
+    try:
+        seconds = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return max(0, seconds) * 1000
 
 
 DEFAULT_PROVIDER_CACHE_TTL_SECONDS = 60
@@ -33,7 +48,9 @@ def _extract_detail_message(body: str) -> str | None:
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
-        return body.strip() or None
+        return body.strip()[:MAX_ERROR_DETAIL_CHARS] or None
+    if not isinstance(payload, dict):
+        return None
     detail = payload.get("detail")
     if isinstance(detail, dict):
         message = detail.get("message")
@@ -177,7 +194,10 @@ class PricingApiClient:
                     f"prices API authentication failed ({exc.code})"
                 ) from exc
             if exc.code == 429:
-                raise PricesApiRateLimitError("prices API rate limit exceeded") from exc
+                raise PricesApiRateLimitError(
+                    "prices API rate limit exceeded",
+                    retry_after_ms=_retry_after_ms(exc.headers),
+                ) from exc
             raise PricesApiError(
                 f"prices API request failed ({exc.code}): {_extract_detail_message(body) or exc.reason}"
             ) from exc

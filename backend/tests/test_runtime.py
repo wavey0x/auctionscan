@@ -907,3 +907,61 @@ def test_watch_catches_up_through_empty_batches_without_sleep(monkeypatch):
     with pytest.raises(SystemExit):
         runtime.watch()
     assert calls == [1, 2, 3]
+
+
+def test_watch_exits_after_sustained_failures(monkeypatch, tmp_path):
+    from backend.indexer import runtime as runtime_module
+
+    runtime = IndexerRuntime.__new__(IndexerRuntime)
+    runtime.network_name = "ethereum"
+    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0))
+    runtime._factory_seeds = ()
+    attempts = []
+    marked = []
+
+    def failing_sync(*, max_blocks=None):
+        attempts.append(1)
+        raise RuntimeError("rpc down")
+
+    runtime.sync_chain_once = failing_sync
+    runtime._mark_chain_error = lambda exc: marked.append(exc)
+    monkeypatch.setattr(runtime_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime_module, "MAX_CONSECUTIVE_SYNC_FAILURES", 3)
+
+    with pytest.raises(RuntimeError, match="rpc down"):
+        runtime.watch()
+
+    assert len(attempts) == 3
+    assert len(marked) == 3
+
+
+def test_watch_resets_failure_count_after_a_success(monkeypatch, tmp_path):
+    from backend.indexer import runtime as runtime_module
+
+    runtime = IndexerRuntime.__new__(IndexerRuntime)
+    runtime.network_name = "ethereum"
+    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0))
+    runtime._factory_seeds = ()
+    outcomes = [False, False, True, False, False]
+    attempts = []
+
+    def flaky_sync(*, max_blocks=None):
+        index = len(attempts)
+        attempts.append(1)
+        if index >= len(outcomes):
+            raise RuntimeError("rpc down")
+        if not outcomes[index]:
+            raise RuntimeError("rpc down")
+        return 0
+
+    runtime.sync_chain_once = flaky_sync
+    runtime._mark_chain_error = lambda exc: None
+    runtime._load_sync_state_row = lambda: {"latest_rpc_head": None, "last_live_processed": 0}
+    monkeypatch.setattr(runtime_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime_module, "MAX_CONSECUTIVE_SYNC_FAILURES", 3)
+
+    with pytest.raises(RuntimeError):
+        runtime.watch()
+
+    # The success at index 2 clears the counter, so it takes 3 more to give up.
+    assert len(attempts) == 6

@@ -18,6 +18,12 @@ writable path). Changing a unit file requires `systemctl daemon-reload` before
 the restart, and `systemd-analyze security auctionscan-api.service` reports the
 effective exposure.
 
+The production checkout pulls with a repository-scoped, read-only deploy key
+held by root on the deployment host, so `git fetch origin` in the release
+procedure works unattended and the host cannot push. The key is generated on
+the host and its private half never leaves it; record its identity and
+rotation in the private operations runbook.
+
 The API listens on `127.0.0.1:8010` only. TLS termination and the public
 `api.auctionscan.info` hostname are host-level concerns handled by the shared
 reverse proxy on Electro, which serves unrelated services from the same

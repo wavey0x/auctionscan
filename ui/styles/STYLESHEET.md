@@ -72,11 +72,16 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 
 | Layer | Job |
 | --- | --- |
-| Strip | One card of at most five totals for the filters in scope, label above figure |
+| Strip | Optional entity totals on detail pages; the rounds list starts directly with tabs |
 | Tabs | Choose the rows (round status); each carries its count |
-| Filters | One line: chain and version groups, a search field on the right |
+| Filters | One line: chain group, a search field on the right. Version belongs in auction details, not list filters |
 | Table | One card; see Tables |
 | Drawer | One round's execution workspace |
+
+The rounds list has no summary strip or totals-window selector. When its tabs, filters or page
+change, keep the previous rows and counts visible until the response arrives. A small loading
+indicator uses reserved space beside the tabs; pagination waits for the requested page. Skeletons
+are for the initial load only, so changing tabs never collapses their counts or swaps table geometry.
 
 ## Tables
 

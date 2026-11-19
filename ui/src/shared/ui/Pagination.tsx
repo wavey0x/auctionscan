@@ -5,9 +5,10 @@ interface PaginationProps {
   hasNext: boolean;
   onPageChange: (page: number) => void;
   summary?: string;
+  disabled?: boolean;
 }
 
-export default function Pagination({ page, hasNext, onPageChange, summary }: PaginationProps) {
+export default function Pagination({ page, hasNext, onPageChange, summary, disabled = false }: PaginationProps) {
   if (page <= 1 && !hasNext && !summary) {
     return null;
   }
@@ -19,7 +20,7 @@ export default function Pagination({ page, hasNext, onPageChange, summary }: Pag
           type="button"
           className="inline-flex items-center disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => onPageChange(page - 1)}
-          disabled={page <= 1}
+          disabled={disabled || page <= 1}
           aria-label="Previous page"
           title="Previous page"
         >
@@ -30,7 +31,7 @@ export default function Pagination({ page, hasNext, onPageChange, summary }: Pag
           type="button"
           className="inline-flex items-center disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => onPageChange(page + 1)}
-          disabled={!hasNext}
+          disabled={disabled || !hasNext}
           aria-label="Next page"
           title="Next page"
         >

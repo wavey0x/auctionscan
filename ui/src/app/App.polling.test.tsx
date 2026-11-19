@@ -10,9 +10,7 @@ vi.mock("../shared/api/client", () => ({
   api: {
     getRounds: vi.fn(),
     getChains: vi.fn().mockResolvedValue({ chains: {} }),
-    getAuctionVersions: vi.fn().mockResolvedValue({ versions: [] }),
     getHealth: vi.fn().mockResolvedValue({ chains: [] }),
-    getStats: vi.fn().mockResolvedValue({ as_of: {}, time_window: "30d", since: null, rounds: 1, live_rounds: 1, takes: 0, takers: 0, received_usd: null, received_usd_take_count: 0, auction_profit_usd: null, auction_profit_usd_take_count: 0 }),
     search: vi.fn().mockResolvedValue({ query: "", results: [], total: 0 }),
   },
 }));

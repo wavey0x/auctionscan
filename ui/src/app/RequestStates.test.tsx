@@ -48,11 +48,8 @@ let router: ReturnType<typeof createMemoryRouter>;
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
-  vi.spyOn(api, "getAuctionVersions").mockResolvedValue({ as_of: {}, versions: [], count: 0 });
   vi.spyOn(api, "getAuction").mockResolvedValue(auction);
   vi.spyOn(api, "getRounds").mockResolvedValue(roundList);
-  vi.spyOn(api, "getStats").mockResolvedValue({ as_of: {}, time_window: "30d", since: null, rounds: 1, live_rounds: 0, takes: 1, takers: 1,
-    received_usd: null, received_usd_take_count: 0, auction_profit_usd: null, auction_profit_usd_take_count: 0 });
   vi.spyOn(api, "getRoundDetail").mockResolvedValue(roundDetails);
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue(takeList);
   vi.spyOn(api, "getTake").mockResolvedValue(take);
@@ -81,6 +78,46 @@ function retry(message: string) {
   const notice = screen.getByText(message).closest('[role="alert"]')! as HTMLElement;
   fireEvent.click(within(notice).getByRole("button", { name: "Retry" }));
 }
+
+it("keeps round counts and rows in place while an uncached status loads", async () => {
+  vi.mocked(api.getRounds).mockResolvedValue({ ...roundList, has_next: true });
+  mount("/");
+  await screen.findByText("1 matching rounds");
+  expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(false);
+  const initialTabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+  const row = screen.getByRole("cell", { name: "R7" }).closest("tr");
+  let resolve!: (value: typeof roundList) => void;
+  vi.mocked(api.getRounds).mockImplementation(() => new Promise((done) => { resolve = done; }));
+
+  fireEvent.click(screen.getByRole("tab", { name: /^Live/ }));
+  await screen.findByRole("status", { name: "Updating rounds" });
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(initialTabs);
+  expect(screen.getByRole("cell", { name: "R7" }).closest("tr")).toBe(row);
+  expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("true");
+  expect(screen.queryByText("No rounds found")).toBeNull();
+  expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(true);
+
+  await act(async () => { resolve({ ...roundList, rounds: [], total: 0 }); });
+  await screen.findByText("No rounds found");
+  expect(screen.queryByRole("status", { name: "Updating rounds" })).toBeNull();
+  expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("false");
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(initialTabs);
+});
+
+it("reports a failed status switch instead of presenting previous rows as matching results", async () => {
+  mount("/");
+  await screen.findByText("1 matching rounds");
+  vi.mocked(api.getRounds).mockRejectedValue(new Error("offline"));
+  fireEvent.click(screen.getByRole("tab", { name: /^Live/ }));
+  await screen.findByText("Unable to load rounds.");
+  expect(screen.queryByRole("cell", { name: "R7" })).toBeNull();
+  expect(screen.queryByText("No rounds found")).toBeNull();
+
+  vi.mocked(api.getRounds).mockResolvedValue({ ...roundList, rounds: [], total: 0 });
+  retry("Unable to load rounds.");
+  await screen.findByText("No rounds found");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 
 it.each(cases)("$name distinguishes initial failure, retry, and confirmed emptiness", async (item) => {
   const request = vi.spyOn(api, item.method);

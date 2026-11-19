@@ -2,7 +2,6 @@ import type { paths } from "../types/generated";
 
 import type {
   AuctionDetails,
-  AuctionVersionsResponse,
   AuctionTakesResponse,
   ChainsResponse,
   HealthResponse,
@@ -10,7 +9,6 @@ import type {
   RoundLivePrice,
   RoundsResponse,
   SearchResponse,
-  StatsResponse,
   TxResolveResponse,
   TakeDetail,
   SourceOccurrence,
@@ -98,11 +96,6 @@ export const api = {
     return fetchJson<RoundsResponse>(`/rounds${query ? `?${query}` : ""}`, signal);
   },
 
-  getStats(params: NonNullable<paths["/api/stats"]["get"]["parameters"]["query"]>, signal?: AbortSignal): Promise<StatsResponse> {
-    const query = buildQuery(params);
-    return fetchJson<StatsResponse>(`/stats${query ? `?${query}` : ""}`, signal);
-  },
-
   getRoundDetail(chainId: number, auctionAddress: string, roundId: number, signal?: AbortSignal): Promise<RoundDetailResponse> {
     return fetchJson<RoundDetailResponse>(`/rounds/${segment(chainId)}/${segment(auctionAddress)}/${segment(roundId)}`, signal, "no-store");
   },
@@ -111,11 +104,6 @@ export const api = {
     return fetchJson<AuctionDetails | null>(`/auctions/${segment(address)}?${buildQuery({ chain_id: chainId })}`, signal);
   },
 
-
-  getAuctionVersions(chainId?: number, signal?: AbortSignal): Promise<AuctionVersionsResponse> {
-    const query = buildQuery({ chain_id: chainId });
-    return fetchJson<AuctionVersionsResponse>(`/auction-versions${query ? `?${query}` : ""}`, signal);
-  },
 
   getRoundLivePrice(occurrence: SourceOccurrence, snapshot: Pick<RoundLivePrice, "indexed_block" | "indexed_block_hash" | "indexed_timestamp">, signal?: AbortSignal): Promise<RoundLivePrice> {
     return fetchJson<RoundLivePrice>(`/rounds/${segment(occurrence.chain_id)}/${segment(occurrence.block_hash)}/${segment(occurrence.tx_hash)}/${segment(occurrence.log_index)}/live-price?${buildQuery(snapshot)}`, signal, "no-store");

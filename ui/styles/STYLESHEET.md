@@ -8,7 +8,7 @@ source of truth; update this file.
 ## Principles
 
 1. **Figures first.** A screen is labels and numbers; no sentence explains what a table shows.
-2. **One device, one meaning.** A tab, chip, dot, bar or chevron does the same job on every screen,
+2. **One device, one meaning.** A chip, dot, bar or chevron does the same job on every screen,
    and an indicator is never replaced or narrated by words.
 3. **Quiet normal, loud exception.** A sold round carries a small muted check. A live round is the
    one mark that moves; an expired lot is the one that warns.
@@ -24,14 +24,14 @@ source of truth; update this file.
 - Sans (`prose-text`, `font-prose`) only for longer explanatory text, such as the pricing method page.
 - The wordmark is plain `AUCTION SCAN`.
 - Labels, table headers, card titles and drawer section heads are 11px uppercase with 0.08em
-  tracking (`label`, `text-table-header`). Tabs, nav and values stay in normal case.
+  tracking (`label`, `text-table-header`). Chips, nav and values stay in normal case.
 - Tabular figures wherever numbers stack. Regular weight; emphasis comes from colour and position,
   not bold.
 
 | Size | Use |
 | --- | --- |
 | 11px | Labels, table headers, sub-lines, units |
-| 12px | Table cells, controls, nav, tabs |
+| 12px | Table cells, controls, nav |
 | 13px | Body |
 | 15px | Outcome figures in the round drawer |
 | 16px | Wordmark, entity headings, the round and pair in the drawer head |
@@ -49,7 +49,7 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 | Status | `active-mark`, `sold-mark`, `warning-mark`, `negative` | Live dot and meter, the sold check, expired dot and meter, failures |
 | Direction | `positive`, `negative` | PnL figures, always with a sign |
 
-- Active navigation and tabs use a primary underline, not the accent.
+- Active navigation uses a primary underline, not the accent.
 - Status colour never fills a row. Never colour alone: a dot has its word, a PnL figure its sign.
 - Round status has a shape as well as a tone: Live is a pulsing green dot, Sold a muted green circled
   check, Expired an amber dot, Settled a hollow ring. Every mark sits in the same 13px slot so the
@@ -61,6 +61,10 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
   Takers), search with a `/` shortcut, the data-age control and the theme toggle.
 - The data-age control ("Updated 12s ago") opens a menu of networks with links to Status, Docs and
   API Docs. The footer repeats those links and is never fixed to the viewport.
+- It is also the one place a failed refresh is reported. When a request that already has data on
+  screen is not answered, the section keeps what it last loaded and says nothing; the control reads
+  "Not updating" with a red dot until requests are answered again. A section shows an error with
+  Retry only when it has nothing loaded to show.
 - The shell is up to 1600px wide with 24px gutters (12px on phones). Data views get the width.
 
 ## Surfaces
@@ -75,19 +79,19 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 
 | Layer | Job |
 | --- | --- |
-| Strip | Optional entity totals on detail pages; the rounds list starts directly with tabs |
-| Tabs | Choose the rows (round status); each carries its count |
-| Filters | One line: chain group, a search field on the right. Version belongs in auction details, not list filters |
+| Strip | Optional entity totals on detail pages; the rounds list starts directly with its filters |
+| Filters | One line of chip groups (round status with its counts, then chain) and a search field on the right. Version belongs in auction details, not list filters |
 | Table | One card; see Tables |
 | Drawer | One round's execution workspace |
 
-The rounds list has no summary strip, totals or totals-window selector; the space beside the tabs
-stays free.
+The rounds list has no summary strip, totals or totals-window selector. Everything that filters
+its rows is a chip group on one line: there are no tabs. Round status is the first group, each
+chip carrying its count.
 
-When the list's tabs, filters or page change, keep the previous rows and counts visible until the
+When the list's filters or page change, keep the previous rows and counts visible until the
 response arrives. Rows that are waiting to be replaced dim after a short delay and open nothing, by
-pointer or by keyboard; pagination waits for the requested page. Skeletons are for the initial load only, so changing tabs
-never collapses their counts or swaps table geometry.
+pointer or by keyboard; pagination waits for the requested page. Skeletons are for the initial
+load only, so changing a filter never collapses the counts or swaps table geometry.
 
 ## Tables
 
@@ -129,7 +133,7 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
   1. **Head**, two lines that share one left edge. First the pair, each token with its logo; it has
      the line to itself, so names are not cut, and on a sheet too narrow for both it breaks after
      the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address; the address reveals
-     its utilities when pointed at. The version is a Settings row, and the chain gets a mark only
+     its utilities when pointed at. The version is a Details row, and the chain gets a mark only
      once there is more than one chain to tell apart.
   2. **Result**, one row: Sold, Received, PnL. Each is a label, a bare 15px figure and its dollar
      value on a quieter line, so the row reads as a sum: market value, proceeds, difference. The
@@ -141,30 +145,35 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
      sales, so it never stands without this.
   4. **Takes**, one line each: take, taker, time since the kick, received, PnL. Opening a row shows
      the rest. An empty list is `none` beside the heading.
-  5. **Price**: a compact chart under a key of the three prices worth comparing.
-  6. **Settings**, the kick-time parameters and the contract version, collapsed by default.
+  5. **Price**: the price path as a bare shape.
+  6. **Details**, collapsed by default: the start price, kick quote and average take on consecutive
+     rows, then decay, cutoff, receiver and the contract version.
 - A live round has different priorities, so it leads with what is still open:
   1. **Live row**, in place of the facts and in the result row's shape: Remaining over its value,
      Price now over its distance from the kick quote (`26.3× quote`, `+4.2% vs quote`), and Time
      left over the scheduled length. Every cell is a bare figure and one short line.
-  2. **Price** moves up to sit directly under it. It states the price's unit and marks the present
-     moment on its time axis, which is why the row above carries neither a unit nor a meter.
-  3. **Result** appears beneath the chart once the first take lands, then **Takes** and **Settings**.
+  2. **Price** moves up to sit directly under it and marks the present moment on the curve, which
+     is why the row above carries no meter.
+  3. **Result** appears beneath the chart once the first take lands, then **Takes** and **Details**.
 - A token is named once, in the head, beside its logo. Figures beneath it are bare, in the summary
-  and in rows of takes; the workspace's column headers and the chart's head carry the unit, and
-  hovering a figure gives the exact amount with its symbol. Logos appear again only in an opened
+  and in rows of takes; the workspace's column headers carry the unit, and hovering a figure gives
+  the exact amount with its symbol. Logos appear again only in an opened
   take. Dollar values in the drawer are written in full (`$1,627`), not compact. The live price is
   held to six significant digits so its width stays steady as it falls.
 - A take's time is its distance from the kick (`+9h 57m`), which is also its place on the price
   path; the timestamp is on hover and in the opened row.
 - The expand control widens it to an execution-review workspace (up to 1180px, remembered per
   browser, never on a sheet): every take column (tx, taker, time, sold, received, price, PnL), with
-  the chart and the settings side by side beneath.
-- The price chart draws the start price stepping down by its decay, the kick-time quote as a dashed
-  line, the minimum price when in range, each take as a dot, and a live round's current price. Its
-  key names the start, the quote and the average take. Hovering reads the price at any moment of
-  the round in the plot's top right corner, which a falling price leaves empty, so nothing around
-  the chart moves. Section heads are always one line: a long unit is cut, never wrapped.
+  the chart and the details side by side beneath.
+- The price chart is a shape, not a figure to be read: the price stepping down from its start, the
+  kick-time quote as a dashed line, each take as a dot, and a live round's present moment as a
+  green dot. At rest it has no key, fill, axis, labels or grid.
+- Pointing at the chart brings the figures back as one small stack: the moment under the pointer
+  (`+3h 6m` and its timestamp), then Price, Quote, Start and, once there are takes, Avg take, each
+  a label and a figure with the decimals aligned. The stack floats over the plot's far corner
+  from the pointer and hangs from the plot's foot, so nothing around the chart moves and the
+  section below is never covered. Section heads are always one line: a long note is cut, never
+  wrapped.
 
 ## Motion
 

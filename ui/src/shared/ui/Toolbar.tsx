@@ -3,43 +3,9 @@ import { Search } from "lucide-react";
 
 import { cn, formatCount } from "../lib/format";
 
-export interface ViewTabOption<T extends string> {
-  value: T;
-  label: string;
-  count?: number | null;
-}
-
-/** Tabs choose the rows; each carries its count as a plain figure. */
-export function ViewTabs<T extends string>({
-  value,
-  options,
-  onChange,
-  label,
-}: {
-  value: T;
-  options: ViewTabOption<T>[];
-  onChange: (value: T) => void;
-  label: string;
-}) {
-  return (
-    <div className="view-tabs" role="tablist" aria-label={label}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="tab"
-          aria-selected={option.value === value}
-          className="view-tab"
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-          {option.count !== undefined && option.count !== null ? (
-            <span className="tab-count">{formatCount(option.count)}</span>
-          ) : null}
-        </button>
-      ))}
-    </div>
-  );
+/** The number of rows a filter choice would give, set quietly beside its label. */
+export function ChipCount({ value }: { value: number | null | undefined }) {
+  return value === null || value === undefined ? null : <span className="chip-count">{formatCount(value)}</span>;
 }
 
 export interface ChipOption<T extends string | number> {
@@ -51,8 +17,9 @@ export interface ChipOption<T extends string | number> {
 }
 
 /**
- * A filter group: one rounded track that opens with a reset chip named for the
- * group. What is chosen is a raised key. Multi-select unless `single`.
+ * A filter group: one framed track that opens with a reset chip named for the
+ * group. What is chosen is a filled key. Multi-select unless `single`. Every
+ * filter on a list is one of these, whatever it filters by.
  */
 export function ChipGroup<T extends string | number>({
   label,
@@ -63,7 +30,7 @@ export function ChipGroup<T extends string | number>({
   single = false,
 }: {
   label: string;
-  resetLabel: string;
+  resetLabel: ReactNode;
   options: ChipOption<T>[];
   selected: T[];
   onChange: (next: T[]) => void;

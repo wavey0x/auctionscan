@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, api } from "../shared/api/client";
+import { useRefreshFailing } from "../shared/lib/refreshState";
 import { buildRoundPath, occurrenceKey } from "../shared/lib/routes";
 import type { AuctionDetails, RoundDetailResponse, TakeDetail, TakerDetail, TakerSummary } from "../shared/types/api";
 import AuctionPage from "../features/auctions/pages/AuctionPage";
@@ -69,10 +70,24 @@ function mount(path: string) {
     { path: "/takers", element: <TakersPage /> },
     { path: "/search", element: <SearchPage /> },
   ], { initialEntries: [path] });
-  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /><RefreshProbe /></QueryClientProvider>);
+}
+/** Stands in for the top bar's data-age control, the one place a failed refresh is reported. */
+function RefreshProbe() {
+  return <output data-testid="refresh">{useRefreshFailing() ? "failing" : "ok"}</output>;
+}
+function refreshState() {
+  return screen.getByTestId("refresh").textContent;
 }
 async function refresh(key: string) {
   await act(async () => { await client.refetchQueries({ queryKey: [key] }); });
+}
+/** The status filter is a chip group like every other filter on the list. */
+function statusChips() {
+  return within(screen.getByRole("group", { name: "Round status" })).getAllByRole("button");
+}
+function statusChip(name: RegExp) {
+  return within(screen.getByRole("group", { name: "Round status" })).getByRole("button", { name });
 }
 function retry(message: string) {
   const notice = screen.getByText(message).closest('[role="alert"]')! as HTMLElement;
@@ -84,14 +99,14 @@ it("keeps round counts and rows in place while an uncached status loads", async 
   mount("/");
   await screen.findByText("1 matching rounds");
   expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(false);
-  const initialTabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+  const initialChips = statusChips().map((chip) => chip.textContent);
   const row = screen.getByRole("cell", { name: "R7" }).closest("tr");
   let resolve!: (value: typeof roundList) => void;
   vi.mocked(api.getRounds).mockImplementation(() => new Promise((done) => { resolve = done; }));
 
-  fireEvent.click(screen.getByRole("tab", { name: /^Live/ }));
+  fireEvent.click(statusChip(/^Live/));
   await screen.findByRole("status", { name: "Updating rounds" });
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(initialTabs);
+  expect(statusChips().map((chip) => chip.textContent)).toEqual(initialChips);
   expect(screen.getByRole("cell", { name: "R7" }).closest("tr")).toBe(row);
   expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("true");
   expect(screen.queryByText("No rounds found")).toBeNull();
@@ -109,14 +124,14 @@ it("keeps round counts and rows in place while an uncached status loads", async 
   await screen.findByText("No rounds found");
   expect(screen.queryByRole("status", { name: "Updating rounds" })).toBeNull();
   expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("false");
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(initialTabs);
+  expect(statusChips().map((chip) => chip.textContent)).toEqual(initialChips);
 });
 
 it("reports a failed status switch instead of presenting previous rows as matching results", async () => {
   mount("/");
   await screen.findByText("1 matching rounds");
   vi.mocked(api.getRounds).mockRejectedValue(new Error("offline"));
-  fireEvent.click(screen.getByRole("tab", { name: /^Live/ }));
+  fireEvent.click(statusChip(/^Live/));
   await screen.findByText("Unable to load rounds.");
   expect(screen.queryByRole("cell", { name: "R7" })).toBeNull();
   expect(screen.queryByText("No rounds found")).toBeNull();
@@ -141,19 +156,21 @@ it.each(cases)("$name distinguishes initial failure, retry, and confirmed emptin
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it.each(cases)("$name retains loaded data during a failed refresh and recovers on retry", async (item) => {
+it.each(cases)("$name keeps loaded data through a failed refresh, reported once and not in the page", async (item) => {
   mount(item.path);
   await screen.findByText(item.loaded);
+  expect(refreshState()).toBe("ok");
   const request = vi.spyOn(api, item.method);
   request.mockRejectedValue(new ApiError(503, "Unavailable"));
   await refresh(item.key);
-  const warning = `Could not refresh ${item.name}. Showing previously loaded data.`;
-  await screen.findByText(warning);
+  await waitFor(() => expect(refreshState()).toBe("failing"));
   expect(screen.getByText(item.loaded)).toBeTruthy();
   expect(screen.queryByText(item.missing)).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
   request.mockResolvedValue(item.data);
-  retry(warning);
-  await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+  await refresh(item.key);
+  await waitFor(() => expect(refreshState()).toBe("ok"));
+  expect(screen.getByText(item.loaded)).toBeTruthy();
 });
 
 it.each(cases.filter((item) => ["auction", "taker", "round-detail"].includes(item.key)))("$name stops showing a cached record once absence is confirmed", async (item) => {
@@ -188,8 +205,9 @@ it.each([roundPath, `/auction/1/${address}`])("retains takes in %s after their r
   await screen.findByRole("cell", { name: "T1" });
   vi.mocked(api.getAuctionTakes).mockRejectedValue(new Error("offline"));
   await refresh(path === roundPath ? "round-takes" : "auction-recent-takes");
-  await screen.findByText("Could not refresh takes. Showing previously loaded data.");
+  await waitFor(() => expect(refreshState()).toBe("failing"));
   expect(screen.getByRole("cell", { name: "T1" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it.each([roundPath, `/auction/1/${address}`])("distinguishes failed and missing selected takes in %s", async (path) => {
@@ -202,8 +220,9 @@ it.each([roundPath, `/auction/1/${address}`])("distinguishes failed and missing 
   await screen.findAllByText("Execution price");
   vi.mocked(api.getTake).mockRejectedValue(new ApiError(503, "Unavailable"));
   await refresh("take-detail");
-  await screen.findByText("Could not refresh take. Showing previously loaded data.");
+  await waitFor(() => expect(refreshState()).toBe("failing"));
   expect(screen.getAllByText("Execution price").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("alert")).toBeNull();
   vi.mocked(api.getTake).mockRejectedValue(new ApiError(404, "Not found"));
   await refresh("take-detail");
   await screen.findByText("Take not found");
@@ -240,6 +259,7 @@ it("keeps taker totals visible through takes failures and retries", async () => 
   await screen.findByRole("cell", { name: "R7" });
   vi.mocked(api.getTakerTakes).mockRejectedValue(new Error("offline"));
   await refresh("taker-takes");
-  await screen.findByText("Could not refresh takes. Showing previously loaded data.");
+  await waitFor(() => expect(refreshState()).toBe("failing"));
   expect(screen.getByRole("cell", { name: "R7" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -6,6 +6,7 @@ import { api } from "../shared/api/client";
 import { cn } from "../shared/lib/format";
 import { LIVE_REFETCH_INTERVAL_MS } from "../shared/lib/polling";
 import { currentColorMode, setColorMode, type ColorMode } from "../shared/lib/theme";
+import { useRefreshFailing } from "../shared/lib/refreshState";
 import DataAge from "./DataAge";
 import GlobalSearch from "./GlobalSearch";
 
@@ -67,6 +68,7 @@ export default function AppShell() {
     queryFn: ({ signal }) => api.getHealth(signal),
     refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
+  const refreshFailing = useRefreshFailing();
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -89,7 +91,7 @@ export default function AppShell() {
           </nav>
           <div className="ml-auto flex items-center gap-1">
             <GlobalSearch />
-            <DataAge chains={healthQuery.data?.chains} hasError={healthQuery.isError} docsHref={docsHref} />
+            <DataAge chains={healthQuery.data?.chains} hasError={healthQuery.isError} refreshFailing={refreshFailing} docsHref={docsHref} />
             <ThemeToggle />
           </div>
         </div>

@@ -94,7 +94,7 @@ export default function SearchPage() {
         </button>
       </form>
 
-      {directRoundMatch && directRoundQuery.isError && <RequestError message={directRoundQuery.data ? "Could not refresh direct round lookup. Showing previously loaded data." : "Unable to look up this round."} onRetry={() => { void directRoundQuery.refetch(); }} />}
+      {directRoundMatch && directRoundQuery.isError && !directRoundQuery.data && <RequestError message="Unable to look up this round." onRetry={() => { void directRoundQuery.refetch(); }} />}
       {directRoundMatch && directRoundQuery.isLoading && <div className="text-data text-tertiary">Looking up round…</div>}
       {directRoundMatch && directRoundQuery.data && !directRound && <EmptyState title="Round not found" />}
       {directRoundMatch && directRound ? (
@@ -113,7 +113,7 @@ export default function SearchPage() {
         </section>
       ) : null}
 
-      {query.trim().length >= 2 && searchQuery.isError && <RequestError message={searchQuery.data ? "Could not refresh search. Showing previously loaded data." : "Unable to search."} onRetry={() => { void searchQuery.refetch(); }} />}
+      {query.trim().length >= 2 && searchQuery.isError && !searchQuery.data && <RequestError message="Unable to search." onRetry={() => { void searchQuery.refetch(); }} />}
       {query.trim().length < 2 ? (
         <EmptyState title="Start with a query" description="Use at least two characters for indexed search, or a chain:auction:round pattern for a direct jump." />
       ) : searchQuery.data?.results.length ? (

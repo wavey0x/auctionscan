@@ -325,41 +325,6 @@ html.dark {
     @apply flex flex-col gap-2.5;
   }
 
-  .tabs-row {
-    @apply flex min-w-0 items-end justify-between gap-4 border-b border-divider;
-  }
-
-  .view-tabs {
-    @apply flex min-w-0 gap-5 overflow-x-auto;
-    scrollbar-width: none;
-  }
-
-  .view-tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .view-tab {
-    @apply -mb-px whitespace-nowrap border-b border-transparent pb-2 pt-1 text-meta text-tertiary;
-    transition: color 0.12s, border-color 0.12s;
-  }
-
-  .view-tab:hover {
-    @apply text-primary;
-  }
-
-  .view-tab[aria-selected="true"] {
-    @apply border-primary text-primary;
-  }
-
-  .tab-count {
-    @apply ml-1.5 text-[11px] text-faint;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .view-tab[aria-selected="true"] .tab-count {
-    @apply text-tertiary;
-  }
-
   .filter-line {
     @apply flex flex-wrap items-center gap-x-2 gap-y-1.5;
   }
@@ -385,6 +350,15 @@ html.dark {
   .chip[aria-pressed="true"],
   .segmented button[aria-pressed="true"] {
     @apply bg-selected text-primary;
+  }
+
+  .chip-count {
+    @apply text-faint;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip[aria-pressed="true"] .chip-count {
+    @apply text-tertiary;
   }
 
   .chip-icon {
@@ -1052,38 +1026,37 @@ html.dark {
   /* ---------------------------------------------------------------- chart */
 
   .chart {
-    @apply px-4 pb-1;
+    @apply relative px-4 pb-2;
+  }
+
+  /* The reading under the pointer: a small stack of label and figure rows,
+     floating over the plot's far corner so that nothing reflows. It hangs from
+     the plot's foot and grows upward, so it never covers the section below. */
+  .chart-tip {
+    @apply pointer-events-none absolute bottom-2 right-4 z-10 grid items-baseline gap-x-4 rounded-[4px] border border-divider-strong bg-surface px-2 py-1.5 text-[11px] leading-4 text-tertiary;
+    grid-template-columns: auto auto;
+    box-shadow: var(--overlay-shadow);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chart-tip.is-left {
+    @apply left-4 right-auto;
+  }
+
+  .chart-tip b {
+    @apply text-right font-normal text-primary;
+  }
+
+  .chart-tip .tip-time {
+    @apply col-span-2 mb-1 flex justify-between gap-4 border-b border-divider-subtle pb-1;
+  }
+
+  .chart-tip .tip-time b {
+    @apply text-left;
   }
 
   .chart svg {
     @apply block w-full overflow-visible;
-  }
-
-  .chart-key {
-    @apply flex min-h-5 flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-tertiary;
-  }
-
-  .chart-key span {
-    @apply inline-flex items-center gap-1.5 whitespace-nowrap;
-  }
-
-  .chart-key b {
-    @apply font-normal text-primary;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .key-line {
-    @apply inline-block h-0.5 w-3 bg-primary;
-  }
-
-  .key-dash {
-    @apply inline-block h-0 w-3;
-    border-top: 1px dashed var(--color-tertiary);
-  }
-
-  .key-dot {
-    @apply inline-block h-[7px] w-[7px] rounded-full;
-    background: var(--color-accent);
   }
 
   /* ---------------------------------------------------------------- loading */

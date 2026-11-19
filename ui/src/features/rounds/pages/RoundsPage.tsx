@@ -31,13 +31,13 @@ import SkeletonRows from "../../../shared/ui/SkeletonRows";
 import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
-import { ChipGroup, FilterField, ViewTabs } from "../../../shared/ui/Toolbar";
+import { ChipCount, ChipGroup, FilterField } from "../../../shared/ui/Toolbar";
 
 const PAGE_SIZE = 20;
 const ROUND_STATUS_FILTERS = ["all", "live", "sold_out", "expired", "settled"] as const;
 type RoundStatusFilter = (typeof ROUND_STATUS_FILTERS)[number];
 
-const STATUS_TAB_LABELS: Record<RoundStatusFilter, string> = {
+const STATUS_LABELS: Record<RoundStatusFilter, string> = {
   all: "All rounds",
   live: "Live",
   sold_out: "Sold",
@@ -199,21 +199,20 @@ export default function RoundsPage() {
   return (
     <div className="space-y-4">
       <div className="toolbar">
-        <div className="tabs-row">
-          <ViewTabs
-            label="Round status"
-            value={filters.status}
-            onChange={(status) => updateFilters({ status, page: 1 })}
-            options={ROUND_STATUS_FILTERS.map((status) => ({
-              value: status,
-              label: STATUS_TAB_LABELS[status],
-              count: counts ? counts[status] : null,
-            }))}
-          />
-          {roundsQuery.isPlaceholderData ? <span role="status" aria-label="Updating rounds" className="sr-only" /> : null}
-        </div>
+        {roundsQuery.isPlaceholderData ? <span role="status" aria-label="Updating rounds" className="sr-only" /> : null}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="filter-line">
+            <ChipGroup
+              label="Round status"
+              resetLabel={<>{STATUS_LABELS.all}<ChipCount value={counts?.all} /></>}
+              single
+              options={ROUND_STATUS_FILTERS.filter((status) => status !== "all").map((status) => ({
+                value: status,
+                label: <>{STATUS_LABELS[status]}<ChipCount value={counts?.[status]} /></>,
+              }))}
+              selected={filters.status === "all" ? [] : [filters.status]}
+              onChange={(next) => updateFilters({ status: next[0] ?? "all", page: 1 })}
+            />
             <ChipGroup
               label="Chain"
               resetLabel="All chains"
@@ -230,11 +229,11 @@ export default function RoundsPage() {
             placeholder="Token, auction or tx hash"
           />
         </div>
-        {chainsQuery.isError && <RequestError message={chainsData ? "Could not refresh network filters. Showing previously loaded data." : "Unable to load network filters."} onRetry={() => { void chainsQuery.refetch(); }} />}
+        {chainsQuery.isError && !chainsData && <RequestError message="Unable to load network filters." onRetry={() => { void chainsQuery.refetch(); }} />}
       </div>
 
       <section className="card card-clip" aria-label="Rounds">
-        {roundsQuery.isError && <RequestError message={roundsQuery.data ? "Could not refresh rounds. Showing previously loaded data." : "Unable to load rounds."} onRetry={() => { void roundsQuery.refetch(); }} />}
+        {roundsQuery.isError && !roundsQuery.data && <RequestError message="Unable to load rounds." onRetry={() => { void roundsQuery.refetch(); }} />}
         {roundsQuery.isError && !roundsQuery.data ? null : (
           <div className="table-wrap">
             <TableHoverScope>

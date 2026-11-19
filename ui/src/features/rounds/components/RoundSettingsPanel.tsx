@@ -13,7 +13,11 @@ function Row({ label, children, title }: { label: ReactNode; children: ReactNode
   );
 }
 
-/** The kick-time settings of a round, as captured facts. */
+/**
+ * A round's reference rows: its kick-time settings as captured facts, and the
+ * prices the chart draws without stating. Start, kick quote and average take
+ * sit on consecutive rows so the three can be compared down one edge.
+ */
 export default function RoundSettingsPanel({
   round,
   chainId,
@@ -46,6 +50,12 @@ export default function RoundSettingsPanel({
       <Row label="Kick quote" title="Stored kick-time market quote per unit">
         <span className={expectedPriceValue ? undefined : "text-faint"}>{expectedPriceValue ?? "—"}</span>
       </Row>
+
+      {round.take_count > 0 ? (
+        <Row label={round.take_count === 1 ? "Take" : "Avg take"} title={`Average execution price from ${round.paid_take_count} of ${round.take_count} takes with observed payment`}>
+          <span className={round.avg_execution_price ? undefined : "text-faint"}>{round.avg_execution_price ? formatPrice(round.avg_execution_price, 8) : "—"}</span>
+        </Row>
+      ) : null}
 
       <Row label="Decay">
         {decay ?? <span className="text-faint">—</span>}

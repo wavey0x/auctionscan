@@ -94,7 +94,6 @@ export default function TakerProfilePage() {
 
   return (
     <div className="space-y-4">
-      {detailQuery.isError && <RequestError message="Could not refresh taker profile. Showing previously loaded data." onRetry={() => { void detailQuery.refetch(); }} />}
       <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-meta text-tertiary">
         <Link to="/takers" className="inline-flex items-center gap-1.5 transition-colors hover:text-primary">
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.6} />
@@ -149,7 +148,7 @@ export default function TakerProfilePage() {
               </span>
               <strong>{takesQuery.data ? formatCount(takesQuery.data.total_count) : ""}</strong>
             </div>
-            {takesQuery.isError && <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} />}
+            {takesQuery.isError && !takesQuery.data && <RequestError message="Unable to load takes." onRetry={() => { void takesQuery.refetch(); }} />}
             {takesQuery.isError && !takesQuery.data ? null : (
               <div className="table-wrap">
                 <TableHoverScope>

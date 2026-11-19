@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
-import { formatCompactDateTime, formatDuration, formatPrice, parseTimestamp } from "../../../shared/lib/format";
+import { cn, formatCompactDateTime, formatDuration, formatPrice, parseTimestamp } from "../../../shared/lib/format";
 import type { RoundListItem, TakeListItem } from "../../../shared/types/api";
 
-const DEFAULT_HEIGHT = 112;
+const DEFAULT_HEIGHT = 96;
 const PAD_TOP = 8;
-const PAD_BOTTOM = 18;
+const PAD_BOTTOM = 6;
 const MAX_STEPS_DRAWN = 720;
+/** How close to the right edge the pointer may come before the reading moves to the left corner. */
+const TIP_CLEARANCE = 184;
 
 function seconds(value: string | null | undefined): number | null {
   const date = parseTimestamp(value);
@@ -110,11 +112,13 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
 }
 
 /**
- * The round's price path: the start price stepping down by its decay, the
- * kick-time market quote it should meet, and where each take landed on it.
- * The key carries the three prices worth comparing. The reading under the
- * pointer is drawn inside the plot, in the corner a falling price leaves
- * empty, so hovering never moves anything around the chart.
+ * The round's price path, drawn as a shape rather than a figure to be read:
+ * the price stepping down from its start, the kick-time market quote it should
+ * meet as a dashed line, each take as a dot, and a live round's present moment.
+ * At rest there is no key, fill, axis or label. Pointing at it brings the
+ * figures back as one small stack: the moment under the pointer, its price,
+ * and the prices the lines stand for. The stack floats over the plot's far
+ * corner from the pointer, so hovering never moves anything around the chart.
  */
 export default function DecayChart({
   round,
@@ -177,7 +181,6 @@ function DecayPlot({
       line += `${i === 0 ? "M" : "L"}${x(t).toFixed(2)},${y(price).toFixed(2)}`;
     }
   }
-  const area = line ? `${line}V${PAD_TOP + plotHeight}H0Z` : "";
 
   const live = positive(livePrice);
   const hoverPrice = hoverT !== null ? model.priceAt(hoverT) : null;
@@ -193,27 +196,16 @@ function DecayPlot({
     setHoverT(model.kick + ratio * (model.end - model.kick));
   };
 
-  const averageTake = positive(round.avg_execution_price);
+  const averageTake = model.takes.length ? positive(round.avg_execution_price) : null;
+  // One number of decimals for every row of the stack, enough for the lowest
+  // price the chart draws, so the figures line up on their decimal points.
+  const decimals = Math.min(8, Math.max(0, 5 - Math.floor(Math.log10(model.low))));
+  const stacked = new Intl.NumberFormat("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
   return (
     <section className="sec" aria-label="Price">
-      <h3 className="sec-head">
-        Price
-        {unit ? <span className="sec-note">{unit}</span> : null}
-      </h3>
+      <h3 className="sec-head" title={unit}>Price</h3>
       <div className="chart" ref={ref}>
-      <div className="chart-key">
-        <span><i className="key-line" />Start <b>{formatPrice(model.start, 8)}</b></span>
-        {model.quote !== null ? <span title="Market quote per unit at kick"><i className="key-dash" />Quote <b>{formatPrice(model.quote, 8)}</b></span> : null}
-        {model.takes.length ? (
-          <span title={averageTake !== null ? `Average execution price from ${round.paid_take_count}/${round.take_count} takes with observed payment` : undefined}>
-            <i className="key-dot" />
-            {averageTake === null ? (model.takes.length === 1 ? "Take" : `${model.takes.length} takes`) : (
-              <>{model.takes.length === 1 ? "Take" : "Avg take"} <b>{formatPrice(averageTake, 8)}</b></>
-            )}
-          </span>
-        ) : null}
-      </div>
       {width > 0 ? (
         <svg
           width={plotWidth}
@@ -221,65 +213,47 @@ function DecayPlot({
           viewBox={`0 0 ${plotWidth} ${HEIGHT}`}
           role="img"
           aria-label={`Price from ${formatPrice(model.start, 8)} decaying ${round.decay_percent ?? ""} every ${formatDuration(model.step)}`}
-          className="mt-1.5 cursor-crosshair touch-pan-y"
+          className="cursor-crosshair touch-pan-y"
           onPointerMove={onPointerMove}
           onPointerLeave={() => setHoverT(null)}
         >
-          <line x1={0} x2={plotWidth} y1={PAD_TOP + plotHeight} y2={PAD_TOP + plotHeight} stroke="var(--color-divider)" />
-          {area ? <path d={area} fill="color-mix(in srgb, var(--color-primary) 6%, transparent)" /> : null}
-          {model.minimum !== null && model.minimum > model.low ? (
-            <line x1={0} x2={plotWidth} y1={y(model.minimum)} y2={y(model.minimum)} stroke="var(--color-faint)" strokeDasharray="2 4" />
-          ) : null}
           {model.quote !== null ? (
-            <line x1={0} x2={plotWidth} y1={y(model.quote)} y2={y(model.quote)} stroke="var(--color-tertiary)" strokeDasharray="3 3" />
+            <line x1={0} x2={plotWidth} y1={y(model.quote)} y2={y(model.quote)} stroke="var(--color-faint)" strokeDasharray="3 3">
+              <title>{`Kick quote ${formatPrice(model.quote, 8)}`}</title>
+            </line>
           ) : null}
           {line ? <path d={line} fill="none" stroke="var(--color-primary)" strokeWidth={1.5} strokeLinejoin="round" /> : null}
           {marker && marker.price !== null ? (
-            <g>
-              {/* A drop line from the point to the time axis, so it never crosses the reading above. */}
-              <line x1={x(marker.t)} x2={x(marker.t)} y1={y(marker.price)} y2={PAD_TOP + plotHeight} stroke="var(--color-divider-strong)" />
-              <circle
-                cx={x(marker.t)}
-                cy={y(marker.price)}
-                r={4}
-                fill={hoverT === null ? "var(--color-active-mark)" : "var(--color-primary)"}
-                stroke="var(--color-surface)"
-                strokeWidth={2}
-              />
-            </g>
+            <circle
+              cx={x(marker.t)}
+              cy={y(marker.price)}
+              r={4}
+              fill={hoverT === null ? "var(--color-active-mark)" : "var(--color-primary)"}
+              stroke="var(--color-surface)"
+              strokeWidth={2}
+            />
           ) : null}
           {model.takes.map((point) => (
             <circle key={point.key} cx={x(point.t)} cy={y(point.price)} r={3.5} fill="var(--color-accent)" stroke="var(--color-surface)" strokeWidth={2}>
               <title>{`Take at ${formatCompactDateTime(new Date(point.t * 1000))}: ${formatPrice(point.price, 8)}`}</title>
             </circle>
           ))}
-          {hoverT !== null && hoverPrice !== null ? (
-            <text
-              x={plotWidth}
-              y={PAD_TOP + 9}
-              textAnchor="end"
-              fontSize={11}
-              fontFamily="var(--font-mono)"
-              stroke="var(--color-surface)"
-              strokeWidth={4}
-              strokeLinejoin="round"
-              paintOrder="stroke"
-              style={{ fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}
-            >
-              <tspan fill="var(--color-tertiary)">+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))}</tspan>
-              <tspan dx={7} fill="var(--color-primary)">{formatPrice(hoverPrice, 8)}</tspan>
-            </text>
-          ) : null}
-          <text x={0} y={HEIGHT - 4} fill="var(--color-faint)" fontSize={11} fontFamily="var(--font-mono)">
-            {formatCompactDateTime(new Date(model.kick * 1000))}
-          </text>
-          <text x={plotWidth} y={HEIGHT - 4} fill="var(--color-faint)" fontSize={11} fontFamily="var(--font-mono)" textAnchor="end">
-            {model.now !== null ? `ends ${formatCompactDateTime(new Date(model.end * 1000))}` : formatCompactDateTime(new Date(model.end * 1000))}
-          </text>
         </svg>
       ) : (
         <div style={{ height: HEIGHT }} />
       )}
+      {hoverT !== null && hoverPrice !== null ? (
+        <div className={cn("chart-tip", x(hoverT) > plotWidth - TIP_CLEARANCE && "is-left")} aria-hidden="true">
+          <span className="tip-time">
+            <b>+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))}</b>
+            {formatCompactDateTime(new Date(hoverT * 1000))}
+          </span>
+          <span>Price</span><b>{stacked.format(hoverPrice)}</b>
+          {model.quote !== null ? <><span>Quote</span><b>{stacked.format(model.quote)}</b></> : null}
+          <span>Start</span><b>{stacked.format(model.start)}</b>
+          {averageTake !== null ? <><span>{model.takes.length === 1 ? "Take" : "Avg take"}</span><b>{stacked.format(averageTake)}</b></> : null}
+        </div>
+      ) : null}
       </div>
     </section>
   );

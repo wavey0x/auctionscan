@@ -215,7 +215,6 @@ function LiveRow({
   price,
   priceBlock,
   pricePending,
-  priceUnavailable,
 }: {
   round: RoundListItem;
   fromSymbol: string;
@@ -223,7 +222,6 @@ function LiveRow({
   price?: string | null;
   priceBlock?: number | null;
   pricePending: boolean;
-  priceUnavailable: boolean;
 }) {
   const metrics = getRoundProgressMetrics(progressInput(round));
   const remaining = round.available_amount ?? round.initial_available ?? null;
@@ -254,7 +252,7 @@ function LiveRow({
         {price ? formatPriceSignificant(price) : pricePending ? (
           <span className="skeleton-bar my-[6.5px] w-20" aria-label="Loading price" />
         ) : (
-          <span className="text-faint">{priceUnavailable ? "unavailable" : "—"}</span>
+          <span className="text-faint">—</span>
         )}
       </OutcomeCell>
       <OutcomeCell
@@ -345,7 +343,6 @@ export default function RoundModalContent({
     selectedTake,
     roundNotFound,
     selectedTakeNotFound,
-    priceReference,
     displayedLivePrice,
   } = useRoundDetails(chain, auctionAddress, roundId, selectedOccurrence);
 
@@ -405,8 +402,8 @@ export default function RoundModalContent({
     <EmptyState title="Invalid take link" className="py-4" />
   ) : selectedTakeNotFound || (selectedTakeQuery.isSuccess && !selectedTake) ? (
     <EmptyState title="Take not found" description="This occurrence is absent from the indexed round." className="py-4" />
-  ) : selectedTakeQuery.isError ? (
-    <RequestError message={selectedTake ? "Could not refresh take. Showing previously loaded data." : "Unable to load take."} onRetry={() => { void selectedTakeQuery.refetch(); }} />
+  ) : selectedTakeQuery.isError && !selectedTake ? (
+    <RequestError message="Unable to load take." onRetry={() => { void selectedTakeQuery.refetch(); }} />
   ) : null;
   const sourceOptions = takesQuery.data?.available_price_sources || [];
   const selectedPriceSource = resolvePriceSource(requestedPriceSource, sourceOptions);
@@ -456,7 +453,6 @@ export default function RoundModalContent({
   const usdPricedTakes = roundPricing.usd_priced_take_count ?? 0;
   const pnlPercent = coerceFiniteNumber(roundPricing.total_auction_profit_bps);
   const pnlUsd = coerceFiniteNumber(roundPricing.total_auction_profit_usd);
-  const livePriceUnavailable = roundQuery.isError || livePriceQuery.isError || !priceReference;
 
   // Absence is only stated once a response has confirmed it, never while loading or failed.
   const takesNote = takesQuery.data && !takesNotFound ? takes.length || (round.status === "live" ? "none yet" : "none") : null;
@@ -472,7 +468,7 @@ export default function RoundModalContent({
         Takes
       </SectionHead>
       {selectedTakeNotice}
-      {takesNotFound ? <EmptyState title="Round not found" description="Takes are unavailable for this occurrence." className="py-4" /> : takesQuery.isError ? <RequestError message={takesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void takesQuery.refetch(); }} /> : null}
+      {takesNotFound ? <EmptyState title="Round not found" description="Takes are unavailable for this occurrence." className="py-4" /> : takesQuery.isError && !takesQuery.data ? <RequestError message="Unable to load takes." onRetry={() => { void takesQuery.refetch(); }} /> : null}
       {takesQuery.isLoading ? (
         <div className="space-y-3 px-4 py-3">
           {Array.from({ length: 3 }).map((_, index) => <span key={index} className="skeleton-bar w-full" />)}
@@ -497,7 +493,7 @@ export default function RoundModalContent({
     <DecayChart
       round={round}
       takes={takes}
-      height={wide ? 132 : 92}
+      height={wide ? 120 : 80}
       livePrice={displayedLivePrice?.current_price ?? null}
       unit={`${wantSymbol} per ${fromSymbol}`}
     />
@@ -562,7 +558,7 @@ export default function RoundModalContent({
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,22rem)] border-t border-divider-subtle">
       <div className="min-w-0 [&>.sec]:border-t-0">{chart}</div>
       <section className="sec min-w-0 border-l border-t-0 border-divider-subtle">
-        <SectionHead>Settings</SectionHead>
+        <SectionHead>Details</SectionHead>
         {settings}
       </section>
     </div>
@@ -609,8 +605,7 @@ export default function RoundModalContent({
       </header>
 
       <div data-round-modal-scroll-root="true" className="drawer-scroll">
-        {roundQuery.isError && <RequestError message="Could not refresh round. Showing previously loaded data." onRetry={() => { void roundQuery.refetch(); }} />}
-        {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
+        {auctionQuery.isError && !auctionQuery.data && <RequestError message="Unable to load auction details." onRetry={() => { void auctionQuery.refetch(); }} />}
         {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" className="py-4" />}
 
         {live ? (
@@ -622,7 +617,6 @@ export default function RoundModalContent({
               price={displayedLivePrice?.current_price}
               priceBlock={displayedLivePrice?.indexed_block}
               pricePending={livePriceQuery.isLoading}
-              priceUnavailable={livePriceUnavailable}
             />
             {pricePanel}
           </>
@@ -645,7 +639,7 @@ export default function RoundModalContent({
           <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
             <summary>
               <SectionHead aside={<ChevronDown className={cn("h-3.5 w-3.5 text-faint transition-transform", settingsOpen && "rotate-180")} strokeWidth={1.6} />}>
-                Settings
+                Details
               </SectionHead>
             </summary>
             {settings}

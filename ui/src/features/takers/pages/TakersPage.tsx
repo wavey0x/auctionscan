@@ -136,10 +136,10 @@ export default function TakersPage() {
           })}
         />
       </div>
-      {chainsQuery.isError && <RequestError message={chainsData ? "Could not refresh network filters. Showing previously loaded data." : "Unable to load network filters."} onRetry={() => { void chainsQuery.refetch(); }} />}
+      {chainsQuery.isError && !chainsData && <RequestError message="Unable to load network filters." onRetry={() => { void chainsQuery.refetch(); }} />}
 
       <section className="card card-clip" aria-label="Takers">
-        {takersQuery.isError && <RequestError message={takersQuery.data ? "Could not refresh takers. Showing previously loaded data." : "Unable to load takers."} onRetry={() => { void takersQuery.refetch(); }} />}
+        {takersQuery.isError && !takersQuery.data && <RequestError message="Unable to load takers." onRetry={() => { void takersQuery.refetch(); }} />}
         {takersQuery.isError && !takersQuery.data ? null : (
           <div className="table-wrap">
             <table className="data-table">

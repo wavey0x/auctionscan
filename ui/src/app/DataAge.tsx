@@ -36,20 +36,26 @@ function useNow(intervalMs: number): number {
 /**
  * The data-age control: how fresh the index is, in the bar's own words. The
  * dot pulses once when a newer block lands; the menu lists each network.
+ *
+ * It is also the one place a failed refresh is reported. Sections keep showing
+ * what they last loaded and say nothing; this control turns to "Not updating"
+ * until requests are answered again.
  */
 export default function DataAge({
   chains,
   hasError,
+  refreshFailing = false,
   docsHref,
 }: {
   chains: HealthChain[] | undefined;
   hasError: boolean;
+  refreshFailing?: boolean;
   docsHref: string;
 }) {
   const now = useNow(1000);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const tone = summarizeNetworkHealth(chains, hasError);
+  const tone = summarizeNetworkHealth(chains, hasError || refreshFailing);
   const indexed = (chains ?? []).filter((chain) => chain.indexed);
   const lastSuccess = indexed.reduce<number | null>((latest, chain) => {
     const value = chain.last_success_at ?? null;
@@ -81,7 +87,7 @@ export default function DataAge({
   }, [open]);
 
   const age = lastSuccess === null ? null : Math.max(0, now - lastSuccess);
-  const label = hasError ? "Status unavailable" : age === null ? "Waiting for index" : `Updated ${ago(age)}`;
+  const label = refreshFailing ? "Not updating" : hasError ? "Status unavailable" : age === null ? "Waiting for index" : `Updated ${ago(age)}`;
 
   return (
     <div ref={rootRef} className="relative" data-keep-drawer>
@@ -104,6 +110,9 @@ export default function DataAge({
       </button>
       {open ? (
         <div className="menu" role="dialog" aria-label="Indexing status">
+          {refreshFailing ? (
+            <div className="menu-row text-tertiary">Showing the last loaded data. Retrying.</div>
+          ) : null}
           {indexed.length ? indexed.map((chain) => {
             const chainTone = getChainHealthTone(chain);
             const chainAge = chain.last_success_at != null ? Math.max(0, now - chain.last_success_at) : null;

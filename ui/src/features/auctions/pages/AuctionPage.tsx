@@ -135,8 +135,8 @@ export default function AuctionPage() {
   const selectedTake = !takeNotFound && selectedTakeQuery.data?.auction.toLowerCase() === address?.toLowerCase() ? selectedTakeQuery.data : undefined;
   const selectedTakeNotice = !selectedTakeParam ? null : !selectedOccurrence ? <EmptyState title="Invalid take link" /> : takeNotFound || (selectedTakeQuery.isSuccess && !selectedTake) ? (
     <EmptyState title="Take not found" description="This occurrence is absent from the indexed auction." />
-  ) : selectedTakeQuery.isError ? (
-    <RequestError message={selectedTake ? "Could not refresh take. Showing previously loaded data." : "Unable to load take."} onRetry={() => { void selectedTakeQuery.refetch(); }} />
+  ) : selectedTakeQuery.isError && !selectedTake ? (
+    <RequestError message="Unable to load take." onRetry={() => { void selectedTakeQuery.refetch(); }} />
   ) : null;
 
   const pairTokens = useMemo(() => {
@@ -235,7 +235,6 @@ export default function AuctionPage() {
 
   return (
     <div className="space-y-4">
-      {auctionQuery.isError && <RequestError message="Could not refresh auction. Showing previously loaded data." onRetry={() => { void auctionQuery.refetch(); }} />}
       <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-meta text-tertiary">
         <Link to="/" className="inline-flex items-center gap-1.5 transition-colors hover:text-primary">
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.6} />
@@ -303,7 +302,7 @@ export default function AuctionPage() {
             <span>Rounds</span>
             <strong>{formatCount(auction.activity.total_rounds)}</strong>
           </div>
-          {roundsQuery.isError && <RequestError message={roundsQuery.data ? "Could not refresh rounds. Showing previously loaded data." : "Unable to load rounds."} onRetry={() => { void roundsQuery.refetch(); }} />}
+          {roundsQuery.isError && !roundsQuery.data && <RequestError message="Unable to load rounds." onRetry={() => { void roundsQuery.refetch(); }} />}
           {roundsQuery.isLoading ? (
             <div className="table-wrap">
               <table className="data-table">
@@ -350,7 +349,7 @@ export default function AuctionPage() {
           <strong>{recentTakesQuery.data?.takes.length ?? "—"}</strong>
         </div>
         {selectedTakeNotice}
-        {recentTakesQuery.isError && <RequestError message={recentTakesQuery.data ? "Could not refresh takes. Showing previously loaded data." : "Unable to load takes."} onRetry={() => { void recentTakesQuery.refetch(); }} />}
+        {recentTakesQuery.isError && !recentTakesQuery.data && <RequestError message="Unable to load takes." onRetry={() => { void recentTakesQuery.refetch(); }} />}
         {recentTakesQuery.isLoading ? (
           <div className="table-wrap">
             <table className="data-table">

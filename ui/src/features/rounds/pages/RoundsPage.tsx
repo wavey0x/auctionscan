@@ -6,13 +6,10 @@ import { api } from "../../../shared/api/client";
 import { useChainsQuery } from "../../../shared/lib/chains";
 import {
   cn,
-  coerceFiniteNumber,
   formatAmount,
-  formatCompactUsd,
   formatCount,
   formatDateTime,
   renderKickedValue,
-  signedMetricTone,
   toggleKickedDisplayMode,
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
@@ -20,7 +17,6 @@ import { useRoundRows } from "../../../shared/lib/openRound";
 import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
 import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
-import { getSaleOutcome } from "../../../shared/lib/roundProgress";
 import type { RoundListItem, RoundStatusCounts } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
@@ -38,7 +34,6 @@ import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 import { ChipGroup, FilterField, ViewTabs } from "../../../shared/ui/Toolbar";
 
 const PAGE_SIZE = 20;
-const TOTALS_WINDOW = "30d";
 const ROUND_STATUS_FILTERS = ["all", "live", "sold_out", "expired", "settled"] as const;
 type RoundStatusFilter = (typeof ROUND_STATUS_FILTERS)[number];
 
@@ -83,36 +78,6 @@ function toSearchParams(filters: Filters) {
   return next;
 }
 
-/**
- * How the auctions have done lately, as one quiet line beside the tabs. It has
- * a fixed window and no control, so it cannot be mistaken for a table filter,
- * and it simply stays away while it is loading or unavailable.
- */
-function RoundsTotals({ chainId }: { chainId?: number }) {
-  const statsQuery = useQuery({
-    queryKey: ["stats", chainId, TOTALS_WINDOW],
-    refetchInterval: LIVE_REFETCH_INTERVAL_MS * 5,
-    queryFn: ({ signal }) => api.getStats({ chain_id: chainId, time_window: TOTALS_WINDOW }, signal),
-  });
-  const stats = statsQuery.data;
-  if (!stats) return null;
-
-  const pnl = coerceFiniteNumber(stats.auction_profit_usd);
-  const partialPnl = stats.takes > 0 && stats.auction_profit_usd_take_count < stats.takes;
-  return (
-    <p className="totals-line" aria-label="Totals for the last 30 days">
-      <span>{TOTALS_WINDOW}</span>
-      <span title={`USD value received across ${formatCount(stats.received_usd_take_count)} of ${formatCount(stats.takes)} takes`}>
-        received <b>{formatCompactUsd(stats.received_usd)}</b>
-      </span>
-      <span title={`Proceeds against market quotes, from ${formatCount(stats.auction_profit_usd_take_count)} of ${formatCount(stats.takes)} takes with USD pricing`}>
-        PnL <b className={signedMetricTone(pnl)}>{formatCompactUsd(stats.auction_profit_usd, { signed: true })}</b>
-        {partialPnl ? <span className="stat-note">partial</span> : null}
-      </span>
-    </p>
-  );
-}
-
 function lotSummary(round: RoundListItem): string {
   const amount = round.initial_available ?? round.sold_amount;
   return [formatAmount(amount), round.from_token_symbol].filter(Boolean).join(" ");
@@ -130,10 +95,6 @@ function RoundRow({
   kickedMode: KickedDisplayMode;
 }) {
   const kicked = renderKickedValue(round.kicked_at, kickedMode);
-  // An expired round's time is spent by definition, so in place of a full bar
-  // it says what the lot did. The sold-share view keeps its meter.
-  const outcome = round.status === "expired" && progressMode === "time" ? getSaleOutcome(round) : null;
-  const expiredOutcome = outcome && outcome.kind !== "cleared" ? outcome : null;
   return (
     <tr {...rowProps}>
       <td className="max-w-[15rem]">
@@ -150,14 +111,6 @@ function RoundRow({
       <td className="col-md mono fit pr-3 text-secondary">R{round.round_id}</td>
       <td className="col-lo fit pr-4"><StatusBadge status={round.status} /></td>
       <td className="col-md fit pr-4">
-        {expiredOutcome ? (
-          <span
-            className={cn("text-caption", expiredOutcome.kind === "dust" ? "text-tertiary" : "text-warning")}
-            title={`Expired with ${formatAmount(round.available_amount)} ${round.from_token_symbol ?? ""} of ${lotSummary(round)} left`}
-          >
-            {expiredOutcome.kind === "none" ? "nothing sold" : expiredOutcome.kind === "dust" ? "all but dust" : `${expiredOutcome.percent}% sold`}
-          </span>
-        ) : (
         <RoundProgressMini
           status={round.status}
           kickedAt={round.kicked_at}
@@ -170,7 +123,6 @@ function RoundRow({
           takeCount={round.take_count}
           mode={progressMode}
         />
-        )}
       </td>
       <td className="col-lo"><div className="cell-clip"><RoundLotCell round={round} /></div></td>
       <td className="col-lo">
@@ -258,7 +210,6 @@ export default function RoundsPage() {
               count: counts ? counts[status] : null,
             }))}
           />
-          <RoundsTotals chainId={filters.chainId} />
           {roundsQuery.isPlaceholderData ? <span role="status" aria-label="Updating rounds" className="sr-only" /> : null}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

@@ -8,7 +8,8 @@ source of truth; update this file.
 ## Principles
 
 1. **Figures first.** A screen is labels and numbers; no sentence explains what a table shows.
-2. **One device, one meaning.** A tab, chip, dot, bar or chevron does the same job on every screen.
+2. **One device, one meaning.** A tab, chip, dot, bar or chevron does the same job on every screen,
+   and an indicator is never replaced or narrated by words.
 3. **Quiet normal, loud exception.** A sold round carries a small muted check. A live round is the
    one mark that moves; an expired lot is the one that warns.
 4. **Compact, never cramped.** 38px rows (44px on touch), strict alignment, nothing that identifies a
@@ -74,16 +75,14 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 
 | Layer | Job |
 | --- | --- |
-| Strip | Optional entity totals on detail pages; the rounds list has one line of totals instead |
+| Strip | Optional entity totals on detail pages; the rounds list starts directly with tabs |
 | Tabs | Choose the rows (round status); each carries its count |
 | Filters | One line: chain group, a search field on the right. Version belongs in auction details, not list filters |
 | Table | One card; see Tables |
 | Drawer | One round's execution workspace |
 
-The rounds list has no summary strip or totals-window selector. One quiet line at the end of the
-tab row gives the last 30 days' received value and PnL for the chain in scope; it has no control,
-so it cannot read as a table filter. It is absent while loading or unavailable, and below 1024px,
-where it would crowd the tabs.
+The rounds list has no summary strip, totals or totals-window selector; the space beside the tabs
+stays free.
 
 When the list's tabs, filters or page change, keep the previous rows and counts visible until the
 response arrives. Rows that are waiting to be replaced dim after a short delay and open nothing, by
@@ -116,9 +115,9 @@ Flat 4px fills with square ends. A bar on a track is a share of a limit (time el
 progress); a bar without a track (`.bar.is-relative`) is size against the column's largest. Meters
 keep their row's tone: live green, expired amber, everything else neutral. An early close is a tick.
 
-An expired round's time is spent by definition, so in the list's time view it says what its lot did
-in place of a full bar: `nothing sold`, `40% sold`, or `all but dust` when under 0.01% remained.
-The first two take the warning tone; dust is neutral. The drawer's facts line uses the same rule.
+Every row of a meter column carries the meter, whatever its status. Where an indicator already
+says something, no text is added to narrate it: an expired round is a full amber time bar, and what
+its lot did is read from the sold view, the Received and PnL columns, or the drawer.
 
 ## Round drawer
 

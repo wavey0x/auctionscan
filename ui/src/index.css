@@ -360,22 +360,6 @@ html.dark {
     @apply text-tertiary;
   }
 
-  /* Recent totals beside the tabs: text on the tabs' own baseline, no frame.
-     Shown only from the width at which they cannot crowd the last tab. */
-  .totals-line {
-    @apply m-0 mb-2 hidden shrink-0 items-baseline gap-x-2.5 whitespace-nowrap text-meta text-tertiary lg:flex;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .totals-line > span + span::before {
-    content: "·";
-    @apply mr-2.5 text-faint;
-  }
-
-  .totals-line b {
-    @apply font-normal text-secondary;
-  }
-
   .filter-line {
     @apply flex flex-wrap items-center gap-x-2 gap-y-1.5;
   }

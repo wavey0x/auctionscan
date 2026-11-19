@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode
 import { formatCompactDateTime, formatDuration, formatPrice, parseTimestamp } from "../../../shared/lib/format";
 import type { RoundListItem, TakeListItem } from "../../../shared/types/api";
 
-const HEIGHT = 128;
+const DEFAULT_HEIGHT = 112;
 const PAD_TOP = 8;
 const PAD_BOTTOM = 18;
 const MAX_STEPS_DRAWN = 720;
@@ -118,11 +118,13 @@ export default function DecayChart({
   takes,
   livePrice,
   title,
+  height = DEFAULT_HEIGHT,
 }: {
   round: RoundListItem;
   takes: TakeListItem[];
   livePrice?: string | null;
   title?: ReactNode;
+  height?: number;
 }) {
   const model = useMemo(() => buildModel(round, takes), [round, takes]);
   if (!model) {
@@ -131,7 +133,7 @@ export default function DecayChart({
   return (
     <section className="sec">
       {title}
-      <DecayPlot model={model} round={round} livePrice={livePrice} />
+      <DecayPlot model={model} round={round} livePrice={livePrice} height={height} />
     </section>
   );
 }
@@ -140,10 +142,12 @@ function DecayPlot({
   model,
   round,
   livePrice,
+  height: HEIGHT,
 }: {
   model: Model;
   round: RoundListItem;
   livePrice?: string | null;
+  height: number;
 }) {
   const { ref, width } = useWidth<HTMLDivElement>();
   const [hoverT, setHoverT] = useState<number | null>(null);

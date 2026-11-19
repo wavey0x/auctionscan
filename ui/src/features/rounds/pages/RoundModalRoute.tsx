@@ -1,7 +1,7 @@
 import type { Location } from "react-router-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import RoundDrawer from "../components/RoundDrawer";
+import RoundDrawer, { useWideDrawer } from "../components/RoundDrawer";
 import RoundModalContent from "../components/RoundModalContent";
 import {
   buildLocationHref,
@@ -21,6 +21,7 @@ export default function RoundModalRoute() {
     auctionAddress: string;
   }>();
 
+  const [wide, toggleWide] = useWideDrawer();
   const routeState = location.state as RoundRouteState | null;
   const hasRealBackground = Boolean(routeState?.backgroundLocation);
   const searchParams = new URLSearchParams(location.search);
@@ -43,8 +44,8 @@ export default function RoundModalRoute() {
   };
 
   return (
-    <RoundDrawer ariaLabel="Round detail" onClose={handleClose}>
-      <RoundModalContent onClose={handleClose} />
+    <RoundDrawer ariaLabel="Round detail" onClose={handleClose} wide={wide}>
+      <RoundModalContent onClose={handleClose} wide={wide} onToggleWide={toggleWide} />
     </RoundDrawer>
   );
 }

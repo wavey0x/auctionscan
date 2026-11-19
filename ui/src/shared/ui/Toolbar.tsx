@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { Search } from "lucide-react";
 
 import { cn, formatCount } from "../lib/format";
-import Changed from "./Changed";
 
 export interface ViewTabOption<T extends string> {
   value: T;
@@ -35,7 +34,7 @@ export function ViewTabs<T extends string>({
         >
           {option.label}
           {option.count !== undefined && option.count !== null ? (
-            <span className="tab-count"><Changed value={option.count}>{formatCount(option.count)}</Changed></span>
+            <span className="tab-count">{formatCount(option.count)}</span>
           ) : null}
         </button>
       ))}

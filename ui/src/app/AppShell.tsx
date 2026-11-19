@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router-dom";
 
@@ -60,20 +60,8 @@ function ThemeToggle() {
   );
 }
 
-function useLifted(): boolean {
-  const [lifted, setLifted] = useState(false);
-  useEffect(() => {
-    const update = () => setLifted(window.scrollY > 4);
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    return () => window.removeEventListener("scroll", update);
-  }, []);
-  return lifted;
-}
-
 export default function AppShell() {
   const docsHref = resolveApiDocsHref();
-  const lifted = useLifted();
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: ({ signal }) => api.getHealth(signal),
@@ -82,25 +70,24 @@ export default function AppShell() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className={cn("topbar", lifted && "is-lifted")}>
-        <div className="shell flex h-full items-center gap-3">
-          <NavLink to="/" className="brand" aria-label="Auctionscan home">
-            <span className="brand-mark" aria-hidden="true">A</span>
-            <span className="hidden sm:inline">auctionscan</span>
+      <header className="topbar">
+        <div className="shell flex h-full items-center gap-4 sm:gap-6">
+          <NavLink to="/" className="wordmark" aria-label="Auctionscan home">
+            AUCTION SCAN
           </NavLink>
-          <nav className="nav" aria-label="Primary">
+          <nav className="flex items-center gap-4 self-end pb-3" aria-label="Primary">
             {primaryLinks.map((link) => (
               <NavLink
                 key={link.label}
                 to={link.to}
                 end={link.exact}
-                className={({ isActive }) => cn("nav-pill", isActive && "is-active")}
+                className={({ isActive }) => cn("nav-link", isActive && "nav-link-active")}
               >
                 {link.label}
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex items-center gap-1">
             <GlobalSearch />
             <DataAge chains={healthQuery.data?.chains} hasError={healthQuery.isError} docsHref={docsHref} />
             <ThemeToggle />
@@ -108,14 +95,16 @@ export default function AppShell() {
         </div>
       </header>
 
-      <main className="shell flex-1 pb-4 pt-5">
+      <main className="shell flex-1 pb-4 pt-4 md:pt-5">
         <Outlet />
       </main>
 
       <footer className="shell site-footer">
         <NavLink to="/status">Status</NavLink>
-        <NavLink to="/pricing">Pricing method</NavLink>
-        <a href={docsHref} target="_blank" rel="noreferrer">API docs</a>
+        <span aria-hidden="true">|</span>
+        <NavLink to="/pricing">Docs</NavLink>
+        <span aria-hidden="true">|</span>
+        <a href={docsHref} target="_blank" rel="noreferrer">API Docs</a>
       </footer>
     </div>
   );

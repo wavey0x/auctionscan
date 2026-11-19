@@ -24,7 +24,7 @@ interface TokenValueProps {
 
 const textSizeClasses = {
   sm: "text-primary",
-  md: "text-[1.05rem] leading-none text-primary",
+  md: "text-body text-primary",
 };
 
 export default function TokenValue({
@@ -57,7 +57,7 @@ export default function TokenValue({
       onBlurCapture={hover.bind?.onBlurCapture}
     >
       <TokenLogo logoUrl={tokenLogoUrl} symbol={tokenSymbol} size={size} />
-      <span className={cn("font-mono", textSizeClasses[size])}>{tokenSymbol || "—"}</span>
+      <span className={cn("min-w-0 truncate font-mono", textSizeClasses[size])}>{tokenSymbol || "—"}</span>
       {showCopy && tokenAddress ? (
         <CopyIconButton
           valueToCopy={tokenAddress}

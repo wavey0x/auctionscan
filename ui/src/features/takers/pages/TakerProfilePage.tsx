@@ -105,9 +105,9 @@ export default function TakerProfilePage() {
       </nav>
 
       <section className="card px-4 py-4 md:px-5" aria-label="Taker">
-        <div className="text-[11px] text-tertiary">Taker profile</div>
+        <div className="label">Taker profile</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h1 className="m-0 text-[17px] font-semibold leading-6 [&_.identity-link]:text-[17px]">
+          <h1 className="m-0 text-heading font-normal [&_.identity-link]:text-heading">
             <TakerAddressValue
               address={taker.taker}
               chainId={taker.active_chains[0]}
@@ -247,7 +247,7 @@ export default function TakerProfilePage() {
                         {formatCount(auction.takes_count)} takes · {formatCompactDateTime(auction.last_take)}
                       </div>
                     </div>
-                    <span className="font-mono text-data font-semibold" title={formatUsd(auction.volume_usd)}>
+                    <span className="text-data" title={formatUsd(auction.volume_usd)}>
                       {formatCompactUsd(auction.volume_usd)}
                       {auction.paid_usd_take_count < auction.takes_count ? <span className="stat-note">partial</span> : null}
                     </span>

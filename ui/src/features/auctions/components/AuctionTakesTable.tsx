@@ -2,7 +2,7 @@ import { Fragment } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { api } from "../../../shared/api/client";
-import { cn, formatCompactDateTime, formatDateTime, formatPrice } from "../../../shared/lib/format";
+import { cn, formatAmount, formatCompactDateTime, formatDateTime, formatPrice } from "../../../shared/lib/format";
 import { linkRowKeyDown } from "../../../shared/lib/openRound";
 import { getTakePricingBySource } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
@@ -37,11 +37,11 @@ export default function AuctionTakesTable({
         <thead>
           <tr>
             <th className="fit">Round</th>
-            <th className="fit">Take</th>
+            <th className="col-lo fit">Take</th>
             <th className="col-lo">Time</th>
             <th>Taker</th>
             <th className="col-md">Sold</th>
-            <th>Paid</th>
+            <th className="col-lo">Paid</th>
             <th className="col-md num">Price</th>
             <th className="num">PnL</th>
             <th className="open-cell"><span className="sr-only">Expand</span></th>
@@ -64,31 +64,34 @@ export default function AuctionTakesTable({
                   onKeyDown={linkRowKeyDown(() => onOpenTake(key))}
                 >
                   <td className="mono fit pr-3 text-secondary">R{take.round_id}</td>
-                  <td className="mono fit pr-3 text-secondary">T{take.take_seq}</td>
+                  <td className="col-lo mono fit pr-3 text-secondary">T{take.take_seq}</td>
                   <td className="col-lo mono dim fit pr-4" title={formatDateTime(take.timestamp)}>
                     {formatCompactDateTime(take.timestamp)}
                   </td>
-                  <td className="max-w-[12rem]">
+                  <td>
                     <TakerAddressValue address={take.taker} chainId={take.chain_id} showBlockie blockieSize={14} />
+                    <div className="sub-line">
+                      <span className="sub-lo">{`T${take.take_seq} · ${[formatAmount(take.amount_paid ?? take.expected_amount_paid), take.to_token_symbol].filter(Boolean).join(" ")}`}</span>
+                    </div>
                   </td>
-                  <td className="col-md max-w-[12rem]">
-                    <TokenAmountValue
+                  <td className="col-md">
+                    <div className="cell-clip"><TokenAmountValue
                       amount={take.amount_taken}
                       address={take.from_token}
                       symbol={take.from_token_symbol}
                       logoUrl={take.from_token_logo_url}
                       chainId={take.chain_id}
-                    />
+                    /></div>
                   </td>
-                  <td className="max-w-[12rem]">
-                    <TokenAmountValue
+                  <td className="col-lo">
+                    <div className="cell-clip"><TokenAmountValue
                       amount={take.amount_paid}
                       estimatedAmount={take.expected_amount_paid}
                       address={take.to_token}
                       symbol={take.to_token_symbol}
                       logoUrl={take.to_token_logo_url}
                       chainId={take.chain_id}
-                    />
+                    /></div>
                   </td>
                   <td className="col-md num">{formatPrice(take.price)}</td>
                   <td className="num">

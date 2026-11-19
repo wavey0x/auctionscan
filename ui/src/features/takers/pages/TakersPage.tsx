@@ -149,9 +149,9 @@ export default function TakersPage() {
                   {sortableHeader("taker")}
                   {sortableHeader("chains", "col-md")}
                   {sortableHeader("volume", "num")}
-                  {sortableHeader("takes", "col-lo num")}
+                  {sortableHeader("takes", "col-md num")}
                   {sortableHeader("auctions", "col-md num")}
-                  {sortableHeader("recent", "col-lo num")}
+                  {sortableHeader("recent", "col-md num")}
                   <th className="open-cell"><span className="sr-only">Open</span></th>
                 </tr>
               </thead>
@@ -160,7 +160,7 @@ export default function TakersPage() {
                   <SkeletonRows
                     rows={12}
                     widths={[16, 150, 40, 140, 40, 30, 80, null]}
-                    classNames={["col-lo num", undefined, "col-md", "num", "col-lo num", "col-md num", "col-lo num", "open-cell"]}
+                    classNames={["col-lo num", undefined, "col-md", "num", "col-md num", "col-md num", "col-md num", "open-cell"]}
                   />
                 ) : takers.length ? (
                   takers.map((taker, index) => {
@@ -197,13 +197,13 @@ export default function TakersPage() {
                             <span className="col-md bar is-relative w-[88px]" aria-hidden="true">
                               <i style={{ width: `${maxVolume ? Math.max(1, (volume / maxVolume) * 100) : 0}%`, marginLeft: "auto" }} />
                             </span>
-                            <span className="lead min-w-[4.5rem] font-semibold">{formatCompactUsd(taker.total_volume_usd)}</span>
+                            <span className="min-w-[4.5rem] text-primary">{formatCompactUsd(taker.total_volume_usd)}</span>
                             {partialVolume ? <span className="stat-note">partial</span> : null}
                           </span>
                         </td>
-                        <td className="col-lo num">{formatCount(taker.total_takes)}</td>
+                        <td className="col-md num">{formatCount(taker.total_takes)}</td>
                         <td className="col-md num">{formatCount(taker.unique_auctions)}</td>
-                        <td className="col-lo num dim" title={formatDateTime(taker.last_take)}>{formatCompactDateTime(taker.last_take)}</td>
+                        <td className="col-md num dim" title={formatDateTime(taker.last_take)}>{formatCompactDateTime(taker.last_take)}</td>
                         <OpenMark />
                       </tr>
                     );

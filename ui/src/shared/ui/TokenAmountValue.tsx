@@ -31,7 +31,7 @@ export default function TokenAmountValue({
   const fullLabel = [isEstimate ? "Estimated" : null, formatFullAmount(displayed), symbol].filter(Boolean).join(" ").trim() || null;
 
   return (
-    <span className={cn("flex w-full items-center gap-1.5", align === "end" ? "justify-end" : "justify-start", className)}>
+    <span className={cn("flex w-full min-w-0 items-center gap-1.5", align === "end" ? "justify-end" : "justify-start", className)}>
       <TokenValue
         address={address}
         symbol={label}

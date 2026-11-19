@@ -120,7 +120,7 @@ export default function StatusPage() {
   const header = (
     <div className="page-head">
       <div>
-        <div className="text-[11px] text-tertiary">Indexer health</div>
+        <div className="label">Indexer health</div>
         <h1 className="page-title m-0">Status</h1>
       </div>
       <div className="text-meta text-tertiary">Refreshes every 3s</div>

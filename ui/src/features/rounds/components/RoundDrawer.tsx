@@ -38,16 +38,43 @@ const KEEP_OPEN_SELECTOR = [
  * the list never moves when it opens. Under 700px it becomes a bottom sheet
  * over a dimmed page.
  */
+const WIDE_KEY = "round_drawer_wide";
+
+/** Whether the reader keeps the round workspace expanded; remembered per browser. */
+export function useWideDrawer(): [boolean, () => void] {
+  const [wide, setWide] = useState(() => {
+    try {
+      return window.localStorage.getItem(WIDE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () => {
+    setWide((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(WIDE_KEY, next ? "1" : "0");
+      } catch {
+        // Storage may be unavailable; the choice then lasts for this page.
+      }
+      return next;
+    });
+  };
+  return [wide, toggle];
+}
+
 export default function RoundDrawer({
   ariaLabel,
   children,
   onClose,
   className,
+  wide = false,
 }: {
   ariaLabel: string;
   children: ReactNode;
   onClose: () => void;
   className?: string;
+  wide?: boolean;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
@@ -95,7 +122,7 @@ export default function RoundDrawer({
         role="dialog"
         aria-modal={isSheet}
         aria-label={ariaLabel}
-        className={cn("drawer", className)}
+        className={cn("drawer", wide && "is-wide", className)}
       >
         {children}
       </aside>

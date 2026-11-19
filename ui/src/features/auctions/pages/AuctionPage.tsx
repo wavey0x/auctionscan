@@ -34,7 +34,7 @@ const SELL_TOKEN_PREVIEW_LIMIT = 8;
 function InfoItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-tertiary">{label}</div>
+      <div className="label">{label}</div>
       <div className="mt-1 text-data text-primary">{value}</div>
     </div>
   );
@@ -248,7 +248,7 @@ export default function AuctionPage() {
       <section className="card px-4 py-4 md:px-5" aria-label="Auction">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <ChainIcon chainId={auction.chain_id} size="md" />
-          <h1 className="m-0 text-[17px] font-semibold leading-6 text-primary [&_.identity-link]:text-[17px]">
+          <h1 className="m-0 text-heading font-normal text-primary [&_.identity-link]:text-heading">
             <AuctionAddressValue address={auction.address} chainId={auction.chain_id} width={8} showCowExplorerIcon />
           </h1>
           <AuctionVersionBadge version={auction.version} />

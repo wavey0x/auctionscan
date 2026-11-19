@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
@@ -136,7 +136,7 @@ function RoundsStrip({ stats, loading, window }: { stats?: StatsResponse; loadin
         title={stats ? `USD value received across ${formatCount(stats.received_usd_take_count)} of ${formatCount(stats.takes)} takes` : undefined}
       />
       <Stat
-        label={`Auction PnL · ${scope}`}
+        label={`PnL · ${scope}`}
         loading={loading}
         value={stats ? formatCompactUsd(stats.auction_profit_usd, { signed: true }) : "—"}
         note={stats ? partial(stats.auction_profit_usd_take_count, stats.takes) : null}
@@ -173,9 +173,13 @@ function RoundRow({
           <ChainIcon chainId={round.chain_id} />
           <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} />
         </span>
-        <div className="sub-line pl-[26px]">{`R${round.round_id} · ${statusLabel(round.status)} · ${lotSummary(round)}`}</div>
+        <div className="sub-line pl-[26px]">
+          R{round.round_id}
+          <span className="sub-lo">{` · ${statusLabel(round.status)} · ${lotSummary(round)}`}</span>
+          {` · ${renderKickedValue(round.kicked_at, "relative")}`}
+        </div>
       </td>
-      <td className="col-lo mono fit pr-3 text-secondary">R{round.round_id}</td>
+      <td className="col-md mono fit pr-3 text-secondary">R{round.round_id}</td>
       <td className="col-lo fit pr-4"><StatusBadge status={round.status} /></td>
       <td className="col-md fit pr-4">
         <RoundProgressMini
@@ -191,8 +195,9 @@ function RoundRow({
           mode={progressMode}
         />
       </td>
-      <td className="col-lo max-w-[14rem]"><RoundLotCell round={round} /></td>
-      <td className="col-md max-w-[14rem]">
+      <td className="col-lo"><div className="cell-clip"><RoundLotCell round={round} /></div></td>
+      <td className="col-lo">
+        <div className="cell-clip">
         <TokenAmountValue
           amount={round.paid_amount}
           coverage={{ count: round.paid_take_count, total: round.take_count }}
@@ -201,6 +206,7 @@ function RoundRow({
           logoUrl={round.want_token_logo_url}
           chainId={round.chain_id}
         />
+        </div>
       </td>
       <td className="num">
         <PnlValue
@@ -210,7 +216,7 @@ function RoundRow({
           title={roundPnlCoverageTitle(round)}
         />
       </td>
-      <td className="col-lo num dim fit pl-4" title={formatDateTime(round.kicked_at)}>{kicked}</td>
+      <td className="col-md num dim fit pl-4" title={formatDateTime(round.kicked_at)}>{kicked}</td>
       <OpenMark />
     </tr>
   );
@@ -221,7 +227,6 @@ export default function RoundsPage() {
   const [kickedDisplayMode, setKickedDisplayMode] = useState<KickedDisplayMode>("relative");
   const [progressDisplayMode, setProgressDisplayMode] = useState<RoundProgressMiniMode>("time");
   const filters = useMemo(() => readFilters(searchParams), [searchParams]);
-  const firstPaint = useRef(true);
 
   const chainsQuery = useChainsQuery();
   const chainsData = chainsQuery.data;
@@ -278,8 +283,6 @@ export default function RoundsPage() {
     mono: true,
   }));
 
-  const isIntro = firstPaint.current && Boolean(rounds?.length);
-  if (rounds?.length) firstPaint.current = false;
 
   return (
     <div className="space-y-4">
@@ -345,11 +348,11 @@ export default function RoundsPage() {
         {roundsQuery.isError && !roundsQuery.data ? null : (
           <div className="table-wrap">
             <TableHoverScope>
-              <table className={isIntro ? "data-table intro" : "data-table"} aria-busy={roundsQuery.isLoading}>
+              <table className="data-table" aria-busy={roundsQuery.isLoading}>
                 <thead>
                   <tr>
                     <th>Auction</th>
-                    <th className="col-lo">Round</th>
+                    <th className="col-md">Round</th>
                     <th className="col-lo">Status</th>
                     <th className="col-md">
                       <button
@@ -362,9 +365,9 @@ export default function RoundsPage() {
                       </button>
                     </th>
                     <th className="col-lo">Lot</th>
-                    <th className="col-md">Received</th>
+                    <th className="col-lo">Received</th>
                     <th className="num">PnL</th>
-                    <th className="col-lo num">
+                    <th className="col-md num">
                       <button
                         type="button"
                         className="header-toggle"
@@ -382,7 +385,7 @@ export default function RoundsPage() {
                     <SkeletonRows
                       rows={12}
                       widths={[150, 28, 52, 104, 120, 120, 64, 44, null]}
-                      classNames={[undefined, "col-lo", "col-lo", "col-md", "col-lo", "col-md", "num", "col-lo num", "open-cell"]}
+                      classNames={[undefined, "col-md", "col-lo", "col-md", "col-lo", "col-lo", "num", "col-md num", "open-cell"]}
                     />
                   ) : rounds?.length ? (
                     rounds.map((round) => (

@@ -18,7 +18,7 @@ function TakeExpandedField({
 }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-tertiary">{label}</div>
+      <div className="label">{label}</div>
       <div className="mt-0.5 min-w-0 text-data text-primary">{value}</div>
     </div>
   );

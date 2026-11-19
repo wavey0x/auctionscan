@@ -78,7 +78,7 @@ export default function SearchPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title m-0">Search</h1>
-          <p className="m-0 mt-1 text-data text-tertiary">Auctions, takers, transactions, token symbols, or a chain:auction:round jump.</p>
+          <p className="prose-text m-0 mt-1 text-data text-tertiary">Auctions, takers, transactions, token symbols, or a chain:auction:round jump.</p>
         </div>
       </div>
       <form onSubmit={submit} className="flex items-center gap-2">

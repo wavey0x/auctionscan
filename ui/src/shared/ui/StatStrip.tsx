@@ -1,7 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "../lib/format";
-import Changed from "./Changed";
 
 export function Stat({
   label,
@@ -27,7 +26,7 @@ export function Stat({
         <div className="flex h-[26px] items-center"><span className="skeleton-bar w-20" /></div>
       ) : (
         <div className="stat-value">
-          <Changed value={typeof value === "string" || typeof value === "number" ? value : undefined}>{value}</Changed>
+          {value}
           {suffix ? <small>{suffix}</small> : null}
           {note ? <span className="stat-note">{note}</span> : null}
         </div>

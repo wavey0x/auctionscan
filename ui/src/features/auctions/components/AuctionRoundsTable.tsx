@@ -1,6 +1,6 @@
 import type { RoundListItem } from "../../../shared/types/api";
 
-import { formatCompactDateTime, formatDateTime, renderKickedValue } from "../../../shared/lib/format";
+import { formatAmount, formatCompactDateTime, formatDateTime, renderKickedValue } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { useRoundRows } from "../../../shared/lib/openRound";
 import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
@@ -8,7 +8,7 @@ import { occurrenceKey } from "../../../shared/lib/routes";
 import OpenMark from "../../../shared/ui/OpenMark";
 import PnlValue from "../../../shared/ui/PnlValue";
 import RoundProgressMini, { type RoundProgressMiniMode } from "../../../shared/ui/RoundProgressMini";
-import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
+import StatusBadge from "../../../shared/ui/StatusBadge";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 
@@ -45,7 +45,7 @@ export default function AuctionRoundsTable({
                   Progress <em>{progressDisplayMode === "time" ? "time" : "sold"}</em>
                 </button>
               </th>
-              <th className="col-lo">
+              <th className="col-md">
                 <button
                   type="button"
                   className="header-toggle"
@@ -57,7 +57,7 @@ export default function AuctionRoundsTable({
               </th>
               <th className="col-xl">Closed</th>
               <th className="col-md num">Takes</th>
-              <th>Sold</th>
+              <th className="col-lo">Sold</th>
               <th className="col-lo">Received</th>
               <th className="num">PnL</th>
               <th className="open-cell"><span className="sr-only">Open</span></th>
@@ -71,7 +71,10 @@ export default function AuctionRoundsTable({
                     <span className="w-9 font-mono text-secondary">R{round.round_id}</span>
                     <StatusBadge status={round.status} />
                   </span>
-                  <div className="sub-line">{`${statusLabel(round.status)} · ${renderKickedValue(round.kicked_at, "relative")}`}</div>
+                  <div className="sub-line pl-12">
+                    {renderKickedValue(round.kicked_at, "relative")}
+                    <span className="sub-lo">{` · ${[formatAmount(round.sold_amount), round.from_token_symbol].filter(Boolean).join(" ")}`}</span>
+                  </div>
                 </td>
                 <td className="col-md fit pr-4">
                   <RoundProgressMini
@@ -87,31 +90,31 @@ export default function AuctionRoundsTable({
                     mode={progressDisplayMode}
                   />
                 </td>
-                <td className="col-lo mono dim fit pr-4" title={formatDateTime(round.kicked_at)}>
+                <td className="col-md mono dim fit pr-4" title={formatDateTime(round.kicked_at)}>
                   {renderKickedValue(round.kicked_at, kickedDisplayMode)}
                 </td>
                 <td className="col-xl mono dim fit pr-4" title={formatDateTime(round.end_at || round.last_take_at)}>
                   {formatCompactDateTime(round.end_at || round.last_take_at)}
                 </td>
                 <td className="col-md num fit pr-4">{round.take_count}</td>
-                <td className="max-w-[13rem]">
-                  <TokenAmountValue
+                <td className="col-lo">
+                  <div className="cell-clip"><TokenAmountValue
                     amount={round.sold_amount}
                     address={round.from_token}
                     symbol={round.from_token_symbol}
                     logoUrl={round.from_token_logo_url}
                     chainId={round.chain_id}
-                  />
+                  /></div>
                 </td>
-                <td className="col-lo max-w-[13rem]">
-                  <TokenAmountValue
+                <td className="col-lo">
+                  <div className="cell-clip"><TokenAmountValue
                     amount={round.paid_amount}
                     coverage={{ count: round.paid_take_count, total: round.take_count }}
                     address={round.want_token}
                     symbol={round.want_token_symbol}
                     logoUrl={round.want_token_logo_url}
                     chainId={round.chain_id}
-                  />
+                  /></div>
                 </td>
                 <td className="num">
                   <PnlValue

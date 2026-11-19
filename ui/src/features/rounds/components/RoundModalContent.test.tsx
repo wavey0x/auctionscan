@@ -149,3 +149,44 @@ it("replaces the route when a selected take moves rounds, preserving search and 
   expect(router.state.location.state).toEqual(state);
   router.dispose();
 });
+
+function mountRound(overrides: Partial<RoundDetailResponse["round"]>) {
+  vi.spyOn(api, "getRoundDetail").mockResolvedValue({ ...details(100), round: { ...details(100).round, ...overrides } });
+  vi.spyOn(api, "getRoundLivePrice").mockResolvedValue(price(100, "9"));
+  return mount();
+}
+
+it("leads a live round with what is still open and holds the result until a take lands", async () => {
+  const { container } = mountRound({ initial_available: "100", available_amount: "100", expected_price_per_unit: "2" });
+  await settle();
+  const text = container.textContent ?? "";
+  for (const label of ["Remaining", "Price now", "Time left", "4.5× quote", "none yet"]) expect(text).toContain(label);
+  for (const label of ["Received", "PnL", "Kicked"]) expect(text).not.toContain(label);
+});
+
+it("adds the result to a live round once it has a take", async () => {
+  const { container } = mountRound({
+    take_count: 1, paid_take_count: 1, initial_available: "100", available_amount: "60", sold_amount: "40", paid_amount: "80",
+  });
+  await settle();
+  const text = container.textContent ?? "";
+  for (const label of ["Remaining", "40% of 100 sold", "Sold", "Received", "PnL"]) expect(text).toContain(label);
+});
+
+const ended = { status: "expired", is_active: false, initial_available: "100", scheduled_end_at: "2026-09-18T12:00:00Z", end_at: "2026-09-18T12:00:00Z" } as const;
+
+it.each([
+  ["all but dust sold", { take_count: 2, paid_take_count: 2, available_amount: "0.000000000000000001", sold_amount: "100", paid_amount: "50" }],
+  ["40% sold", { take_count: 1, paid_take_count: 1, available_amount: "60", sold_amount: "40", paid_amount: "20" }],
+  ["nothing sold", { take_count: 0, available_amount: "100", sold_amount: "0" }],
+])("says an expired round left %s", async (statement, sales) => {
+  const { container } = mountRound({ ...ended, ...sales });
+  await settle();
+  const text = container.textContent ?? "";
+  expect(text).toContain("expired after 1d 0h");
+  expect(text).toContain(statement);
+  expect(text).not.toContain("Time left");
+  // A round that ended without a take has no result to report beyond its lot.
+  expect(text.includes("Received")).toBe(sales.take_count > 0);
+});
+

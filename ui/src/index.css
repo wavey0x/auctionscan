@@ -35,6 +35,7 @@
   --color-negative: #c03a33;
   --color-warning: #9a6b14;
   --color-warning-mark: #d39a2c;
+  --color-sold-mark: color-mix(in srgb, var(--color-positive) 78%, var(--color-surface));
   --color-meter: color-mix(in srgb, var(--color-primary) 55%, transparent);
   --color-meter-track: var(--color-divider);
   --color-scrim: #11111152;
@@ -75,6 +76,7 @@ html.dark {
   --color-negative: #ec857d;
   --color-warning: #dcae58;
   --color-warning-mark: #dcae58;
+  --color-sold-mark: color-mix(in srgb, var(--color-positive) 72%, var(--color-surface));
   --color-meter: color-mix(in srgb, var(--color-primary) 60%, transparent);
   --color-meter-track: var(--color-divider);
   --color-scrim: #000000a3;
@@ -358,6 +360,21 @@ html.dark {
     @apply text-tertiary;
   }
 
+  /* Recent totals beside the tabs: text on the tabs' own baseline, no frame. */
+  .totals-line {
+    @apply m-0 mb-2 hidden shrink-0 items-baseline gap-x-2.5 whitespace-nowrap text-meta text-tertiary md:flex;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .totals-line > span + span::before {
+    content: "·";
+    @apply mr-2.5 text-faint;
+  }
+
+  .totals-line b {
+    @apply font-normal text-secondary;
+  }
+
   .filter-line {
     @apply flex flex-wrap items-center gap-x-2 gap-y-1.5;
   }
@@ -504,6 +521,18 @@ html.dark {
   .data-row {
     @apply cursor-pointer;
     transition: background 0.1s;
+  }
+
+  /* Rows kept on screen while their replacement loads. The dim waits a beat,
+     so a quick response never flickers, and stale rows cannot be opened. */
+  .data-table tbody {
+    transition: opacity 0.1s;
+  }
+
+  .data-table tbody.is-stale {
+    opacity: 0.45;
+    pointer-events: none;
+    transition: opacity 0.15s ease 0.15s;
   }
 
   .data-row:hover {
@@ -719,7 +748,15 @@ html.dark {
   /* ---------------------------------------------------------------- status */
 
   .status {
-    @apply inline-flex items-center gap-[7px] whitespace-nowrap text-data text-primary;
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap text-data text-primary;
+  }
+
+  .status-mark {
+    @apply inline-flex h-[13px] w-[13px] shrink-0 items-center justify-center;
+  }
+
+  .status-check {
+    @apply h-[13px] w-[13px];
   }
 
   .status-dot {
@@ -849,8 +886,14 @@ html.dark {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .outcome.is-four {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* A row with no facts line under it closes itself; one that follows a
+     section rather than the head is ruled off from it. */
+  .outcome-end {
+    @apply pb-3.5;
+  }
+
+  .outcome-ruled {
+    @apply border-t border-divider-subtle;
   }
 
   .drawer.is-wide .outcome {
@@ -1153,7 +1196,6 @@ html.dark {
     background: var(--color-divider-strong);
   }
   .drawer-head { padding-top: 14px; }
-  .outcome.is-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wide-toggle { display: none; }
 }
 

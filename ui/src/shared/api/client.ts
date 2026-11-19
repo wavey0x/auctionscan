@@ -9,6 +9,7 @@ import type {
   RoundLivePrice,
   RoundsResponse,
   SearchResponse,
+  StatsResponse,
   TxResolveResponse,
   TakeDetail,
   SourceOccurrence,
@@ -94,6 +95,11 @@ export const api = {
   getRounds(params: NonNullable<paths["/api/rounds"]["get"]["parameters"]["query"]>, signal?: AbortSignal): Promise<RoundsResponse> {
     const query = buildQuery(params);
     return fetchJson<RoundsResponse>(`/rounds${query ? `?${query}` : ""}`, signal);
+  },
+
+  getStats(params: NonNullable<paths["/api/stats"]["get"]["parameters"]["query"]>, signal?: AbortSignal): Promise<StatsResponse> {
+    const query = buildQuery(params);
+    return fetchJson<StatsResponse>(`/stats${query ? `?${query}` : ""}`, signal);
   },
 
   getRoundDetail(chainId: number, auctionAddress: string, roundId: number, signal?: AbortSignal): Promise<RoundDetailResponse> {

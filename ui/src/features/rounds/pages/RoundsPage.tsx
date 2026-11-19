@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../../../shared/api/client";
 import { useChainsQuery } from "../../../shared/lib/chains";
 import {
+  cn,
+  coerceFiniteNumber,
   formatAmount,
+  formatCompactUsd,
   formatCount,
   formatDateTime,
   renderKickedValue,
+  signedMetricTone,
   toggleKickedDisplayMode,
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
@@ -34,6 +37,7 @@ import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 import { ChipGroup, FilterField, ViewTabs } from "../../../shared/ui/Toolbar";
 
 const PAGE_SIZE = 20;
+const TOTALS_WINDOW = "30d";
 const ROUND_STATUS_FILTERS = ["all", "live", "sold_out", "expired", "settled"] as const;
 type RoundStatusFilter = (typeof ROUND_STATUS_FILTERS)[number];
 
@@ -76,6 +80,36 @@ function toSearchParams(filters: Filters) {
   if (filters.query) next.set("filter", filters.query);
   if (filters.page > 1) next.set("page", String(filters.page));
   return next;
+}
+
+/**
+ * How the auctions have done lately, as one quiet line beside the tabs. It has
+ * a fixed window and no control, so it cannot be mistaken for a table filter,
+ * and it simply stays away while it is loading or unavailable.
+ */
+function RoundsTotals({ chainId }: { chainId?: number }) {
+  const statsQuery = useQuery({
+    queryKey: ["stats", chainId, TOTALS_WINDOW],
+    refetchInterval: LIVE_REFETCH_INTERVAL_MS * 5,
+    queryFn: ({ signal }) => api.getStats({ chain_id: chainId, time_window: TOTALS_WINDOW }, signal),
+  });
+  const stats = statsQuery.data;
+  if (!stats) return null;
+
+  const pnl = coerceFiniteNumber(stats.auction_profit_usd);
+  const partialPnl = stats.takes > 0 && stats.auction_profit_usd_take_count < stats.takes;
+  return (
+    <p className="totals-line" aria-label="Totals for the last 30 days">
+      <span>{TOTALS_WINDOW}</span>
+      <span title={`USD value received across ${formatCount(stats.received_usd_take_count)} of ${formatCount(stats.takes)} takes`}>
+        received <b>{formatCompactUsd(stats.received_usd)}</b>
+      </span>
+      <span title={`Proceeds against market quotes, from ${formatCount(stats.auction_profit_usd_take_count)} of ${formatCount(stats.takes)} takes with USD pricing`}>
+        PnL <b className={signedMetricTone(pnl)}>{formatCompactUsd(stats.auction_profit_usd, { signed: true })}</b>
+        {partialPnl ? <span className="stat-note">partial</span> : null}
+      </span>
+    </p>
+  );
 }
 
 function lotSummary(round: RoundListItem): string {
@@ -210,13 +244,8 @@ export default function RoundsPage() {
               count: counts ? counts[status] : null,
             }))}
           />
-          <span className="mb-2 inline-flex h-4 w-4 shrink-0 items-center justify-center text-tertiary">
-            {roundsQuery.isPlaceholderData ? (
-              <span role="status" aria-label="Updating rounds">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              </span>
-            ) : null}
-          </span>
+          <RoundsTotals chainId={filters.chainId} />
+          {roundsQuery.isPlaceholderData ? <span role="status" aria-label="Updating rounds" className="sr-only" /> : null}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="filter-line">
@@ -276,7 +305,7 @@ export default function RoundsPage() {
                     <th className="open-cell"><span className="sr-only">Open</span></th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className={cn(roundsQuery.isPlaceholderData && "is-stale")}>
                   {roundsQuery.isLoading ? (
                     <SkeletonRows
                       rows={12}

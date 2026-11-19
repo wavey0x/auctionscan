@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { CheckCircle2 } from "lucide-react";
 
 import { cn } from "../lib/format";
 
@@ -33,14 +34,15 @@ const labelMap: Record<StatusKind, string> = {
 };
 
 /**
- * Quiet normal, loud exception: a live round is the one mark that moves, an
- * expired lot is the one that warns, and finished rounds stay neutral.
+ * Each ending has its own shape as well as its tone: a live round is the one
+ * mark that moves, a sold round carries a small muted check, an expired lot is
+ * the one that warns, and a settled round is a hollow ring.
  */
-const toneMap: Record<StatusKind, { tone: string; ring?: boolean; live?: boolean }> = {
+const toneMap: Record<StatusKind, { tone: string; ring?: boolean; live?: boolean; check?: boolean }> = {
   active: { tone: "var(--color-active-mark)", live: true },
   live: { tone: "var(--color-active-mark)", live: true },
   completed: { tone: "var(--color-primary)" },
-  sold_out: { tone: "color-mix(in srgb, var(--color-primary) 62%, transparent)" },
+  sold_out: { tone: "var(--color-sold-mark)", check: true },
   settled: { tone: "var(--color-faint)", ring: true },
   expired: { tone: "var(--color-warning-mark)" },
   kickable: { tone: "var(--color-kickable)" },
@@ -54,12 +56,18 @@ export function statusLabel(status: StatusKind): string {
 
 export function StatusDot({ status, className }: { status: StatusKind; className?: string }) {
   const tone = toneMap[status];
+  // Every mark sits in the same slot, so the words line up down a column.
   return (
-    <span
-      aria-hidden="true"
-      className={cn("status-dot", tone.ring && "is-ring", tone.live && "is-live", className)}
-      style={{ "--tone": tone.tone } as CSSProperties}
-    />
+    <span aria-hidden="true" className={cn("status-mark", className)}>
+      {tone.check ? (
+        <CheckCircle2 className="status-check" strokeWidth={1.7} style={{ color: tone.tone }} />
+      ) : (
+        <span
+          className={cn("status-dot", tone.ring && "is-ring", tone.live && "is-live")}
+          style={{ "--tone": tone.tone } as CSSProperties}
+        />
+      )}
+    </span>
   );
 }
 

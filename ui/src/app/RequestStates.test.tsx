@@ -50,6 +50,8 @@ beforeEach(() => {
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
   vi.spyOn(api, "getAuction").mockResolvedValue(auction);
   vi.spyOn(api, "getRounds").mockResolvedValue(roundList);
+  vi.spyOn(api, "getStats").mockResolvedValue({ as_of: {}, time_window: "30d", since: null, rounds: 1, live_rounds: 0, takes: 1, takers: 1,
+    received_usd: null, received_usd_take_count: 0, auction_profit_usd: null, auction_profit_usd_take_count: 0 });
   vi.spyOn(api, "getRoundDetail").mockResolvedValue(roundDetails);
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue(takeList);
   vi.spyOn(api, "getTake").mockResolvedValue(take);

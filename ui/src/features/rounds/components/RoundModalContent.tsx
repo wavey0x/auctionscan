@@ -10,6 +10,7 @@ import {
   formatAddress,
   formatAmount,
   formatDateTime,
+  formatDuration,
   formatFullAmount,
   formatPrice,
   formatSignedPercent,
@@ -21,7 +22,7 @@ import {
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
-import { formatPercent, getRoundProgressMetrics } from "../../../shared/lib/roundProgress";
+import { getRoundProgressMetrics } from "../../../shared/lib/roundProgress";
 import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
 import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
@@ -128,20 +129,8 @@ function SectionHead({ children, note, aside }: { children: ReactNode; note?: Re
   );
 }
 
-/**
- * The round's timeline in one line: when it was kicked and how it ended. A
- * live round adds the only meter, since it is the one thing still moving.
- */
-function RoundFacts({
-  round,
-  kickedDisplayMode,
-  onToggleKicked,
-}: {
-  round: RoundListItem;
-  kickedDisplayMode: KickedDisplayMode;
-  onToggleKicked: () => void;
-}) {
-  const progress = {
+function progressInput(round: RoundListItem) {
+  return {
     status: round.status,
     kickedAt: round.kicked_at,
     scheduledEndAt: round.scheduled_end_at,
@@ -151,13 +140,34 @@ function RoundFacts({
     soldAmount: round.sold_amount,
     fromTokenSymbol: round.from_token_symbol,
   };
-  const metrics = getRoundProgressMetrics(progress);
+}
+
+/** Sold share at or above this is a lot that cleared but for rounding dust. */
+const DUST_SOLD_PERCENT = 99.99;
+
+/**
+ * A finished round's timeline in one line: when it was kicked, how it ended,
+ * and what was left if the lot did not clear. An expiry is a fact about time,
+ * not about sales, so the line says how much sold alongside it.
+ */
+function RoundFacts({
+  round,
+  fromSymbol,
+  kickedDisplayMode,
+  onToggleKicked,
+}: {
+  round: RoundListItem;
+  fromSymbol: string;
+  kickedDisplayMode: KickedDisplayMode;
+  onToggleKicked: () => void;
+}) {
+  const metrics = getRoundProgressMetrics(progressInput(round));
   const elapsed = metrics.elapsedDurationLabel;
-  const live = round.status === "live";
   const ending = round.status === "sold_out" ? "sold in" : round.status === "expired" ? "expired after" : "settled after";
-  const hasInventory = Number(round.initial_available ?? 0) > 0;
-  // An expiry that left only dust reads as sold; the share is worth stating once it rounds below 100%.
-  const showShare = hasInventory && Math.round(metrics.soldPercent) < 100 && (round.take_count > 0 || !live);
+  // Tested on the remaining amount itself: one smallest unit left out of a
+  // large lot is below what the percentage can resolve.
+  const unsold = Number(round.initial_available ?? 0) > 0 && Number(round.available_amount ?? 0) > 0;
+  const leftTitle = `${metrics.soldDetail} · ${formatFullAmount(round.available_amount)} ${fromSymbol} left`;
 
   return (
     <div className="facts">
@@ -167,20 +177,99 @@ function RoundFacts({
           {renderKickedValue(round.kicked_at, kickedDisplayMode)}
         </button>
       </span>
-      {live ? (
-        <span title="Time elapsed of the scheduled length"><span className="fact-value">{metrics.timeDetail}</span></span>
-      ) : elapsed ? (
+      {elapsed ? (
         <span>{ending} <span className="fact-value">{elapsed}</span></span>
       ) : (
         <span>{statusLabel(round.status).toLowerCase()}</span>
       )}
-      {!showShare ? null : round.take_count === 0 ? (
-        <span title={metrics.soldDetail}>nothing sold</span>
+      {!unsold ? null : round.take_count === 0 ? (
+        <span>nothing sold</span>
+      ) : metrics.soldPercent >= DUST_SOLD_PERCENT ? (
+        <span title={leftTitle}>all but dust sold</span>
       ) : (
-        <span title={metrics.soldDetail}><span className="fact-value">{formatPercent(metrics.soldPercent)}</span> of the lot sold</span>
+        <>
+          <span title={leftTitle}><span className="fact-value">{Math.floor(metrics.soldPercent)}%</span> sold</span>
+          <span title={leftTitle}><span className="fact-value">{formatAmount(round.available_amount)} {fromSymbol}</span> left</span>
+        </>
       )}
-      {live ? <RoundProgressMini {...progress} takeCount={round.take_count} mode="time" className="ml-auto" /> : null}
     </div>
+  );
+}
+
+/** Where the live price stands against the kick-time market quote it is decaying toward. */
+function versusQuote(price: string | null | undefined, quote: string | null | undefined): string | null {
+  const current = coerceFiniteNumber(price);
+  const reference = coerceFiniteNumber(quote);
+  if (current === null || reference === null || current <= 0 || reference <= 0) return null;
+  const ratio = current / reference;
+  if (ratio >= 2) return `${ratio >= 100 ? Math.round(ratio).toLocaleString("en-US") : ratio.toFixed(1)}× quote`;
+  return `${formatSignedPercent((ratio - 1) * 100, 1)} vs quote`;
+}
+
+/**
+ * What a round still running is worth watching for: what is left to sell, what
+ * it costs right now against the quote, and how long it has. It carries the
+ * drawer's only meter, since it is the one thing still moving.
+ */
+function LiveRow({
+  round,
+  fromSymbol,
+  wantSymbol,
+  price,
+  priceBlock,
+  priceUnavailable,
+}: {
+  round: RoundListItem;
+  fromSymbol: string;
+  wantSymbol: string;
+  price?: string | null;
+  priceBlock?: number | null;
+  priceUnavailable: boolean;
+}) {
+  const progress = progressInput(round);
+  const metrics = getRoundProgressMetrics(progress);
+  const remaining = round.available_amount ?? round.initial_available ?? null;
+  const scheduled = metrics.scheduledDurationSeconds;
+  const left = scheduled !== null && metrics.elapsedSeconds !== null ? scheduled - metrics.elapsedSeconds : null;
+  const against = versusQuote(price, round.expected_price_per_unit);
+  const quote = round.expected_price_per_unit ? formatPrice(round.expected_price_per_unit, 8) : null;
+
+  return (
+    <dl className="outcome outcome-end">
+      <OutcomeCell
+        label="Remaining"
+        title={remaining === null ? undefined : `${formatFullAmount(remaining)} ${fromSymbol} left · ${metrics.soldDetail}`}
+        sub={round.take_count > 0
+          ? `${Math.floor(metrics.soldPercent)}% of ${formatAmount(round.initial_available)} sold`
+          : round.kick_market_quote_usd ? formatUsd(round.kick_market_quote_usd) : null}
+      >
+        {remaining === null ? <span className="text-faint">—</span> : <>{formatAmount(remaining)} <small>{fromSymbol}</small></>}
+      </OutcomeCell>
+      <OutcomeCell
+        label="Price now"
+        title={[
+          price && priceBlock ? `${wantSymbol} per ${fromSymbol} at indexed block ${priceBlock}` : null,
+          quote ? `Market quote at kick ${quote}` : null,
+        ].filter(Boolean).join(" · ") || undefined}
+        sub={against ?? (quote ? `quote ${quote}` : null)}
+      >
+        {price ? <>{formatPrice(price, 8)} <small>{wantSymbol}</small></> : (
+          <span className="text-faint">{priceUnavailable ? "unavailable" : "—"}</span>
+        )}
+      </OutcomeCell>
+      <OutcomeCell
+        label="Time left"
+        title={`Kicked ${formatDateTime(round.kicked_at)} · ${metrics.timeDetail}`}
+        sub={scheduled === null ? null : (
+          <>
+            <RoundProgressMini {...progress} takeCount={round.take_count} mode="time" showFigure={false} width={44} className="mr-2 align-middle" />
+            of {formatDuration(scheduled)}
+          </>
+        )}
+      >
+        {left === null ? <span className="text-faint">—</span> : left > 0 ? formatDuration(left) : "ending"}
+      </OutcomeCell>
+    </dl>
   );
 }
 
@@ -361,6 +450,7 @@ export default function RoundModalContent({
   const fromSymbol = round.from_token_symbol || formatAddress(round.from_token, 6);
   const wantSymbol = round.want_token_symbol || formatAddress(round.want_token, 6);
   const hasTakes = round.take_count > 0;
+  const live = round.status === "live";
   // Once something has sold, the first figure is what the result is measured
   // on: the amount sold, valued at the market quote that PnL compares against.
   const offered = hasTakes ? round.sold_amount : round.initial_available ?? round.sold_amount;
@@ -428,6 +518,58 @@ export default function RoundModalContent({
     />
   );
 
+  // What the round achieved. A cell exists only once there is something to put
+  // in it: a live round shows this row after its first take, and a round that
+  // ended without one shows the lot alone.
+  const resultRow = !hasTakes && live ? null : (
+    <dl className={cn("outcome", live && "outcome-ruled outcome-end")}>
+      <OutcomeCell
+        label={hasTakes ? "Sold" : "Lot"}
+        title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}`}
+        sub={offeredUsd ? formatUsd(offeredUsd) : null}
+        note={hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
+        noteTitle={`Market value known for ${usdPricedTakes} of ${round.take_count} takes`}
+      >
+        {formatAmount(offered)} <small>{fromSymbol}</small>
+      </OutcomeCell>
+      {hasTakes ? (
+        <>
+          <OutcomeCell
+            label="Received"
+            title={`${formatFullAmount(round.paid_amount)} ${wantSymbol}`}
+            sub={round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : null}
+            note={round.paid_take_count < round.take_count ? "partial" : null}
+            noteTitle={`Payment observed for ${round.paid_take_count} of ${round.take_count} takes`}
+          >
+            {round.paid_amount ? <>{formatAmount(round.paid_amount)} <small>{wantSymbol}</small></> : <span className="text-faint">—</span>}
+          </OutcomeCell>
+          <OutcomeCell
+            label="PnL"
+            title={`Against the market quote. Quoted for ${pricedTakes} of ${round.take_count} takes; USD for ${usdPricedTakes}`}
+            sub={pnlUsd !== null ? formatSignedUsdDelta(pnlUsd) : null}
+            note={pnlPercent !== null && pricedTakes < round.take_count ? "partial" : null}
+            noteTitle={`Quoted for ${pricedTakes} of ${round.take_count} takes`}
+          >
+            {pnlPercent !== null || pnlUsd !== null ? (
+              <span className={signedMetricTone(pnlPercent ?? pnlUsd)}>{formatSignedPercent(pnlPercent)}</span>
+            ) : <span className="text-faint">—</span>}
+          </OutcomeCell>
+        </>
+      ) : null}
+    </dl>
+  );
+
+  // While a round is live its price path leads; once it has ended, the takes do.
+  const pricePanel = wide ? (
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,22rem)] border-t border-divider-subtle">
+      <div className="min-w-0 [&>.sec]:border-t-0">{chart}</div>
+      <section className="sec min-w-0 border-l border-t-0 border-divider-subtle">
+        <SectionHead>Settings</SectionHead>
+        {settings}
+      </section>
+    </div>
+  ) : chart;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="drawer-head">
@@ -439,7 +581,8 @@ export default function RoundModalContent({
               <span className="truncate">{fromSymbol}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={1.5} aria-hidden="true" />
               <TokenLogo logoUrl={round.want_token_logo_url} symbol={wantSymbol} size="md" />
-              <span className="truncate">{wantSymbol}</span>
+              {/* A long sold token gives way first, so what it was sold for stays readable. */}
+              <span className="shrink-[0.2] truncate">{wantSymbol}</span>
             </span>
             <StatusBadge status={round.status} className="ml-1 shrink-0" />
           </div>
@@ -467,73 +610,42 @@ export default function RoundModalContent({
         {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
         {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" className="py-4" />}
 
-        <dl className={cn("outcome", round.is_active && "is-four")}>
-          <OutcomeCell
-            label={hasTakes ? "Sold" : "Lot"}
-            title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}`}
-            sub={offeredUsd ? formatUsd(offeredUsd) : null}
-            note={hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
-            noteTitle={`Market value known for ${usdPricedTakes} of ${round.take_count} takes`}
-          >
-            {formatAmount(offered)} <small>{fromSymbol}</small>
-          </OutcomeCell>
-          <OutcomeCell
-            label="Received"
-            title={hasTakes ? `${formatFullAmount(round.paid_amount)} ${wantSymbol}` : undefined}
-            sub={round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : null}
-            note={round.paid_take_count < round.take_count ? "partial" : null}
-            noteTitle={`Payment observed for ${round.paid_take_count} of ${round.take_count} takes`}
-          >
-            {hasTakes && round.paid_amount ? <>{formatAmount(round.paid_amount)} <small>{wantSymbol}</small></> : <span className="text-faint">—</span>}
-          </OutcomeCell>
-          <OutcomeCell
-            label="PnL"
-            title={hasTakes ? `Against the market quote. Quoted for ${pricedTakes} of ${round.take_count} takes; USD for ${usdPricedTakes}` : undefined}
-            sub={pnlUsd !== null ? formatSignedUsdDelta(pnlUsd) : null}
-            note={hasTakes && pnlPercent !== null && pricedTakes < round.take_count ? "partial" : null}
-            noteTitle={`Quoted for ${pricedTakes} of ${round.take_count} takes`}
-          >
-            {pnlPercent !== null || pnlUsd !== null ? (
-              <span className={signedMetricTone(pnlPercent ?? pnlUsd)}>{formatSignedPercent(pnlPercent)}</span>
-            ) : <span className="text-faint">—</span>}
-          </OutcomeCell>
-          {round.is_active ? (
-            <OutcomeCell
-              label="Price now"
-              title={displayedLivePrice ? `${wantSymbol} per ${fromSymbol} at indexed block ${displayedLivePrice.indexed_block}` : undefined}
-              sub={round.expected_price_per_unit ? `quote ${formatPrice(round.expected_price_per_unit, 8)}` : null}
-            >
-              {displayedLivePrice?.current_price ? formatPrice(displayedLivePrice.current_price, 8) : (
-                <span className="text-faint">{livePriceUnavailable ? "unavailable" : "—"}</span>
-              )}
-            </OutcomeCell>
-          ) : null}
-        </dl>
+        {live ? (
+          <>
+            <LiveRow
+              round={round}
+              fromSymbol={fromSymbol}
+              wantSymbol={wantSymbol}
+              price={displayedLivePrice?.current_price}
+              priceBlock={displayedLivePrice?.indexed_block}
+              priceUnavailable={livePriceUnavailable}
+            />
+            {pricePanel}
+          </>
+        ) : null}
 
-        <RoundFacts round={round} kickedDisplayMode={kickedDisplayMode} onToggleKicked={() => setKickedDisplayMode(toggleKickedDisplayMode)} />
+        {resultRow}
+        {live ? null : (
+          <RoundFacts
+            round={round}
+            fromSymbol={fromSymbol}
+            kickedDisplayMode={kickedDisplayMode}
+            onToggleKicked={() => setKickedDisplayMode(toggleKickedDisplayMode)}
+          />
+        )}
 
         {takesSection}
 
-        {wide ? (
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,22rem)] border-t border-divider-subtle">
-            <div className="min-w-0 [&>.sec]:border-t-0">{chart}</div>
-            <section className="sec min-w-0 border-l border-t-0 border-divider-subtle">
-              <SectionHead>Settings</SectionHead>
-              {settings}
-            </section>
-          </div>
-        ) : (
-          <>
-            {chart}
-            <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
-              <summary>
-                <SectionHead aside={<ChevronDown className={cn("h-3.5 w-3.5 text-faint transition-transform", settingsOpen && "rotate-180")} strokeWidth={1.6} />}>
-                  Settings
-                </SectionHead>
-              </summary>
-              {settings}
-            </details>
-          </>
+        {live ? null : pricePanel}
+        {wide ? null : (
+          <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
+            <summary>
+              <SectionHead aside={<ChevronDown className={cn("h-3.5 w-3.5 text-faint transition-transform", settingsOpen && "rotate-180")} strokeWidth={1.6} />}>
+                Settings
+              </SectionHead>
+            </summary>
+            {settings}
+          </details>
         )}
       </div>
     </div>

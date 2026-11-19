@@ -12,6 +12,7 @@ export type RoundPricingBySource = components["schemas"]["RoundPricingBySource"]
 export type RoundListItem = components["schemas"]["RoundListItem"];
 export type RoundsResponse = components["schemas"]["RoundsResponse"];
 export type RoundStatusCounts = components["schemas"]["RoundStatusCounts"];
+export type StatsResponse = components["schemas"]["StatsResponse"];
 export type RoundDetailResponse = components["schemas"]["RoundDetailResponse"];
 export type RoundLivePrice = components["schemas"]["RoundLivePrice"];
 export type AuctionParameters = components["schemas"]["AuctionParameters"];

@@ -22,6 +22,7 @@ export default function RoundSettingsPanel({
   duration,
   stepDuration,
   decay,
+  version,
 }: {
   round: RoundListItem;
   chainId: number;
@@ -30,6 +31,7 @@ export default function RoundSettingsPanel({
   duration?: number | null;
   stepDuration?: number | null;
   decay?: string | null;
+  version?: string | null;
 }) {
   const showMinimumPrice = minimumPrice !== null && minimumPrice !== undefined;
   const showDuration = duration !== null && duration !== undefined;
@@ -67,6 +69,12 @@ export default function RoundSettingsPanel({
           <AddressValue address={round.receiver} chainId={chainId} label={round.receiver_name} />
         </span>
       </div>
+
+      {version ? (
+        <Row label="Version" title="Auction contract version">
+          {version.startsWith("v") ? version : `v${version}`}
+        </Row>
+      ) : null}
     </div>
   );
 }

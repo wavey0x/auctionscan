@@ -112,8 +112,9 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
 /**
  * The round's price path: the start price stepping down by its decay, the
  * kick-time market quote it should meet, and where each take landed on it.
- * The key carries the three prices worth comparing; the reading under the
- * pointer sits in the section head, so the key never reflows.
+ * The key carries the three prices worth comparing. The reading under the
+ * pointer is drawn inside the plot, in the corner a falling price leaves
+ * empty, so hovering never moves anything around the chart.
  */
 export default function DecayChart({
   round,
@@ -199,9 +200,6 @@ function DecayPlot({
       <h3 className="sec-head">
         Price
         {unit ? <span className="sec-note">{unit}</span> : null}
-        {hoverT !== null && hoverPrice !== null ? (
-          <span className="sec-aside">+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))} <b>{formatPrice(hoverPrice, 8)}</b></span>
-        ) : null}
       </h3>
       <div className="chart" ref={ref}>
       <div className="chart-key">
@@ -238,7 +236,8 @@ function DecayPlot({
           {line ? <path d={line} fill="none" stroke="var(--color-primary)" strokeWidth={1.5} strokeLinejoin="round" /> : null}
           {marker && marker.price !== null ? (
             <g>
-              <line x1={x(marker.t)} x2={x(marker.t)} y1={PAD_TOP} y2={PAD_TOP + plotHeight} stroke="var(--color-divider-strong)" />
+              {/* A drop line from the point to the time axis, so it never crosses the reading above. */}
+              <line x1={x(marker.t)} x2={x(marker.t)} y1={y(marker.price)} y2={PAD_TOP + plotHeight} stroke="var(--color-divider-strong)" />
               <circle
                 cx={x(marker.t)}
                 cy={y(marker.price)}
@@ -254,6 +253,23 @@ function DecayPlot({
               <title>{`Take at ${formatCompactDateTime(new Date(point.t * 1000))}: ${formatPrice(point.price, 8)}`}</title>
             </circle>
           ))}
+          {hoverT !== null && hoverPrice !== null ? (
+            <text
+              x={plotWidth}
+              y={PAD_TOP + 9}
+              textAnchor="end"
+              fontSize={11}
+              fontFamily="var(--font-mono)"
+              stroke="var(--color-surface)"
+              strokeWidth={4}
+              strokeLinejoin="round"
+              paintOrder="stroke"
+              style={{ fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}
+            >
+              <tspan fill="var(--color-tertiary)">+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))}</tspan>
+              <tspan dx={7} fill="var(--color-primary)">{formatPrice(hoverPrice, 8)}</tspan>
+            </text>
+          ) : null}
           <text x={0} y={HEIGHT - 4} fill="var(--color-faint)" fontSize={11} fontFamily="var(--font-mono)">
             {formatCompactDateTime(new Date(model.kick * 1000))}
           </text>

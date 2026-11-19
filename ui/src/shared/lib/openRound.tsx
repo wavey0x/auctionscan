@@ -49,8 +49,11 @@ function focusSibling(row: HTMLElement, direction: 1 | -1) {
  * Rows that open a round in the drawer. A row click opens it; with the drawer
  * already open, another row or ↑/↓ moves it there, replacing the history entry
  * so Back still closes the drawer.
+ *
+ * `stale` marks rows that are still on screen only until their replacement
+ * arrives. They keep their place but open nothing, by pointer or by keyboard.
  */
-export function useRoundRows<T extends RoundKey>(rounds: T[] | undefined) {
+export function useRoundRows<T extends RoundKey>(rounds: T[] | undefined, { stale = false }: { stale?: boolean } = {}) {
   const open = useOpenRound();
   const location = useLocation();
   const navigate = useNavigate();
@@ -73,7 +76,7 @@ export function useRoundRows<T extends RoundKey>(rounds: T[] | undefined) {
   );
 
   useEffect(() => {
-    if (!open || !rounds?.length) return undefined;
+    if (stale || !open || !rounds?.length) return undefined;
     const index = rounds.findIndex((round) => sameRound(open, round));
     if (index < 0) return undefined;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -86,11 +89,20 @@ export function useRoundRows<T extends RoundKey>(rounds: T[] | undefined) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, rounds, openRound]);
+  }, [stale, open, rounds, openRound]);
 
   const rowProps = (round: T, className?: string) => {
     const href = hrefFor(round);
     const isOpen = sameRound(open, round);
+    if (stale) {
+      return {
+        className: cn("data-row", isOpen && "is-open", className),
+        tabIndex: -1,
+        "data-row": "",
+        "aria-disabled": true as const,
+        "aria-current": isOpen ? ("true" as const) : undefined,
+      };
+    }
     return {
       className: cn("data-row", isOpen && "is-open", className),
       tabIndex: 0,

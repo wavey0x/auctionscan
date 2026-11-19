@@ -13,6 +13,7 @@ import {
   formatDuration,
   formatFullAmount,
   formatPrice,
+  formatPriceSignificant,
   formatSignedPercent,
   formatSignedUsdDelta,
   formatUsd,
@@ -22,16 +23,15 @@ import {
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
-import { getRoundProgressMetrics } from "../../../shared/lib/roundProgress";
+import { getRoundProgressMetrics, getSaleOutcome } from "../../../shared/lib/roundProgress";
+import { useChainsQuery } from "../../../shared/lib/chains";
 import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
 import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
-import AuctionVersionBadge from "../../../shared/ui/AuctionVersionBadge";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
 import RequestError from "../../../shared/ui/RequestError";
-import RoundProgressMini from "../../../shared/ui/RoundProgressMini";
 import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
 import TokenLogo from "../../../shared/ui/TokenLogo";
 import { useRoundDetails } from "../useRoundDetails";
@@ -142,9 +142,6 @@ function progressInput(round: RoundListItem) {
   };
 }
 
-/** Sold share at or above this is a lot that cleared but for rounding dust. */
-const DUST_SOLD_PERCENT = 99.99;
-
 /**
  * A finished round's timeline in one line: when it was kicked, how it ended,
  * and what was left if the lot did not clear. An expiry is a fact about time,
@@ -164,9 +161,7 @@ function RoundFacts({
   const metrics = getRoundProgressMetrics(progressInput(round));
   const elapsed = metrics.elapsedDurationLabel;
   const ending = round.status === "sold_out" ? "sold in" : round.status === "expired" ? "expired after" : "settled after";
-  // Tested on the remaining amount itself: one smallest unit left out of a
-  // large lot is below what the percentage can resolve.
-  const unsold = Number(round.initial_available ?? 0) > 0 && Number(round.available_amount ?? 0) > 0;
+  const outcome = getSaleOutcome(round);
   const leftTitle = `${metrics.soldDetail} · ${formatFullAmount(round.available_amount)} ${fromSymbol} left`;
 
   return (
@@ -182,16 +177,16 @@ function RoundFacts({
       ) : (
         <span>{statusLabel(round.status).toLowerCase()}</span>
       )}
-      {!unsold ? null : round.take_count === 0 ? (
+      {outcome?.kind === "none" ? (
         <span>nothing sold</span>
-      ) : metrics.soldPercent >= DUST_SOLD_PERCENT ? (
+      ) : outcome?.kind === "dust" ? (
         <span title={leftTitle}>all but dust sold</span>
-      ) : (
+      ) : outcome?.kind === "partial" ? (
         <>
-          <span title={leftTitle}><span className="fact-value">{Math.floor(metrics.soldPercent)}%</span> sold</span>
+          <span title={leftTitle}><span className="fact-value">{outcome.percent}%</span> sold</span>
           <span title={leftTitle}><span className="fact-value">{formatAmount(round.available_amount)} {fromSymbol}</span> left</span>
         </>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -208,8 +203,10 @@ function versusQuote(price: string | null | undefined, quote: string | null | un
 
 /**
  * What a round still running is worth watching for: what is left to sell, what
- * it costs right now against the quote, and how long it has. It carries the
- * drawer's only meter, since it is the one thing still moving.
+ * it costs right now against the quote, and how long it has. The cells have
+ * the same shape as the result row: a bare figure over one short line. The
+ * head names the tokens and the chart beneath marks the time, so neither a
+ * unit nor a meter is repeated here.
  */
 function LiveRow({
   round,
@@ -217,6 +214,7 @@ function LiveRow({
   wantSymbol,
   price,
   priceBlock,
+  pricePending,
   priceUnavailable,
 }: {
   round: RoundListItem;
@@ -224,10 +222,10 @@ function LiveRow({
   wantSymbol: string;
   price?: string | null;
   priceBlock?: number | null;
+  pricePending: boolean;
   priceUnavailable: boolean;
 }) {
-  const progress = progressInput(round);
-  const metrics = getRoundProgressMetrics(progress);
+  const metrics = getRoundProgressMetrics(progressInput(round));
   const remaining = round.available_amount ?? round.initial_available ?? null;
   const scheduled = metrics.scheduledDurationSeconds;
   const left = scheduled !== null && metrics.elapsedSeconds !== null ? scheduled - metrics.elapsedSeconds : null;
@@ -243,29 +241,26 @@ function LiveRow({
           ? `${Math.floor(metrics.soldPercent)}% of ${formatAmount(round.initial_available)} sold`
           : round.kick_market_quote_usd ? formatUsd(round.kick_market_quote_usd) : null}
       >
-        {remaining === null ? <span className="text-faint">—</span> : <>{formatAmount(remaining)} <small>{fromSymbol}</small></>}
+        {remaining === null ? <span className="text-faint">—</span> : formatAmount(remaining)}
       </OutcomeCell>
       <OutcomeCell
         label="Price now"
         title={[
-          price && priceBlock ? `${wantSymbol} per ${fromSymbol} at indexed block ${priceBlock}` : null,
+          price && priceBlock ? `${formatPrice(price, 8)} ${wantSymbol} per ${fromSymbol} at indexed block ${priceBlock}` : null,
           quote ? `Market quote at kick ${quote}` : null,
         ].filter(Boolean).join(" · ") || undefined}
         sub={against ?? (quote ? `quote ${quote}` : null)}
       >
-        {price ? <>{formatPrice(price, 8)} <small>{wantSymbol}</small></> : (
+        {price ? formatPriceSignificant(price) : pricePending ? (
+          <span className="skeleton-bar my-[6.5px] w-20" aria-label="Loading price" />
+        ) : (
           <span className="text-faint">{priceUnavailable ? "unavailable" : "—"}</span>
         )}
       </OutcomeCell>
       <OutcomeCell
         label="Time left"
         title={`Kicked ${formatDateTime(round.kicked_at)} · ${metrics.timeDetail}`}
-        sub={scheduled === null ? null : (
-          <>
-            <RoundProgressMini {...progress} takeCount={round.take_count} mode="time" showFigure={false} width={44} className="mr-2 align-middle" />
-            of {formatDuration(scheduled)}
-          </>
-        )}
+        sub={scheduled === null ? null : `of ${formatDuration(scheduled)}`}
       >
         {left === null ? <span className="text-faint">—</span> : left > 0 ? formatDuration(left) : "ending"}
       </OutcomeCell>
@@ -333,6 +328,8 @@ export default function RoundModalContent({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const chain = Number(chainId);
+  // The chain is worth a mark only once there is more than one to tell apart.
+  const multiChain = Object.keys(useChainsQuery().data?.chains ?? {}).length > 1;
   const roundId = parseRoundId(roundIdParam);
   const validRound = Number.isSafeInteger(chain) && chain > 0 && roundId !== null && !!auctionAddress;
   const selectedTakeParam = searchParams.get("take");
@@ -515,6 +512,7 @@ export default function RoundModalContent({
       duration={round.auction_length}
       stepDuration={round.update_interval}
       decay={round.decay_percent}
+      version={round.version ?? auctionQuery.data?.version}
     />
   );
 
@@ -530,7 +528,7 @@ export default function RoundModalContent({
         note={hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
         noteTitle={`Market value known for ${usdPricedTakes} of ${round.take_count} takes`}
       >
-        {formatAmount(offered)} <small>{fromSymbol}</small>
+        {formatAmount(offered)}
       </OutcomeCell>
       {hasTakes ? (
         <>
@@ -541,7 +539,7 @@ export default function RoundModalContent({
             note={round.paid_take_count < round.take_count ? "partial" : null}
             noteTitle={`Payment observed for ${round.paid_take_count} of ${round.take_count} takes`}
           >
-            {round.paid_amount ? <>{formatAmount(round.paid_amount)} <small>{wantSymbol}</small></> : <span className="text-faint">—</span>}
+            {round.paid_amount ? formatAmount(round.paid_amount) : <span className="text-faint">—</span>}
           </OutcomeCell>
           <OutcomeCell
             label="PnL"
@@ -574,22 +572,27 @@ export default function RoundModalContent({
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="drawer-head">
         <div className="min-w-0 flex-1">
-          <div className="drawer-title">
-            <span className="shrink-0 text-tertiary">R{round.round_id}</span>
-            <span className="pair" title={`${round.from_token_name ?? fromSymbol} → ${round.want_token_name ?? wantSymbol}`}>
+          {/* The pair has the line to itself, so both tokens keep their logo and their whole name. */}
+          <div className="drawer-title" title={`${round.from_token_name ?? fromSymbol} → ${round.want_token_name ?? wantSymbol}`}>
+            {/* The arrow stays with what was sold, so when a narrow sheet breaks the pair the two logos stack on one edge. */}
+            <span className="token">
               <TokenLogo logoUrl={round.from_token_logo_url} symbol={fromSymbol} size="md" />
               <span className="truncate">{fromSymbol}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={1.5} aria-hidden="true" />
-              <TokenLogo logoUrl={round.want_token_logo_url} symbol={wantSymbol} size="md" />
-              {/* A long sold token gives way first, so what it was sold for stays readable. */}
-              <span className="shrink-[0.2] truncate">{wantSymbol}</span>
             </span>
-            <StatusBadge status={round.status} className="ml-1 shrink-0" />
+            <span className="token is-want">
+              <TokenLogo logoUrl={round.want_token_logo_url} symbol={wantSymbol} size="md" />
+              <span className="truncate">{wantSymbol}</span>
+            </span>
           </div>
-          <div className="drawer-meta reveal-row">
-            <ChainIcon chainId={round.chain_id} size="xs" />
-            <AuctionVersionBadge version={round.version ?? auctionQuery.data?.version} />
-            <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
+          {/* Its state, which round, and where it lives. The address reveals its utilities when pointed at. */}
+          <div className="drawer-meta">
+            <StatusBadge status={round.status} />
+            <span className="meta-item text-secondary">R{round.round_id}</span>
+            <span className="meta-item reveal-row">
+              {multiChain ? <ChainIcon chainId={round.chain_id} size="xs" /> : null}
+              <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
+            </span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -618,6 +621,7 @@ export default function RoundModalContent({
               wantSymbol={wantSymbol}
               price={displayedLivePrice?.current_price}
               priceBlock={displayedLivePrice?.indexed_block}
+              pricePending={livePriceQuery.isLoading}
               priceUnavailable={livePriceUnavailable}
             />
             {pricePanel}

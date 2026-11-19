@@ -103,6 +103,34 @@ export function getRoundProgressMetrics({
   };
 }
 
+/** Sold share at or above this is a lot that cleared but for rounding dust. */
+const DUST_SOLD_PERCENT = 99.99;
+
+export type SaleOutcome =
+  | { kind: "cleared" }
+  | { kind: "none" }
+  | { kind: "dust" }
+  | { kind: "partial"; percent: number };
+
+/**
+ * What became of a round's lot, or null when its inventory is unknown. It is
+ * decided on the remaining amount itself: one smallest unit left of a large
+ * lot is below what a percentage can resolve.
+ */
+export function getSaleOutcome(round: {
+  initial_available?: string | null;
+  available_amount?: string | null;
+  take_count: number;
+}): SaleOutcome | null {
+  const initial = Number(round.initial_available ?? 0);
+  const left = Number(round.available_amount ?? 0);
+  if (!(initial > 0) || !Number.isFinite(left)) return null;
+  if (left <= 0) return { kind: "cleared" };
+  if (round.take_count === 0) return { kind: "none" };
+  const percent = clampPercent(((initial - left) / initial) * 100);
+  return percent >= DUST_SOLD_PERCENT ? { kind: "dust" } : { kind: "partial", percent: Math.floor(percent) };
+}
+
 export function roundProgressSummary(
   round: {
     status: RoundProgressStatus;

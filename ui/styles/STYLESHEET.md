@@ -82,11 +82,12 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 
 The rounds list has no summary strip or totals-window selector. One quiet line at the end of the
 tab row gives the last 30 days' received value and PnL for the chain in scope; it has no control,
-so it cannot read as a table filter, and it is absent while loading or unavailable.
+so it cannot read as a table filter. It is absent while loading or unavailable, and below 1024px,
+where it would crowd the tabs.
 
 When the list's tabs, filters or page change, keep the previous rows and counts visible until the
-response arrives. Rows that are waiting to be replaced dim after a short delay and cannot be opened;
-pagination waits for the requested page. Skeletons are for the initial load only, so changing tabs
+response arrives. Rows that are waiting to be replaced dim after a short delay and open nothing, by
+pointer or by keyboard; pagination waits for the requested page. Skeletons are for the initial load only, so changing tabs
 never collapses their counts or swaps table geometry.
 
 ## Tables
@@ -115,6 +116,10 @@ Flat 4px fills with square ends. A bar on a track is a share of a limit (time el
 progress); a bar without a track (`.bar.is-relative`) is size against the column's largest. Meters
 keep their row's tone: live green, expired amber, everything else neutral. An early close is a tick.
 
+An expired round's time is spent by definition, so in the list's time view it says what its lot did
+in place of a full bar: `nothing sold`, `40% sold`, or `all but dust` when under 0.01% remained.
+The first two take the warning tone; dust is neutral. The drawer's facts line uses the same rule.
+
 ## Round drawer
 
 - A round opens in a drawer (500px, 560px from 1700px) floating over the right of the list without a
@@ -122,11 +127,15 @@ keep their row's tone: live green, expired amber, everything else neutral. An ea
 - Back, Esc, the close control and a click on nothing that acts close it. Another row, or ↑/↓, moves
   it there and replaces the history entry, so Back still closes the drawer.
 - It reads top to bottom as a receipt, and says nothing twice. A finished round:
-  1. **Head**, two lines: the round number, the pair with its logos and the status; beneath, the
-     chain, version and auction address. Address utilities surface on hover.
-  2. **Result**, one row: Sold, Received, PnL. Each is a label, a 15px figure and its dollar value
-     on a quieter line, so the row reads as a sum: market value, proceeds, difference. A cell exists
-     only when it has something to say: a round that ended without a take shows its Lot alone.
+  1. **Head**, two lines that share one left edge. First the pair, each token with its logo; it has
+     the line to itself, so names are not cut, and on a sheet too narrow for both it breaks after
+     the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address; the address reveals
+     its utilities when pointed at. The version is a Settings row, and the chain gets a mark only
+     once there is more than one chain to tell apart.
+  2. **Result**, one row: Sold, Received, PnL. Each is a label, a bare 15px figure and its dollar
+     value on a quieter line, so the row reads as a sum: market value, proceeds, difference. The
+     head names the tokens in the order the figures follow. A cell exists only when it has something
+     to say: a round that ended without a take shows its Lot alone.
   3. **Facts**, one line: when it was kicked and how it ended (`sold in 10h 0m`). If the lot did not
      clear it says what happened to it: `nothing sold`, `38% sold · 445K GROVE left`, or
      `all but dust sold` when under 0.01% remained. An expiry is a fact about time, not about
@@ -134,15 +143,19 @@ keep their row's tone: live green, expired amber, everything else neutral. An ea
   4. **Takes**, one line each: take, taker, time since the kick, received, PnL. Opening a row shows
      the rest. An empty list is `none` beside the heading.
   5. **Price**: a compact chart under a key of the three prices worth comparing.
-  6. **Settings**, the kick-time parameters, collapsed by default.
+  6. **Settings**, the kick-time parameters and the contract version, collapsed by default.
 - A live round has different priorities, so it leads with what is still open:
-  1. **Live row**, in place of the facts: Remaining, Price now with its unit over its distance from
-     the kick quote (`26.3× quote`, `+4.2% vs quote`), and Time left over the drawer's only meter.
-  2. **Price** moves up to sit directly under it.
+  1. **Live row**, in place of the facts and in the result row's shape: Remaining over its value,
+     Price now over its distance from the kick quote (`26.3× quote`, `+4.2% vs quote`), and Time
+     left over the scheduled length. Every cell is a bare figure and one short line.
+  2. **Price** moves up to sit directly under it. It states the price's unit and marks the present
+     moment on its time axis, which is why the row above carries neither a unit nor a meter.
   3. **Result** appears beneath the chart once the first take lands, then **Takes** and **Settings**.
-- Token logos appear in the head and in an opened take, not in rows. Units sit beside the outcome
-  figures and in column headers; rows of takes carry bare figures. Dollar values in the drawer are
-  written in full (`$1,627`), not compact.
+- A token is named once, in the head, beside its logo. Figures beneath it are bare, in the summary
+  and in rows of takes; the workspace's column headers and the chart's head carry the unit, and
+  hovering a figure gives the exact amount with its symbol. Logos appear again only in an opened
+  take. Dollar values in the drawer are written in full (`$1,627`), not compact. The live price is
+  held to six significant digits so its width stays steady as it falls.
 - A take's time is its distance from the kick (`+9h 57m`), which is also its place on the price
   path; the timestamp is on hover and in the opened row.
 - The expand control widens it to an execution-review workspace (up to 1180px, remembered per
@@ -151,7 +164,8 @@ keep their row's tone: live green, expired amber, everything else neutral. An ea
 - The price chart draws the start price stepping down by its decay, the kick-time quote as a dashed
   line, the minimum price when in range, each take as a dot, and a live round's current price. Its
   key names the start, the quote and the average take. Hovering reads the price at any moment of
-  the round in the section head, so the key never moves.
+  the round in the plot's top right corner, which a falling price leaves empty, so nothing around
+  the chart moves. Section heads are always one line: a long unit is cut, never wrapped.
 
 ## Motion
 

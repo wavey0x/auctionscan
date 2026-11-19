@@ -20,6 +20,7 @@ import { useRoundRows } from "../../../shared/lib/openRound";
 import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
 import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
+import { getSaleOutcome } from "../../../shared/lib/roundProgress";
 import type { RoundListItem, RoundStatusCounts } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
@@ -129,6 +130,10 @@ function RoundRow({
   kickedMode: KickedDisplayMode;
 }) {
   const kicked = renderKickedValue(round.kicked_at, kickedMode);
+  // An expired round's time is spent by definition, so in place of a full bar
+  // it says what the lot did. The sold-share view keeps its meter.
+  const outcome = round.status === "expired" && progressMode === "time" ? getSaleOutcome(round) : null;
+  const expiredOutcome = outcome && outcome.kind !== "cleared" ? outcome : null;
   return (
     <tr {...rowProps}>
       <td className="max-w-[15rem]">
@@ -145,6 +150,14 @@ function RoundRow({
       <td className="col-md mono fit pr-3 text-secondary">R{round.round_id}</td>
       <td className="col-lo fit pr-4"><StatusBadge status={round.status} /></td>
       <td className="col-md fit pr-4">
+        {expiredOutcome ? (
+          <span
+            className={cn("text-caption", expiredOutcome.kind === "dust" ? "text-tertiary" : "text-warning")}
+            title={`Expired with ${formatAmount(round.available_amount)} ${round.from_token_symbol ?? ""} of ${lotSummary(round)} left`}
+          >
+            {expiredOutcome.kind === "none" ? "nothing sold" : expiredOutcome.kind === "dust" ? "all but dust" : `${expiredOutcome.percent}% sold`}
+          </span>
+        ) : (
         <RoundProgressMini
           status={round.status}
           kickedAt={round.kicked_at}
@@ -157,6 +170,7 @@ function RoundRow({
           takeCount={round.take_count}
           mode={progressMode}
         />
+        )}
       </td>
       <td className="col-lo"><div className="cell-clip"><RoundLotCell round={round} /></div></td>
       <td className="col-lo">
@@ -216,7 +230,7 @@ export default function RoundsPage() {
   });
 
   const rounds = roundsQuery.data?.rounds;
-  const { rowProps } = useRoundRows(rounds);
+  const { rowProps } = useRoundRows(rounds, { stale: roundsQuery.isPlaceholderData });
 
   const updateFilters = (patch: Partial<Filters>) => {
     setSearchParams(toSearchParams({ ...filters, ...patch }));

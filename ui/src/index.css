@@ -360,9 +360,10 @@ html.dark {
     @apply text-tertiary;
   }
 
-  /* Recent totals beside the tabs: text on the tabs' own baseline, no frame. */
+  /* Recent totals beside the tabs: text on the tabs' own baseline, no frame.
+     Shown only from the width at which they cannot crowd the last tab. */
   .totals-line {
-    @apply m-0 mb-2 hidden shrink-0 items-baseline gap-x-2.5 whitespace-nowrap text-meta text-tertiary md:flex;
+    @apply m-0 mb-2 hidden shrink-0 items-baseline gap-x-2.5 whitespace-nowrap text-meta text-tertiary lg:flex;
     font-variant-numeric: tabular-nums;
   }
 
@@ -524,7 +525,8 @@ html.dark {
   }
 
   /* Rows kept on screen while their replacement loads. The dim waits a beat,
-     so a quick response never flickers, and stale rows cannot be opened. */
+     so a quick response never flickers. The rows themselves are made inert by
+     useRoundRows, which covers the keyboard as well as the pointer. */
   .data-table tbody {
     transition: opacity 0.1s;
   }
@@ -858,15 +860,35 @@ html.dark {
   }
 
   .drawer-title {
-    @apply flex h-7 min-w-0 items-center gap-2.5 text-heading text-primary;
+    @apply flex min-h-[28px] min-w-0 items-center gap-x-2 text-heading text-primary;
   }
 
-  .drawer-title .pair {
+  .drawer-title .token {
     @apply inline-flex min-w-0 items-center gap-1.5;
   }
 
+  /* A long sold token gives way first, so what it was sold for stays readable. */
+  .drawer-title .token.is-want {
+    flex-shrink: 0.2;
+  }
+
   .drawer-meta {
-    @apply mt-0.5 flex h-[18px] min-w-0 items-center gap-2 text-data text-tertiary;
+    @apply mt-0.5 flex h-[18px] min-w-0 items-center text-data text-tertiary;
+  }
+
+  /* The line starts on the title's left edge, whichever mark the status has. */
+  .drawer-meta .status-mark {
+    @apply w-auto justify-start;
+  }
+
+  .drawer-meta .meta-item {
+    @apply inline-flex min-w-0 items-center gap-1.5;
+  }
+
+  /* The item's own gap follows the dot, so its margins are uneven to sit it midway. */
+  .drawer-meta .meta-item::before {
+    content: "·";
+    @apply ml-2 mr-0.5 text-faint;
   }
 
   .drawer-meta .identity-link {
@@ -917,10 +939,6 @@ html.dark {
     @apply mt-1 text-[15px] leading-5 text-primary;
   }
 
-  .outcome-figure small {
-    @apply text-[11px] text-tertiary;
-  }
-
   .outcome-sub {
     @apply mt-0.5 min-h-[15px] text-caption text-tertiary;
   }
@@ -947,19 +965,20 @@ html.dark {
     @apply m-0 flex min-h-[18px] items-center gap-2 px-4 pb-2 text-table-header font-normal uppercase text-tertiary;
   }
 
-  /* Beside the title: its count or unit. At the far edge: a control or a reading. */
+  /* Beside the title: its count or unit, cut rather than wrapped so a head is
+     always one line. At the far edge: a control. */
   .sec-note,
   .sec-aside {
     @apply normal-case tracking-normal text-faint;
     font-variant-numeric: tabular-nums;
   }
 
-  .sec-aside {
-    @apply ml-auto;
+  .sec-note {
+    @apply min-w-0 truncate;
   }
 
-  .sec-aside b {
-    @apply font-normal text-primary;
+  .sec-aside {
+    @apply ml-auto shrink-0;
   }
 
   details.sec > summary {
@@ -1196,6 +1215,7 @@ html.dark {
     background: var(--color-divider-strong);
   }
   .drawer-head { padding-top: 14px; }
+  .drawer-title { flex-wrap: wrap; }
   .wide-toggle { display: none; }
 }
 

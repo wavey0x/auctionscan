@@ -99,6 +99,14 @@ it("keeps round counts and rows in place while an uncached status loads", async 
   expect(screen.queryByText("No rounds found")).toBeNull();
   expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(true);
 
+  // A row that is about to be replaced opens nothing, by keyboard or by pointer.
+  const stale = screen.getByRole("cell", { name: "R7" }).closest("tr")!;
+  expect(stale.getAttribute("aria-disabled")).toBe("true");
+  expect(stale.tabIndex).toBe(-1);
+  fireEvent.keyDown(stale, { key: "Enter" });
+  fireEvent.click(stale);
+  expect(router.state.location.pathname).toBe("/");
+
   await act(async () => { resolve({ ...roundList, rounds: [], total: 0 }); });
   await screen.findByText("No rounds found");
   expect(screen.queryByRole("status", { name: "Updating rounds" })).toBeNull();

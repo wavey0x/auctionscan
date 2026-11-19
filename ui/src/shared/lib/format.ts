@@ -138,6 +138,23 @@ export function formatPrice(value: string | number | null | undefined, maximumFr
   }).format(numeric);
 }
 
+/**
+ * A price to a fixed number of significant digits, so a figure that changes
+ * magnitude keeps a steady width: 146.484, 85.2477, 0.00602631.
+ */
+export function formatPriceSignificant(value: string | number | null | undefined, digits = 6): string {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+
+  return new Intl.NumberFormat("en-US", { maximumSignificantDigits: digits }).format(numeric);
+}
+
 export function formatUsd(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") {
     return "—";

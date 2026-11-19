@@ -1,7 +1,7 @@
 import type { Location } from "react-router-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import RoundDrawer, { useWideDrawer } from "../components/RoundDrawer";
+import RoundDrawer, { useIsSheet, useWideDrawer } from "../components/RoundDrawer";
 import RoundModalContent from "../components/RoundModalContent";
 import {
   buildLocationHref,
@@ -21,7 +21,9 @@ export default function RoundModalRoute() {
     auctionAddress: string;
   }>();
 
-  const [wide, toggleWide] = useWideDrawer();
+  const [wideChoice, toggleWide] = useWideDrawer();
+  // A sheet has no room for the workspace, whatever was chosen on a wider screen.
+  const wide = useIsSheet() ? false : wideChoice;
   const routeState = location.state as RoundRouteState | null;
   const hasRealBackground = Boolean(routeState?.backgroundLocation);
   const searchParams = new URLSearchParams(location.search);

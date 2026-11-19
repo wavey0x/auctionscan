@@ -32,7 +32,8 @@ source of truth; update this file.
 | 11px | Labels, table headers, sub-lines, units |
 | 12px | Table cells, controls, nav, tabs |
 | 13px | Body |
-| 16px | Wordmark, entity headings, the round number in the drawer |
+| 15px | Outcome figures in the round drawer |
+| 16px | Wordmark, entity headings, the round and pair in the drawer head |
 | 17px | Strip figures (15px on phones) |
 
 ## Colour
@@ -83,7 +84,7 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 - Columns drop by priority as the table's container narrows instead of scrolling sideways:
   `col-xl` under 1040px, `col-md` under 860px, `col-lo` under 620px. Once a column is gone its
   meaning moves into the identity cell's `sub-line`; text that only belongs on phones goes in a
-  `sub-lo` span.
+  `sub-lo` span. A round's takes add one tier, `col-xs` with `sub-xs`, under 440px.
 - Rounds keep Auction and PnL at every width. Round, progress and kick time go first, then status,
   lot and received, which move into the sub-line on phones.
 - Long token amounts clip inside `cell-clip` with an ellipsis; the full amount is on hover.
@@ -109,14 +110,31 @@ keep their row's tone: live green, expired amber, everything else neutral. An ea
   scrim. Under 760px it is a bottom sheet over a dimmed page.
 - Back, Esc, the close control and a click on nothing that acts close it. Another row, or ↑/↓, moves
   it there and replaces the history entry, so Back still closes the drawer.
-- Order: head, summary (lot, received, PnL, price now or execution, kicked), time and sold meters,
-  **takes**, a compact price chart, then kick-time settings collapsed by default.
+- It reads top to bottom as a receipt, and says nothing twice:
+  1. **Head**, two lines: the round number, the pair with its logos and the status; beneath, the
+     chain, version and auction address. Address utilities surface on hover.
+  2. **Outcome**, one row of three cells: Sold, Received, PnL. Each is a label, a 15px figure and its
+     dollar value on a quieter line, so the row reads as a sum: market value, proceeds, difference.
+     Before the first take the first cell is the Lot at its kick-time value. A live round adds a
+     fourth cell, Price now, over the kick quote.
+  3. **Facts**, one line: when it was kicked, how it ended (`sold in 10h 0m`) and the share sold if
+     the lot did not clear. A live round carries the drawer's only meter here.
+  4. **Takes**, one line each: take, taker, time since the kick, received, PnL. Opening a row shows
+     the rest. An empty list is `none` beside the heading.
+  5. **Price**: a compact chart under a key of the three prices worth comparing.
+  6. **Settings**, the kick-time parameters, collapsed by default.
+- Token logos appear in the head and in an opened take, not in rows. Units sit beside the outcome
+  figures and in column headers; rows of takes carry bare figures. Dollar values in the drawer are
+  written in full (`$1,627`), not compact.
+- A take's time is its distance from the kick (`+9h 57m`), which is also its place on the price
+  path; the timestamp is on hover and in the opened row.
 - The expand control widens it to an execution-review workspace (up to 1180px, remembered per
-  browser): every take column (tx, taker, time, sold, received, price, PnL), with the chart and the
-  settings side by side beneath.
+  browser, never on a sheet): every take column (tx, taker, time, sold, received, price, PnL), with
+  the chart and the settings side by side beneath.
 - The price chart draws the start price stepping down by its decay, the kick-time quote as a dashed
-  line, the minimum price when in range, each take as a dot, and a live round's current price.
-  Hovering reads the price at any moment of the round.
+  line, the minimum price when in range, each take as a dot, and a live round's current price. Its
+  key names the start, the quote and the average take. Hovering reads the price at any moment of
+  the round in the section head, so the key never moves.
 
 ## Motion
 

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "../../../shared/lib/format";
 
-const SHEET_QUERY = "(max-width: 700px)";
+/** Matches the stylesheet's phone breakpoint, where the drawer turns into a sheet. */
+const SHEET_QUERY = "(max-width: 760px)";
 
-function useIsSheet(): boolean {
+export function useIsSheet(): boolean {
   const [matches, setMatches] = useState(() => typeof window !== "undefined" && window.matchMedia?.(SHEET_QUERY).matches === true);
   useEffect(() => {
     const query = window.matchMedia?.(SHEET_QUERY);
@@ -35,7 +36,7 @@ const KEEP_OPEN_SELECTOR = [
 
 /**
  * The round workspace floats over the right of the list without a scrim, so
- * the list never moves when it opens. Under 700px it becomes a bottom sheet
+ * the list never moves when it opens. Under 760px it becomes a bottom sheet
  * over a dimmed page.
  */
 const WIDE_KEY = "round_drawer_wide";

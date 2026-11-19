@@ -17,11 +17,14 @@ export default function PriceSourceSelect({
   value,
   options,
   className,
+  quiet = false,
   onChange,
 }: {
   value: string;
   options: PriceSourceOption[];
   className?: string;
+  /** A flat, labelled trigger for places where the control should recede, such as the round drawer. */
+  quiet?: boolean;
   onChange: (nextValue: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -47,7 +50,7 @@ export default function PriceSourceSelect({
       const rect = trigger.getBoundingClientRect();
       const estimatedMenuHeight = Math.min(options.length * 33 + 2, MENU_MAX_HEIGHT);
       const width = Math.max(MENU_MIN_WIDTH, Math.ceil(rect.width));
-      const left = clamp(rect.left, VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
+      const left = clamp(quiet ? rect.right - width : rect.left, VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
       const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
       const spaceAbove = rect.top - VIEWPORT_MARGIN;
       const openUpwards = spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow;
@@ -82,7 +85,7 @@ export default function PriceSourceSelect({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [open, options.length]);
+  }, [open, options.length, quiet]);
 
   return (
     <div ref={rootRef} className={cn("relative inline-flex items-center", className)}>
@@ -90,21 +93,25 @@ export default function PriceSourceSelect({
         ref={buttonRef}
         type="button"
         className={cn(
-          "inline-flex h-6 min-w-[6.25rem] items-center justify-between gap-2 rounded-[6px] bg-hover px-2 font-mono text-[11px] font-normal leading-none text-primary transition-colors hover:bg-selected",
-          open && "bg-selected",
+          "inline-flex h-6 items-center font-mono text-[11px] font-normal leading-none transition-colors",
+          quiet
+            ? "-mr-1.5 gap-1.5 rounded-[4px] px-1.5 text-secondary hover:bg-hover hover:text-primary"
+            : "min-w-[6.25rem] justify-between gap-2 rounded-[6px] bg-hover px-2 text-primary hover:bg-selected",
+          open && (quiet ? "bg-hover text-primary" : "bg-selected"),
         )}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="Price source"
         onClick={() => setOpen((current) => !current)}
       >
+        {quiet ? <span className="text-faint">Source</span> : null}
         <span>{selected?.label ?? value}</span>
-        <ChevronDown className={cn("h-3.5 w-3.5 text-tertiary transition-transform", open && "rotate-180")} strokeWidth={1.8} />
+        <ChevronDown className={cn("text-tertiary transition-transform", quiet ? "h-3 w-3" : "h-3.5 w-3.5", open && "rotate-180")} strokeWidth={1.8} />
       </button>
       {open && menuPosition ? createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[95] overflow-hidden rounded-[8px] border border-divider bg-surface p-1 shadow-[var(--menu-shadow)]"
+          className="fixed z-[95] overflow-hidden rounded-[8px] border border-divider bg-surface p-1 shadow-[var(--overlay-shadow)]"
           style={{
             left: menuPosition.left,
             top: menuPosition.top,

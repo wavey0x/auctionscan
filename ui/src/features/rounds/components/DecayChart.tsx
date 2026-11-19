@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { formatCompactDateTime, formatDuration, formatPrice, parseTimestamp } from "../../../shared/lib/format";
 import type { RoundListItem, TakeListItem } from "../../../shared/types/api";
@@ -112,41 +112,40 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
 /**
  * The round's price path: the start price stepping down by its decay, the
  * kick-time market quote it should meet, and where each take landed on it.
+ * The key carries the three prices worth comparing; the reading under the
+ * pointer sits in the section head, so the key never reflows.
  */
 export default function DecayChart({
   round,
   takes,
   livePrice,
-  title,
+  unit,
   height = DEFAULT_HEIGHT,
 }: {
   round: RoundListItem;
   takes: TakeListItem[];
   livePrice?: string | null;
-  title?: ReactNode;
+  unit?: string;
   height?: number;
 }) {
   const model = useMemo(() => buildModel(round, takes), [round, takes]);
   if (!model) {
     return null;
   }
-  return (
-    <section className="sec">
-      {title}
-      <DecayPlot model={model} round={round} livePrice={livePrice} height={height} />
-    </section>
-  );
+  return <DecayPlot model={model} round={round} livePrice={livePrice} unit={unit} height={height} />;
 }
 
 function DecayPlot({
   model,
   round,
   livePrice,
+  unit,
   height: HEIGHT,
 }: {
   model: Model;
   round: RoundListItem;
   livePrice?: string | null;
+  unit?: string;
   height: number;
 }) {
   const { ref, width } = useWidth<HTMLDivElement>();
@@ -193,16 +192,28 @@ function DecayPlot({
     setHoverT(model.kick + ratio * (model.end - model.kick));
   };
 
+  const averageTake = positive(round.avg_execution_price);
+
   return (
-    <div className="chart" ref={ref}>
+    <section className="sec" aria-label="Price">
+      <h3 className="sec-head">
+        Price
+        {unit ? <span className="sec-note">{unit}</span> : null}
+        {hoverT !== null && hoverPrice !== null ? (
+          <span className="sec-aside">+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))} <b>{formatPrice(hoverPrice, 8)}</b></span>
+        ) : null}
+      </h3>
+      <div className="chart" ref={ref}>
       <div className="chart-key">
         <span><i className="key-line" />Start <b>{formatPrice(model.start, 8)}</b></span>
-        {model.quote !== null ? <span><i className="key-dash" />Kick quote <b>{formatPrice(model.quote, 8)}</b></span> : null}
-        {model.takes.length ? <span><i className="key-dot" />{model.takes.length === 1 ? "Take" : `${model.takes.length} takes`}</span> : null}
-        {hoverT !== null && hoverPrice !== null ? (
-          <span className="ml-auto">+{formatDuration(Math.max(0, Math.round(hoverT - model.kick)))} <b>{formatPrice(hoverPrice, 8)}</b></span>
-        ) : model.now !== null && marker?.price ? (
-          <span className="ml-auto">Now <b>{formatPrice(marker.price, 8)}</b></span>
+        {model.quote !== null ? <span title="Market quote per unit at kick"><i className="key-dash" />Quote <b>{formatPrice(model.quote, 8)}</b></span> : null}
+        {model.takes.length ? (
+          <span title={averageTake !== null ? `Average execution price from ${round.paid_take_count}/${round.take_count} takes with observed payment` : undefined}>
+            <i className="key-dot" />
+            {averageTake === null ? (model.takes.length === 1 ? "Take" : `${model.takes.length} takes`) : (
+              <>{model.takes.length === 1 ? "Take" : "Avg take"} <b>{formatPrice(averageTake, 8)}</b></>
+            )}
+          </span>
         ) : null}
       </div>
       {width > 0 ? (
@@ -253,6 +264,7 @@ function DecayPlot({
       ) : (
         <div style={{ height: HEIGHT }} />
       )}
-    </div>
+      </div>
+    </section>
   );
 }

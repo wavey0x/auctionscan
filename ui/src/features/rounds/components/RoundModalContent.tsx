@@ -1,17 +1,22 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronDown, Link2, Maximize2, Minimize2, X } from "lucide-react";
+import { ArrowRight, ChevronDown, Link2, Maximize2, Minimize2, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../../shared/api/client";
 import {
   cn,
+  coerceFiniteNumber,
+  formatAddress,
   formatAmount,
-  formatCompactUsd,
   formatDateTime,
   formatFullAmount,
   formatPrice,
+  formatSignedPercent,
+  formatSignedUsdDelta,
+  formatUsd,
   renderKickedValue,
+  signedMetricTone,
   toggleKickedDisplayMode,
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
@@ -23,12 +28,11 @@ import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import AuctionVersionBadge from "../../../shared/ui/AuctionVersionBadge";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
-import PnlValue from "../../../shared/ui/PnlValue";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
 import RequestError from "../../../shared/ui/RequestError";
 import RoundProgressMini from "../../../shared/ui/RoundProgressMini";
-import StatusBadge from "../../../shared/ui/StatusBadge";
-import TokenValue from "../../../shared/ui/TokenValue";
+import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
+import TokenLogo from "../../../shared/ui/TokenLogo";
 import { useRoundDetails } from "../useRoundDetails";
 import DecayChart from "./DecayChart";
 import RoundSettingsPanel from "./RoundSettingsPanel";
@@ -86,26 +90,58 @@ function ShareButton() {
   );
 }
 
-function SummaryItem({ label, children, title }: { label: string; children: ReactNode; title?: string }) {
+/** One figure of the round's result: its label, the figure, and a quieter line beneath. */
+function OutcomeCell({
+  label,
+  title,
+  children,
+  sub,
+  note,
+  noteTitle,
+}: {
+  label: string;
+  title?: string;
+  children: ReactNode;
+  sub?: ReactNode;
+  note?: string | null;
+  noteTitle?: string;
+}) {
   return (
-    <dl className="summary-item m-0 min-w-0" title={title}>
+    <div className="outcome-cell" title={title}>
       <dt>{label}</dt>
-      <dd className="truncate">{children}</dd>
-    </dl>
+      <dd className="outcome-figure">{children}</dd>
+      <dd className="outcome-sub">
+        {sub}
+        {note ? <span className={cn("stat-note", !sub && "!ml-0")} title={noteTitle}>{note}</span> : null}
+      </dd>
+    </div>
   );
 }
 
-function SectionHead({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+function SectionHead({ children, note, aside }: { children: ReactNode; note?: ReactNode; aside?: ReactNode }) {
   return (
     <h3 className="sec-head">
       {children}
+      {note !== null && note !== undefined && note !== "" ? <span className="sec-note">{note}</span> : null}
       {aside ? <span className="sec-aside">{aside}</span> : null}
     </h3>
   );
 }
 
-function ProgressRow({ round }: { round: RoundListItem }) {
-  const metrics = getRoundProgressMetrics({
+/**
+ * The round's timeline in one line: when it was kicked and how it ended. A
+ * live round adds the only meter, since it is the one thing still moving.
+ */
+function RoundFacts({
+  round,
+  kickedDisplayMode,
+  onToggleKicked,
+}: {
+  round: RoundListItem;
+  kickedDisplayMode: KickedDisplayMode;
+  onToggleKicked: () => void;
+}) {
+  const progress = {
     status: round.status,
     kickedAt: round.kicked_at,
     scheduledEndAt: round.scheduled_end_at,
@@ -114,36 +150,36 @@ function ProgressRow({ round }: { round: RoundListItem }) {
     initialAvailable: round.initial_available,
     soldAmount: round.sold_amount,
     fromTokenSymbol: round.from_token_symbol,
-  });
-  const common = {
-    status: round.status,
-    kickedAt: round.kicked_at,
-    scheduledEndAt: round.scheduled_end_at,
-    endAt: round.end_at,
-    availableAmount: round.available_amount,
-    initialAvailable: round.initial_available,
-    soldAmount: round.sold_amount,
-    fromTokenSymbol: round.from_token_symbol,
-    takeCount: round.take_count,
-    showFigure: false,
-    className: "w-full [&_.bar]:!w-full",
   };
+  const metrics = getRoundProgressMetrics(progress);
+  const elapsed = metrics.elapsedDurationLabel;
+  const live = round.status === "live";
+  const ending = round.status === "sold_out" ? "sold in" : round.status === "expired" ? "expired after" : "settled after";
+  const hasInventory = Number(round.initial_available ?? 0) > 0;
+  // An expiry that left only dust reads as sold; the share is worth stating once it rounds below 100%.
+  const showShare = hasInventory && Math.round(metrics.soldPercent) < 100 && (round.take_count > 0 || !live);
+
   return (
-    <div className="grid grid-cols-2 gap-x-5 px-4 pb-3">
-      <div className="min-w-0" title={metrics.timeDetail}>
-        <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="label">Time</span>
-          <span className="truncate text-[11px] text-tertiary">{formatPercent(metrics.timePercent)} · {metrics.timeDetail}</span>
-        </div>
-        <RoundProgressMini {...common} mode="time" />
-      </div>
-      <div className="min-w-0" title={metrics.soldDetail}>
-        <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="label">Sold</span>
-          <span className="truncate text-[11px] text-tertiary">{formatPercent(metrics.soldPercent)}</span>
-        </div>
-        <RoundProgressMini {...common} mode="take" />
-      </div>
+    <div className="facts">
+      <span>
+        Kicked{" "}
+        <button type="button" className="fact-value underline-offset-4 hover:underline" title={formatDateTime(round.kicked_at)} onClick={onToggleKicked}>
+          {renderKickedValue(round.kicked_at, kickedDisplayMode)}
+        </button>
+      </span>
+      {live ? (
+        <span title="Time elapsed of the scheduled length"><span className="fact-value">{metrics.timeDetail}</span></span>
+      ) : elapsed ? (
+        <span>{ending} <span className="fact-value">{elapsed}</span></span>
+      ) : (
+        <span>{statusLabel(round.status).toLowerCase()}</span>
+      )}
+      {!showShare ? null : round.take_count === 0 ? (
+        <span title={metrics.soldDetail}>nothing sold</span>
+      ) : (
+        <span title={metrics.soldDetail}><span className="fact-value">{formatPercent(metrics.soldPercent)}</span> of the lot sold</span>
+      )}
+      {live ? <RoundProgressMini {...progress} takeCount={round.take_count} mode="time" className="ml-auto" /> : null}
     </div>
   );
 }
@@ -152,20 +188,26 @@ function DrawerSkeleton({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true">
       <header className="drawer-head">
-        <span className="skeleton-bar w-10" />
-        <span className="skeleton-bar w-16" />
-        <span className="skeleton-bar w-28" />
-        <div className="ml-auto"><ModalCloseButton onClose={onClose} /></div>
+        <div className="min-w-0 flex-1">
+          <div className="drawer-title">
+            <span className="skeleton-bar w-8" />
+            <span className="skeleton-bar w-36" />
+          </div>
+          <div className="drawer-meta"><span className="skeleton-bar w-28" /></div>
+        </div>
+        <ModalCloseButton onClose={onClose} />
       </header>
       <div className="drawer-scroll">
-        <div className="drawer-summary">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="space-y-2">
+        <div className="outcome">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="space-y-2.5 py-0.5">
               <span className="skeleton-bar w-10" />
-              <span className="skeleton-bar w-20" />
+              <span className="skeleton-bar w-24" />
+              <span className="skeleton-bar w-14" />
             </div>
           ))}
         </div>
+        <div className="facts"><span className="skeleton-bar w-48" /></div>
         <div className="space-y-4 border-t border-divider-subtle px-4 pt-4">
           <span className="skeleton-bar w-14" />
           {Array.from({ length: 3 }).map((_, index) => (
@@ -303,8 +345,8 @@ export default function RoundModalContent({
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <header className="drawer-head">
-          <span className="text-heading font-medium text-primary">Round detail</span>
-          <div className="ml-auto"><ModalCloseButton onClose={onClose} /></div>
+          <div className="drawer-title flex-1">Round detail</div>
+          <ModalCloseButton onClose={onClose} />
         </header>
         <div className="drawer-scroll">
           {!validRound ? <EmptyState title="Invalid round link" /> : roundQuery.isError && !roundNotFound ? (
@@ -316,16 +358,29 @@ export default function RoundModalContent({
   }
 
   const roundPricing = getRoundPricingBySource(round, selectedPriceSource);
-  const lotAmount = round.initial_available ?? round.sold_amount;
-  const lotUsd = round.kick_market_quote_usd ?? roundPricing.total_market_quote_usd ?? null;
-  const receivedUsd = round.total_actual_paid_usd ? formatCompactUsd(round.total_actual_paid_usd) : null;
+  const fromSymbol = round.from_token_symbol || formatAddress(round.from_token, 6);
+  const wantSymbol = round.want_token_symbol || formatAddress(round.want_token, 6);
+  const hasTakes = round.take_count > 0;
+  // Once something has sold, the first figure is what the result is measured
+  // on: the amount sold, valued at the market quote that PnL compares against.
+  const offered = hasTakes ? round.sold_amount : round.initial_available ?? round.sold_amount;
+  const offeredUsd = hasTakes ? roundPricing.total_market_quote_usd : round.kick_market_quote_usd;
+  const pricedTakes = roundPricing.priced_take_count ?? 0;
+  const usdPricedTakes = roundPricing.usd_priced_take_count ?? 0;
+  const pnlPercent = coerceFiniteNumber(roundPricing.total_auction_profit_bps);
+  const pnlUsd = coerceFiniteNumber(roundPricing.total_auction_profit_usd);
+  const livePriceUnavailable = roundQuery.isError || livePriceQuery.isError || !priceReference;
+
+  // Absence is only stated once a response has confirmed it, never while loading or failed.
+  const takesNote = takesQuery.data && !takesNotFound ? takes.length || (round.status === "live" ? "none yet" : "none") : null;
 
   const takesSection = (
     <section className="sec" aria-label="Takes">
       <SectionHead
+        note={takesNote}
         aside={showPriceSourceSelector ? (
-          <PriceSourceSelect value={selectedPriceSource} options={sourceOptions} onChange={setPriceSource} />
-        ) : takes.length ? `${takes.length}` : null}
+          <PriceSourceSelect quiet value={selectedPriceSource} options={sourceOptions} onChange={setPriceSource} />
+        ) : null}
       >
         Takes
       </SectionHead>
@@ -335,9 +390,12 @@ export default function RoundModalContent({
         <div className="space-y-3 px-4 py-3">
           {Array.from({ length: 3 }).map((_, index) => <span key={index} className="skeleton-bar w-full" />)}
         </div>
-      ) : takesNotFound || (takesQuery.isError && !takesQuery.data) ? null : (
+      ) : takesNotFound || (takesQuery.isError && !takesQuery.data) || !takes.length ? null : (
         <RoundTakesTable
           takes={takes}
+          kickedAt={round.kicked_at}
+          fromSymbol={fromSymbol}
+          wantSymbol={wantSymbol}
           priceSource={selectedPriceSource}
           selectedOccurrenceKey={selectedTakeParam}
           selectedTake={selectedTake}
@@ -354,7 +412,7 @@ export default function RoundModalContent({
       takes={takes}
       height={wide ? 132 : 92}
       livePrice={displayedLivePrice?.current_price ?? null}
-      title={<SectionHead aside={`${round.want_token_symbol ?? "want"} per ${round.from_token_symbol ?? "unit"}`}>Price</SectionHead>}
+      unit={`${wantSymbol} per ${fromSymbol}`}
     />
   );
 
@@ -373,14 +431,25 @@ export default function RoundModalContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="drawer-head">
-        <ChainIcon chainId={round.chain_id} />
-        <span className="text-heading text-primary">R{round.round_id}</span>
-        <StatusBadge status={round.status} className="ml-1" />
-        <span className="ml-3 hidden min-w-0 items-center gap-1.5 sm:inline-flex">
-          <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
-          <AuctionVersionBadge version={round.version ?? auctionQuery.data?.version} />
-        </span>
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <div className="min-w-0 flex-1">
+          <div className="drawer-title">
+            <span className="shrink-0 text-tertiary">R{round.round_id}</span>
+            <span className="pair" title={`${round.from_token_name ?? fromSymbol} → ${round.want_token_name ?? wantSymbol}`}>
+              <TokenLogo logoUrl={round.from_token_logo_url} symbol={fromSymbol} size="md" />
+              <span className="truncate">{fromSymbol}</span>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={1.5} aria-hidden="true" />
+              <TokenLogo logoUrl={round.want_token_logo_url} symbol={wantSymbol} size="md" />
+              <span className="truncate">{wantSymbol}</span>
+            </span>
+            <StatusBadge status={round.status} className="ml-1 shrink-0" />
+          </div>
+          <div className="drawer-meta reveal-row">
+            <ChainIcon chainId={round.chain_id} size="xs" />
+            <AuctionVersionBadge version={round.version ?? auctionQuery.data?.version} />
+            <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
           {onToggleWide ? (
             <span className="wide-toggle">
               <IconButton label={wide ? "Narrow the round workspace" : "Expand the round workspace"} onClick={onToggleWide}>
@@ -398,52 +467,50 @@ export default function RoundModalContent({
         {auctionQuery.isError && <RequestError message={auctionQuery.data ? "Could not refresh auction. Showing previously loaded data." : "Unable to load auction details."} onRetry={() => { void auctionQuery.refetch(); }} />}
         {auctionQuery.isSuccess && auctionQuery.data === null && <EmptyState title="Auction not found" className="py-4" />}
 
-        <div className="drawer-summary">
-          <SummaryItem label="Lot" title={[formatFullAmount(lotAmount), round.from_token_symbol].filter(Boolean).join(" ")}>
-            {formatAmount(lotAmount)} <span className="text-tertiary">{round.from_token_symbol}</span>
-            {lotUsd ? <span className="usd-note ml-1.5">{formatCompactUsd(lotUsd)}</span> : null}
-          </SummaryItem>
-          <SummaryItem
-            label="Received"
-            title={`${[formatFullAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ")}${round.paid_take_count < round.take_count ? ` · payment observed for ${round.paid_take_count} of ${round.take_count} takes` : ""}`}
+        <dl className={cn("outcome", round.is_active && "is-four")}>
+          <OutcomeCell
+            label={hasTakes ? "Sold" : "Lot"}
+            title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}`}
+            sub={offeredUsd ? formatUsd(offeredUsd) : null}
+            note={hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
+            noteTitle={`Market value known for ${usdPricedTakes} of ${round.take_count} takes`}
           >
-            <span className="inline-flex max-w-full items-center gap-1.5">
-              <TokenValue
-                address={round.want_token}
-                symbol={[formatAmount(round.paid_amount), round.want_token_symbol].filter(Boolean).join(" ").trim() || "—"}
-                logoUrl={round.want_token_logo_url}
-                chainId={round.chain_id}
-                showCopy={false}
-              />
-              {receivedUsd ? <span className="usd-note shrink-0">{receivedUsd}</span> : null}
-            </span>
-          </SummaryItem>
-          <SummaryItem label="PnL" title={`Quoted for ${roundPricing.priced_take_count ?? 0} of ${round.take_count} takes; USD for ${roundPricing.usd_priced_take_count ?? 0}`}>
-            <PnlValue percent={roundPricing.total_auction_profit_bps} usd={roundPricing.total_auction_profit_usd} />
-          </SummaryItem>
+            {formatAmount(offered)} <small>{fromSymbol}</small>
+          </OutcomeCell>
+          <OutcomeCell
+            label="Received"
+            title={hasTakes ? `${formatFullAmount(round.paid_amount)} ${wantSymbol}` : undefined}
+            sub={round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : null}
+            note={round.paid_take_count < round.take_count ? "partial" : null}
+            noteTitle={`Payment observed for ${round.paid_take_count} of ${round.take_count} takes`}
+          >
+            {hasTakes && round.paid_amount ? <>{formatAmount(round.paid_amount)} <small>{wantSymbol}</small></> : <span className="text-faint">—</span>}
+          </OutcomeCell>
+          <OutcomeCell
+            label="PnL"
+            title={hasTakes ? `Against the market quote. Quoted for ${pricedTakes} of ${round.take_count} takes; USD for ${usdPricedTakes}` : undefined}
+            sub={pnlUsd !== null ? formatSignedUsdDelta(pnlUsd) : null}
+            note={hasTakes && pnlPercent !== null && pricedTakes < round.take_count ? "partial" : null}
+            noteTitle={`Quoted for ${pricedTakes} of ${round.take_count} takes`}
+          >
+            {pnlPercent !== null || pnlUsd !== null ? (
+              <span className={signedMetricTone(pnlPercent ?? pnlUsd)}>{formatSignedPercent(pnlPercent)}</span>
+            ) : <span className="text-faint">—</span>}
+          </OutcomeCell>
           {round.is_active ? (
-            <SummaryItem label="Price now" title={displayedLivePrice ? `At indexed block ${displayedLivePrice.indexed_block}` : undefined}>
-              {displayedLivePrice?.current_price ? formatPrice(displayedLivePrice.current_price, 8) : (
-                <span className="text-tertiary">{roundQuery.isError || livePriceQuery.isError || !priceReference ? "unavailable" : "—"}</span>
-              )}
-            </SummaryItem>
-          ) : round.take_count > 0 ? (
-            <SummaryItem label="Execution" title={`Average execution price from ${round.paid_take_count}/${round.take_count} takes with observed payment`}>
-              {round.avg_execution_price ? formatPrice(round.avg_execution_price, 8) : <span className="text-faint">—</span>}
-            </SummaryItem>
-          ) : null}
-          <SummaryItem label="Kicked" title={formatDateTime(round.kicked_at)}>
-            <button
-              type="button"
-              className="underline-offset-4 hover:underline"
-              onClick={() => setKickedDisplayMode(toggleKickedDisplayMode)}
+            <OutcomeCell
+              label="Price now"
+              title={displayedLivePrice ? `${wantSymbol} per ${fromSymbol} at indexed block ${displayedLivePrice.indexed_block}` : undefined}
+              sub={round.expected_price_per_unit ? `quote ${formatPrice(round.expected_price_per_unit, 8)}` : null}
             >
-              {renderKickedValue(round.kicked_at, kickedDisplayMode)}
-            </button>
-          </SummaryItem>
-        </div>
+              {displayedLivePrice?.current_price ? formatPrice(displayedLivePrice.current_price, 8) : (
+                <span className="text-faint">{livePriceUnavailable ? "unavailable" : "—"}</span>
+              )}
+            </OutcomeCell>
+          ) : null}
+        </dl>
 
-        <ProgressRow round={round} />
+        <RoundFacts round={round} kickedDisplayMode={kickedDisplayMode} onToggleKicked={() => setKickedDisplayMode(toggleKickedDisplayMode)} />
 
         {takesSection}
 

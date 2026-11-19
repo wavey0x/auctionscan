@@ -553,9 +553,20 @@ html.dark {
   }
 
   /* A row's second line, shown once the table has dropped the columns it stands for. */
-  .sub-line {
+  .sub-line,
+  .sub-xs {
     display: none;
     @apply mt-0.5 truncate text-[11px] leading-[14px] text-tertiary;
+  }
+
+  /* Percent and dollar delta each keep their own right edge down the column. */
+  .takes-table .take-pnl .usd-note {
+    @apply min-w-[8ch] text-right;
+  }
+
+  /* A header's unit: the token a column of bare figures is counted in. */
+  .th-unit {
+    @apply ml-1 normal-case tracking-normal text-faint;
   }
 
   .sub-lo {
@@ -804,8 +815,25 @@ html.dark {
     outline: 0;
   }
 
+  /* Identity on two lines: what the round is, then where it lives. */
   .drawer-head {
-    @apply flex h-12 shrink-0 items-center gap-2 border-b border-divider pl-4 pr-2;
+    @apply flex shrink-0 items-start gap-2 border-b border-divider py-2.5 pl-4 pr-2;
+  }
+
+  .drawer-title {
+    @apply flex h-7 min-w-0 items-center gap-2.5 text-heading text-primary;
+  }
+
+  .drawer-title .pair {
+    @apply inline-flex min-w-0 items-center gap-1.5;
+  }
+
+  .drawer-meta {
+    @apply mt-0.5 flex h-[18px] min-w-0 items-center gap-2 text-data text-tertiary;
+  }
+
+  .drawer-meta .identity-link {
+    @apply text-secondary;
   }
 
   .drawer-scroll {
@@ -814,18 +842,58 @@ html.dark {
     scrollbar-width: thin;
   }
 
-  .drawer-summary {
-    @apply grid gap-x-5 gap-y-3 px-4 py-3;
-    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  /* The result reads left to right as one statement: gave, got, difference.
+     Each cell is a label, a figure and its dollar value on a quieter line. */
+  .outcome {
+    @apply m-0 grid gap-x-4 gap-y-3 px-4 pt-3.5;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .summary-item dt {
+  .outcome.is-four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .drawer.is-wide .outcome {
+    grid-template-columns: repeat(4, minmax(0, 14rem));
+  }
+
+  .outcome-cell {
+    @apply min-w-0;
+  }
+
+  .outcome-cell dt {
     @apply text-table-header uppercase text-tertiary;
   }
 
-  .summary-item dd {
-    @apply m-0 mt-1 whitespace-nowrap text-data text-primary;
+  .outcome-cell dd {
+    @apply m-0 truncate whitespace-nowrap;
     font-variant-numeric: tabular-nums;
+  }
+
+  .outcome-figure {
+    @apply mt-1 text-[15px] leading-5 text-primary;
+  }
+
+  .outcome-figure small {
+    @apply text-[11px] text-tertiary;
+  }
+
+  .outcome-sub {
+    @apply mt-0.5 min-h-[15px] text-caption text-tertiary;
+  }
+
+  .facts {
+    @apply flex min-h-[18px] flex-wrap items-center gap-x-2.5 gap-y-1 px-4 pb-3.5 pt-2.5 text-data text-tertiary;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .facts > span + span:not(.meter)::before {
+    content: "·";
+    @apply mr-2.5 text-faint;
+  }
+
+  .fact-value {
+    @apply text-secondary;
   }
 
   .sec {
@@ -833,11 +901,22 @@ html.dark {
   }
 
   .sec-head {
-    @apply m-0 flex items-center justify-between gap-3 px-4 pb-2 text-table-header font-normal uppercase text-tertiary;
+    @apply m-0 flex min-h-[18px] items-center gap-2 px-4 pb-2 text-table-header font-normal uppercase text-tertiary;
+  }
+
+  /* Beside the title: its count or unit. At the far edge: a control or a reading. */
+  .sec-note,
+  .sec-aside {
+    @apply normal-case tracking-normal text-faint;
+    font-variant-numeric: tabular-nums;
   }
 
   .sec-aside {
-    @apply normal-case tracking-normal text-faint;
+    @apply ml-auto;
+  }
+
+  .sec-aside b {
+    @apply font-normal text-primary;
   }
 
   details.sec > summary {
@@ -1073,7 +1152,8 @@ html.dark {
     border-radius: 2px;
     background: var(--color-divider-strong);
   }
-  .drawer-head { height: 52px; padding-top: 6px; }
+  .drawer-head { padding-top: 14px; }
+  .outcome.is-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wide-toggle { display: none; }
 }
 
@@ -1092,6 +1172,19 @@ html.dark {
   .col-lo { display: none !important; }
   .sub-lo { display: inline; }
   .cell-clip { max-width: 7.5rem; }
+}
+
+/* A round's takes stay one line each down to the drawer's width; only on a
+   phone does the time move under the taker and the PnL stack to match. */
+@container table (max-width: 540px) {
+  .takes-table .copy-trigger { display: none !important; }
+}
+
+@container table (max-width: 440px) {
+  .col-xs { display: none !important; }
+  .sub-xs { display: block; }
+  .take-pnl { flex-direction: column; align-items: flex-end; gap: 1px; }
+  .takes-table .take-pnl .usd-note { min-width: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -127,13 +127,15 @@ it.each([roundPath, `/auction/1/${address}`])("keeps %s visible while takes load
   vi.mocked(api.getAuctionTakes).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
   mount(path);
   await screen.findByText(path === roundPath ? "R7" : "Recent takes");
-  expect(screen.queryByText(/No (recent takes|takes in this round)/)).toBeNull();
+  // The round drawer states an empty list as "none" beside its Takes heading.
+  const empty = path === roundPath ? "none" : "No recent takes";
+  expect(screen.queryByText(empty)).toBeNull();
   await act(async () => reject(new Error("offline")));
   await screen.findByText("Unable to load takes.");
-  expect(screen.queryByText(/No (recent takes|takes in this round)/)).toBeNull();
+  expect(screen.queryByText(empty)).toBeNull();
   vi.mocked(api.getAuctionTakes).mockResolvedValue({ ...takeList, takes: [] });
   retry("Unable to load takes.");
-  await screen.findByText(path === roundPath ? "No takes in this round" : "No recent takes");
+  await screen.findByText(empty);
 });
 
 it.each([roundPath, `/auction/1/${address}`])("retains takes in %s after their refresh fails", async (path) => {

@@ -275,6 +275,20 @@ html.dark {
     @apply flex flex-wrap items-end justify-between gap-x-4 gap-y-2;
   }
 
+  /* An auction opened on the rounds list: its identity on one line and its
+     facts on the next, heading the card its rounds are listed in. */
+  .scope-head {
+    @apply border-b border-divider px-3 pb-3 pt-2.5 md:px-4;
+  }
+
+  .scope-title {
+    @apply flex min-h-[28px] min-w-0 items-center gap-x-3;
+  }
+
+  .scope-facts {
+    @apply m-0 mt-2 flex flex-wrap items-start gap-x-7 gap-y-2.5;
+  }
+
   .page-title {
     @apply text-title text-primary;
   }
@@ -548,9 +562,24 @@ html.dark {
     @apply mt-0.5 truncate text-[11px] leading-[14px] text-tertiary;
   }
 
-  /* Percent and dollar delta each keep their own right edge down the column. */
-  .takes-table .take-pnl .usd-note {
-    @apply min-w-[8ch] text-right;
+  /* A take's transaction on the explorer: on every row at every width, not
+     surfaced on hover like a row's other utilities. */
+  .tx-link {
+    @apply inline-flex h-[18px] items-center gap-1 text-secondary;
+    transition: color 0.1s;
+  }
+
+  .tx-link > span {
+    @apply text-primary underline-offset-4;
+  }
+
+  .tx-link:hover {
+    @apply text-primary;
+  }
+
+  .tx-link:hover > span {
+    text-decoration: underline;
+    text-decoration-color: var(--color-tertiary);
   }
 
   /* A header's unit: the token a column of bare figures is counted in. */
@@ -860,7 +889,7 @@ html.dark {
   }
 
   /* The result reads left to right as one statement: gave, got, difference.
-     Each cell is a label, a figure and its dollar value on a quieter line. */
+     Each cell is a label and one figure, in tokens or in dollars. */
   .outcome {
     @apply m-0 grid gap-x-4 gap-y-3 px-4 pt-3.5;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -901,6 +930,18 @@ html.dark {
     @apply mt-0.5 min-h-[15px] text-caption text-tertiary;
   }
 
+  /* A figure that switches the round between tokens and dollars when clicked. */
+  .figure-toggle {
+    @apply cursor-pointer underline-offset-4;
+    font: inherit;
+    font-variant-numeric: inherit;
+  }
+
+  .figure-toggle:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--color-tertiary);
+  }
+
   .facts {
     @apply flex min-h-[18px] flex-wrap items-center gap-x-2.5 gap-y-1 px-4 pb-3.5 pt-2.5 text-data text-tertiary;
     font-variant-numeric: tabular-nums;
@@ -939,8 +980,16 @@ html.dark {
     @apply ml-auto shrink-0;
   }
 
+  /* A section that opens in place. Its whole head is the control: the mark
+     that says so sits beside the word, and the head fills like a row when
+     pointed at. */
+  details.sec {
+    @apply pt-0;
+  }
+
   details.sec > summary {
-    @apply cursor-pointer list-none;
+    @apply cursor-pointer list-none pt-2.5;
+    transition: background 0.1s;
   }
 
   details.sec > summary::-webkit-details-marker {
@@ -948,8 +997,12 @@ html.dark {
   }
 
   details.sec > summary .sec-head {
-    @apply pb-2.5;
+    @apply gap-1.5 pb-2.5;
     transition: color 0.1s;
+  }
+
+  details.sec > summary:hover {
+    @apply bg-hover;
   }
 
   details.sec > summary:hover .sec-head {
@@ -1194,7 +1247,7 @@ html.dark {
 }
 
 /* A round's takes stay one line each down to the drawer's width; only on a
-   phone does the time move under the taker and the PnL stack to match. */
+   phone does the time move under the taker. */
 @container table (max-width: 540px) {
   .takes-table .copy-trigger { display: none !important; }
 }
@@ -1202,8 +1255,6 @@ html.dark {
 @container table (max-width: 440px) {
   .col-xs { display: none !important; }
   .sub-xs { display: block; }
-  .take-pnl { flex-direction: column; align-items: flex-end; gap: 1px; }
-  .takes-table .take-pnl .usd-note { min-width: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

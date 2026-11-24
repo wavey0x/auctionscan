@@ -6,7 +6,6 @@ import { ApiError, api } from "../shared/api/client";
 import { useRefreshFailing } from "../shared/lib/refreshState";
 import { buildRoundPath, occurrenceKey } from "../shared/lib/routes";
 import type { AuctionDetails, RoundDetailResponse, TakeDetail, TakerDetail, TakerSummary } from "../shared/types/api";
-import AuctionPage from "../features/auctions/pages/AuctionPage";
 import RoundModalContent from "../features/rounds/components/RoundModalContent";
 import RoundsPage from "../features/rounds/pages/RoundsPage";
 import SearchPage from "../features/search/pages/SearchPage";
@@ -64,7 +63,7 @@ afterEach(() => { cleanup(); router?.dispose(); client.clear(); vi.restoreAllMoc
 function mount(path: string) {
   router = createMemoryRouter([
     { path: "/", element: <RoundsPage /> },
-    { path: "/auction/:chainId/:address", element: <AuctionPage /> },
+    { path: "/auction/:chainId/:address", element: <RoundsPage /> },
     { path: "/round/:chainId/:auctionAddress/:roundId", element: <RoundModalContent onClose={() => {}} /> },
     { path: "/taker/:address", element: <TakerProfilePage /> },
     { path: "/takers", element: <TakersPage /> },

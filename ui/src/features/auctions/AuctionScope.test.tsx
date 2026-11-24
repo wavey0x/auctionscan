@@ -2,10 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../shared/api/client";
-import { buildAuctionPath, buildRoundPathWithSource, occurrenceKey } from "../../../shared/lib/routes";
-import type { AuctionDetails, RoundListItem, TakeDetail } from "../../../shared/types/api";
-import AuctionPage from "./AuctionPage";
+import { api } from "../../shared/api/client";
+import { buildAuctionPath, buildRoundPathWithSource, occurrenceKey } from "../../shared/lib/routes";
+import type { AuctionDetails, RoundListItem, TakeDetail } from "../../shared/types/api";
+import RoundsPage from "../rounds/pages/RoundsPage";
+
+// An auction is the rounds list narrowed to it: the same page at /auction/:chainId/:address.
 
 const auction = `0x${"a".repeat(40)}`;
 const occurrence = { chain_id: 1, block_hash: `0x${"b".repeat(64)}`, tx_hash: `0x${"c".repeat(64)}`, log_index: 4 };
@@ -36,7 +38,8 @@ let router: ReturnType<typeof createMemoryRouter>;
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "getAuction").mockResolvedValue(details);
-  vi.spyOn(api, "getRounds").mockResolvedValue({ as_of: {}, rounds: [round], total: 21, status_counts: { all: 21, live: 0, sold_out: 0, expired: 0, settled: 21 }, page: 1, per_page: 10, has_next: true });
+  // The pager follows the page the response says it holds, so the stub answers with the page asked for.
+  vi.spyOn(api, "getRounds").mockImplementation(async (params) => ({ as_of: {}, rounds: [round], total: 21, status_counts: { all: 21, live: 0, sold_out: 0, expired: 0, settled: 21 }, page: params.page ?? 1, per_page: 20, has_next: true }));
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue({ as_of: {}, takes: [take], available_price_sources: [] });
   vi.spyOn(api, "getTake").mockResolvedValue(take);
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
@@ -45,7 +48,8 @@ afterEach(() => { cleanup(); router?.dispose(); client.clear(); vi.restoreAllMoc
 
 async function mount(search = "?priceSource=canonical&keep=yes") {
   router = createMemoryRouter([
-    { path: "/auction/:chainId/:address", element: <AuctionPage /> },
+    { path: "/", element: <RoundsPage /> },
+    { path: "/auction/:chainId/:address", element: <RoundsPage /> },
     { path: "/round/:chainId/:auctionAddress/:roundId", element: <div>Round destination</div> },
   ], { initialEntries: [buildAuctionPath(1, auction) + search] });
   render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
@@ -53,15 +57,47 @@ async function mount(search = "?priceSource=canonical&keep=yes") {
 }
 
 function roundRow() {
-  return screen.getByRole("cell", { name: /^R7 Settled/ }).closest("tr")!;
+  // The recent takes beneath name their round too; the row meant is the one in the rounds table.
+  return within(screen.getByRole("region", { name: "Rounds" })).getByRole("cell", { name: /^R7\b/ }).closest("tr")!;
 }
+
+it("lists the auction's rounds under its own head, without an auction column", async () => {
+  await mount("");
+  expect(api.getRounds).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "all", chain_id: 1, auction_address: auction, page: 1, limit: 20 }), expect.any(AbortSignal),
+  );
+  expect(screen.getByRole("heading", { level: 1 }).textContent?.toLowerCase()).toContain("0xaaaa");
+  expect(screen.getAllByRole("columnheader").map((header) => header.textContent)[0]).toBe("Round");
+  expect(screen.queryByRole("columnheader", { name: "Auction" })).toBeNull();
+  // The auction fixes the chain, so it is not offered as a filter.
+  expect(screen.queryByRole("group", { name: "Chain" })).toBeNull();
+  expect(screen.getByRole("group", { name: "Round status" })).toBeTruthy();
+});
+
+it("narrows an auction's rounds by status without leaving it", async () => {
+  await mount("?keep=yes");
+  fireEvent.click(within(screen.getByRole("group", { name: "Round status" })).getByRole("button", { name: /^Expired/ }));
+  await waitFor(() => expect(api.getRounds).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "expired", chain_id: 1, auction_address: auction }), expect.any(AbortSignal),
+  ));
+  expect(router.state.location.pathname).toBe(buildAuctionPath(1, auction));
+  expect(new URLSearchParams(router.state.location.search)).toEqual(new URLSearchParams("keep=yes&status=expired"));
+});
+
+it("closes the auction back to the whole list", async () => {
+  await mount("");
+  fireEvent.click(screen.getByRole("button", { name: "Show all rounds" }));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  await waitFor(() => expect(screen.getAllByRole("columnheader").map((header) => header.textContent)[0]).toBe("Auction"));
+  expect(screen.queryByRole("region", { name: "Recent takes" })).toBeNull();
+});
 
 it("changes pages while preserving selection and unrelated query parameters", async () => {
   const key = occurrenceKey(take.occurrence);
   await mount(`?take=${key}&priceSource=canonical&keep=yes`);
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   await waitFor(() => expect(api.getRounds).toHaveBeenCalledWith(
-    { chain_id: 1, auction_address: auction, page: 2, limit: 10 }, expect.any(AbortSignal),
+    expect.objectContaining({ chain_id: 1, auction_address: auction, page: 2, limit: 20 }), expect.any(AbortSignal),
   ));
   expect(new URLSearchParams(router.state.location.search)).toEqual(new URLSearchParams(`take=${key}&priceSource=canonical&keep=yes&page=2`));
   fireEvent.click(await screen.findByRole("button", { name: "Previous page" }));

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowRight, ChevronDown, Link2, Maximize2, Minimize2, X } from "lucide-react";
+import { ArrowRight, ChevronRight, Link2, Maximize2, Minimize2, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../../shared/api/client";
@@ -22,6 +22,7 @@ import {
   toggleKickedDisplayMode,
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
+import { useDenomination } from "../../../shared/lib/denomination";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
 import { getRoundProgressMetrics, getSaleOutcome } from "../../../shared/lib/roundProgress";
 import { useChainsQuery } from "../../../shared/lib/chains";
@@ -91,7 +92,12 @@ function ShareButton() {
   );
 }
 
-/** One figure of the round's result: its label, the figure, and a quieter line beneath. */
+/**
+ * One figure of a round: its label and the figure. A cell that passes `sub`
+ * keeps a quieter line beneath for context the figure cannot carry; a cell
+ * that passes `onToggle` gives its figure once, in tokens or in dollars, and
+ * clicking it switches every such figure in the round.
+ */
 function OutcomeCell({
   label,
   title,
@@ -99,6 +105,7 @@ function OutcomeCell({
   sub,
   note,
   noteTitle,
+  onToggle,
 }: {
   label: string;
   title?: string;
@@ -106,18 +113,27 @@ function OutcomeCell({
   sub?: ReactNode;
   note?: string | null;
   noteTitle?: string;
+  onToggle?: () => void;
 }) {
+  const noteMark = note ? <span className="stat-note" title={noteTitle}>{note}</span> : null;
   return (
     <div className="outcome-cell" title={title}>
       <dt>{label}</dt>
-      <dd className="outcome-figure">{children}</dd>
-      <dd className="outcome-sub">
-        {sub}
-        {note ? <span className={cn("stat-note", !sub && "!ml-0")} title={noteTitle}>{note}</span> : null}
+      <dd className="outcome-figure">
+        {onToggle ? <button type="button" className="figure-toggle" onClick={onToggle}>{children}</button> : children}
+        {sub === undefined ? noteMark : null}
       </dd>
+      {sub === undefined ? null : (
+        <dd className="outcome-sub">
+          {sub}
+          {note ? <span className={cn("stat-note", !sub && "!ml-0")} title={noteTitle}>{note}</span> : null}
+        </dd>
+      )}
     </div>
   );
 }
+
+const dash = <span className="text-faint">—</span>;
 
 function SectionHead({ children, note, aside }: { children: ReactNode; note?: ReactNode; aside?: ReactNode }) {
   return (
@@ -324,6 +340,8 @@ export default function RoundModalContent({
   const [searchParams, setSearchParams] = useSearchParams();
   const [kickedDisplayMode, setKickedDisplayMode] = useState<KickedDisplayMode>("absolute");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [denomination, toggleDenomination] = useDenomination();
+  const inUsd = denomination === "usd";
 
   const chain = Number(chainId);
   // The chain is worth a mark only once there is more than one to tell apart.
@@ -480,6 +498,8 @@ export default function RoundModalContent({
           fromSymbol={fromSymbol}
           wantSymbol={wantSymbol}
           priceSource={selectedPriceSource}
+          denomination={denomination}
+          onToggleDenomination={toggleDenomination}
           selectedOccurrenceKey={selectedTakeParam}
           selectedTake={selectedTake}
           isSelectedTakeLoading={selectedTakeQuery.isLoading}
@@ -514,39 +534,45 @@ export default function RoundModalContent({
 
   // What the round achieved. A cell exists only once there is something to put
   // in it: a live round shows this row after its first take, and a round that
-  // ended without one shows the lot alone.
+  // ended without one shows the lot alone. Each figure is given once, in the
+  // round's tokens or in dollars; clicking one switches them all.
+  const switchHint = inUsd ? "Click for token amounts" : "Click for dollar values";
+  const paidUsd = round.total_actual_paid_usd;
+  const paidCount = inUsd ? round.paid_usd_take_count : round.paid_take_count;
+  const pnlCount = inUsd ? usdPricedTakes : pricedTakes;
+  const pnlFigure = inUsd ? pnlUsd : pnlPercent;
   const resultRow = !hasTakes && live ? null : (
     <dl className={cn("outcome", live && "outcome-ruled outcome-end")}>
       <OutcomeCell
         label={hasTakes ? "Sold" : "Lot"}
-        title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}`}
-        sub={offeredUsd ? formatUsd(offeredUsd) : null}
-        note={hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
+        title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}\n${switchHint}`}
+        note={inUsd && offeredUsd && hasTakes && usdPricedTakes < round.take_count ? "partial" : null}
         noteTitle={`Market value known for ${usdPricedTakes} of ${round.take_count} takes`}
+        onToggle={toggleDenomination}
       >
-        {formatAmount(offered)}
+        {inUsd ? (offeredUsd ? formatUsd(offeredUsd) : dash) : formatAmount(offered)}
       </OutcomeCell>
       {hasTakes ? (
         <>
           <OutcomeCell
             label="Received"
-            title={`${formatFullAmount(round.paid_amount)} ${wantSymbol}`}
-            sub={round.total_actual_paid_usd ? formatUsd(round.total_actual_paid_usd) : null}
-            note={round.paid_take_count < round.take_count ? "partial" : null}
-            noteTitle={`Payment observed for ${round.paid_take_count} of ${round.take_count} takes`}
+            title={`${formatFullAmount(round.paid_amount)} ${wantSymbol}${paidUsd ? ` · ${formatUsd(paidUsd)}` : ""}\n${switchHint}`}
+            note={(inUsd ? paidUsd : round.paid_amount) && paidCount < round.take_count ? "partial" : null}
+            noteTitle={`${inUsd ? "Dollar value known" : "Payment observed"} for ${paidCount} of ${round.take_count} takes`}
+            onToggle={toggleDenomination}
           >
-            {round.paid_amount ? formatAmount(round.paid_amount) : <span className="text-faint">—</span>}
+            {inUsd ? (paidUsd ? formatUsd(paidUsd) : dash) : (round.paid_amount ? formatAmount(round.paid_amount) : dash)}
           </OutcomeCell>
           <OutcomeCell
             label="PnL"
-            title={`Against the market quote. Quoted for ${pricedTakes} of ${round.take_count} takes; USD for ${usdPricedTakes}`}
-            sub={pnlUsd !== null ? formatSignedUsdDelta(pnlUsd) : null}
-            note={pnlPercent !== null && pricedTakes < round.take_count ? "partial" : null}
-            noteTitle={`Quoted for ${pricedTakes} of ${round.take_count} takes`}
+            title={`Against the market quote. Quoted for ${pricedTakes} of ${round.take_count} takes; USD for ${usdPricedTakes}\n${inUsd ? "Click for percent" : "Click for dollar values"}`}
+            note={pnlFigure !== null && pnlCount < round.take_count ? "partial" : null}
+            noteTitle={`${inUsd ? "Priced in dollars" : "Quoted"} for ${pnlCount} of ${round.take_count} takes`}
+            onToggle={toggleDenomination}
           >
-            {pnlPercent !== null || pnlUsd !== null ? (
-              <span className={signedMetricTone(pnlPercent ?? pnlUsd)}>{formatSignedPercent(pnlPercent)}</span>
-            ) : <span className="text-faint">—</span>}
+            {pnlFigure === null ? dash : (
+              <span className={signedMetricTone(pnlFigure)}>{inUsd ? formatSignedUsdDelta(pnlFigure) : formatSignedPercent(pnlFigure)}</span>
+            )}
           </OutcomeCell>
         </>
       ) : null}
@@ -638,8 +664,10 @@ export default function RoundModalContent({
         {wide ? null : (
           <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
             <summary>
-              <SectionHead aside={<ChevronDown className={cn("h-3.5 w-3.5 text-faint transition-transform", settingsOpen && "rotate-180")} strokeWidth={1.6} />}>
+              {/* The same mark a row that opens in place ends in, beside the word it belongs to. */}
+              <SectionHead>
                 Details
+                <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", settingsOpen && "rotate-90")} strokeWidth={1.6} aria-hidden="true" />
               </SectionHead>
             </summary>
             {settings}

@@ -17,9 +17,12 @@ export interface ChipOption<T extends string | number> {
 }
 
 /**
- * A filter group: one framed track that opens with a reset chip named for the
- * group. What is chosen is a filled key. Multi-select unless `single`. Every
- * filter on a list is one of these, whatever it filters by.
+ * A filter group: one framed track of keys. What is chosen is a filled key,
+ * and pressing it again lets it go; with nothing filled the group filters
+ * nothing. Multi-select unless `single`. A group may open with a reset chip
+ * named for it (`resetLabel`) where its keys alone would not say what they
+ * choose between. Every filter on a list is one of these, whatever it filters
+ * by.
  */
 export function ChipGroup<T extends string | number>({
   label,
@@ -30,7 +33,7 @@ export function ChipGroup<T extends string | number>({
   single = false,
 }: {
   label: string;
-  resetLabel: ReactNode;
+  resetLabel?: ReactNode;
   options: ChipOption<T>[];
   selected: T[];
   onChange: (next: T[]) => void;
@@ -39,9 +42,11 @@ export function ChipGroup<T extends string | number>({
   const chosen = new Set(selected);
   return (
     <div className="chips" role="group" aria-label={label}>
-      <button type="button" className="chip" aria-pressed={selected.length === 0} onClick={() => onChange([])}>
-        {resetLabel}
-      </button>
+      {resetLabel === undefined ? null : (
+        <button type="button" className="chip" aria-pressed={selected.length === 0} onClick={() => onChange([])}>
+          {resetLabel}
+        </button>
+      )}
       {options.map((option) => {
         const isOn = chosen.has(option.value);
         return (

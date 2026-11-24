@@ -1,17 +1,19 @@
-import { Fragment } from "react";
-import { ChevronRight } from "lucide-react";
+import { Fragment, type MouseEvent, type ReactNode } from "react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
 
 import { api } from "../../../shared/api/client";
-import { cn, formatAmount, formatCompactDateTime, formatDateTime, formatDuration, formatFullAmount, formatPrice, parseTimestamp } from "../../../shared/lib/format";
+import { buildExplorerUrl, useChainInfo } from "../../../shared/lib/chains";
+import type { Denomination } from "../../../shared/lib/denomination";
+import { cn, formatAmount, formatCompactDateTime, formatDateTime, formatDuration, formatFullAmount, formatHash, formatPrice, formatUsd, parseTimestamp } from "../../../shared/lib/format";
 import { linkRowKeyDown } from "../../../shared/lib/openRound";
 import { getTakePricingBySource } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
 import type { TakeListItem } from "../../../shared/types/api";
+import CopyIconButton from "../../../shared/ui/CopyIconButton";
 import PnlValue from "../../../shared/ui/PnlValue";
 import TakeExpandedRow from "../../../shared/ui/TakeExpandedRow";
 import TakerAddressValue from "../../../shared/ui/TakerAddressValue";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
-import TxHashValue from "../../../shared/ui/TxHashValue";
 
 /** How long after the kick a take landed, which in a Dutch auction is also where on the price path. */
 function sinceKick(kickedAt: string, timestamp: string): string | null {
@@ -22,11 +24,45 @@ function sinceKick(kickedAt: string, timestamp: string): string | null {
   return seconds >= 0 ? `+${formatDuration(seconds)}` : null;
 }
 
+const dash = <span className="text-faint">—</span>;
+
+/**
+ * A take's transaction on the explorer. It is the way out of the drawer a
+ * reader wants most, so the mark is on every row at every width instead of
+ * surfacing on hover; the expanded workspace has room to spell the hash too.
+ */
+function TakeTxLink({ txHash, chainId }: { txHash?: string | null; chainId: number }) {
+  const { chain } = useChainInfo(chainId);
+  const href = buildExplorerUrl(chain, "tx", txHash);
+  if (!href || !txHash) return dash;
+  const stopRowClick = (event: MouseEvent<HTMLElement>) => event.stopPropagation();
+  return (
+    <span className="identity-inline">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="tx-link"
+        title={`Open transaction ${txHash} in explorer`}
+        aria-label={`Open transaction ${txHash} in explorer`}
+        onClick={stopRowClick}
+      >
+        <span className="col-md font-mono">{formatHash(txHash, 6)}</span>
+        <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
+      </a>
+      <span className="col-md">
+        <CopyIconButton valueToCopy={txHash} title={`Copy transaction hash ${txHash}`} ariaLabel={`Copy transaction hash ${txHash}`} />
+      </span>
+    </span>
+  );
+}
+
 /**
  * A round's takes, one line each. The round has one pair, so amounts are bare
  * figures under a header that names the token. The narrow drawer keeps take,
- * taker, time, received and PnL; the expanded workspace adds the transaction,
- * the amount sold and the execution price.
+ * transaction, taker, time, received and PnL; the expanded workspace adds the
+ * hash, the amount sold and the execution price. Every figure is given once,
+ * in the round's tokens or in dollars; a column header switches between them.
  */
 export default function RoundTakesTable({
   takes,
@@ -34,6 +70,8 @@ export default function RoundTakesTable({
   fromSymbol,
   wantSymbol,
   priceSource,
+  denomination,
+  onToggleDenomination,
   selectedOccurrenceKey,
   selectedTake,
   isSelectedTakeLoading,
@@ -44,11 +82,26 @@ export default function RoundTakesTable({
   fromSymbol: string;
   wantSymbol: string;
   priceSource: string;
+  denomination: Denomination;
+  onToggleDenomination: () => void;
   selectedOccurrenceKey?: string | null;
   selectedTake?: Awaited<ReturnType<typeof api.getTake>>;
   isSelectedTakeLoading: boolean;
   onSelect: (key: string) => void;
 }) {
+  const inUsd = denomination === "usd";
+  const figureHead = (label: string, unit?: ReactNode) => (
+    <button
+      type="button"
+      className="header-toggle"
+      title={inUsd ? "Show token amounts" : "Show dollar values"}
+      onClick={onToggleDenomination}
+    >
+      {label}
+      {unit}
+    </button>
+  );
+
   return (
     <div className="table-wrap">
       <TableHoverScope>
@@ -56,13 +109,13 @@ export default function RoundTakesTable({
           <thead>
             <tr>
               <th className="fit">Take</th>
-              <th className="col-md">Tx</th>
+              <th className="fit">Tx</th>
               <th>Taker</th>
               <th className="col-xs">Time</th>
-              <th className="col-md num">Sold <span className="th-unit">{fromSymbol}</span></th>
-              <th className="num">Received <span className="th-unit col-md">{wantSymbol}</span></th>
+              <th className="col-md num">{figureHead("Sold", inUsd ? null : <span className="th-unit">{fromSymbol}</span>)}</th>
+              <th className="num">{figureHead("Received", inUsd ? null : <span className="th-unit col-md">{wantSymbol}</span>)}</th>
               <th className="col-md num">Price</th>
-              <th className="num">PnL</th>
+              <th className="num">{figureHead("PnL")}</th>
               <th className="open-cell"><span className="sr-only">Expand</span></th>
             </tr>
           </thead>
@@ -74,6 +127,8 @@ export default function RoundTakesTable({
               const elapsed = sinceKick(kickedAt, take.timestamp) ?? formatCompactDateTime(take.timestamp);
               const isEstimate = take.amount_paid == null && take.expected_amount_paid != null;
               const paid = isEstimate ? take.expected_amount_paid : take.amount_paid;
+              const soldUsd = takePricing.market_quote_out_usd;
+              const paidUsd = take.amount_paid_usd;
 
               return (
                 <Fragment key={`${take.chain_id}:${key}`}>
@@ -85,9 +140,9 @@ export default function RoundTakesTable({
                     onClick={() => onSelect(key)}
                     onKeyDown={linkRowKeyDown(() => onSelect(key))}
                   >
-                    <td className="mono fit pr-3 text-secondary" title={formatDateTime(take.timestamp)}>T{take.take_seq}</td>
-                    <td className="col-md fit pr-3">
-                      <TxHashValue txHash={take.tx_hash} chainId={take.chain_id} width={6} />
+                    <td className="mono fit pr-1 text-secondary" title={formatDateTime(take.timestamp)}>T{take.take_seq}</td>
+                    <td className="fit pr-3">
+                      <TakeTxLink txHash={take.tx_hash} chainId={take.chain_id} />
                     </td>
                     <td>
                       <TakerAddressValue address={take.taker} chainId={take.chain_id} showBlockie blockieSize={14} />
@@ -97,16 +152,26 @@ export default function RoundTakesTable({
                       {elapsed}
                       <span className="col-md ml-2 text-tertiary">{formatCompactDateTime(take.timestamp)}</span>
                     </td>
-                    <td className="col-md num" title={`${formatFullAmount(take.amount_taken)} ${fromSymbol}`}>
-                      {formatAmount(take.amount_taken)}
+                    <td
+                      className="col-md num"
+                      title={[`${formatFullAmount(take.amount_taken)} ${fromSymbol}`, soldUsd ? `market quote ${formatUsd(soldUsd)}` : null].filter(Boolean).join(" · ")}
+                    >
+                      {inUsd ? (soldUsd ? formatUsd(soldUsd) : dash) : formatAmount(take.amount_taken)}
                     </td>
-                    <td className="num" title={`${isEstimate ? "Estimated " : ""}${formatFullAmount(paid)} ${wantSymbol}`}>
-                      {isEstimate ? <span className="text-tertiary">est. </span> : null}
-                      {formatAmount(paid)}
+                    <td
+                      className="num"
+                      title={[`${isEstimate ? "Estimated " : ""}${formatFullAmount(paid)} ${wantSymbol}`, paidUsd ? formatUsd(paidUsd) : null].filter(Boolean).join(" · ")}
+                    >
+                      {inUsd ? (paidUsd ? formatUsd(paidUsd) : dash) : (
+                        <>
+                          {isEstimate ? <span className="text-tertiary">est. </span> : null}
+                          {formatAmount(paid)}
+                        </>
+                      )}
                     </td>
                     <td className="col-md num">{formatPrice(take.price)}</td>
                     <td className="num">
-                      <PnlValue percent={takePricing.pnl_percent} usd={takePricing.pnl_usd} align="right" className="take-pnl" />
+                      <PnlValue percent={takePricing.pnl_percent} usd={takePricing.pnl_usd} show={inUsd ? "usd" : "percent"} align="right" />
                     </td>
                     <td className="open-cell" aria-hidden="true">
                       <ChevronRight className={cn("h-3.5 w-3.5", isSelected && "rotate-90")} strokeWidth={1.6} />

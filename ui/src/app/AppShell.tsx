@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { api } from "../shared/api/client";
 import { cn } from "../shared/lib/format";
@@ -69,6 +69,8 @@ export default function AppShell() {
     refetchInterval: LIVE_REFETCH_INTERVAL_MS,
   });
   const refreshFailing = useRefreshFailing();
+  // An auction is opened on the rounds list, so the list's nav entry stays lit.
+  const onAuction = useLocation().pathname.startsWith("/auction/");
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -83,7 +85,7 @@ export default function AppShell() {
                 key={link.label}
                 to={link.to}
                 end={link.exact}
-                className={({ isActive }) => cn("nav-link", isActive && "nav-link-active")}
+                className={({ isActive }) => cn("nav-link", (isActive || (link.exact && onAuction)) && "nav-link-active")}
               >
                 {link.label}
               </NavLink>

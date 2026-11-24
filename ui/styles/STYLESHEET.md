@@ -58,7 +58,8 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 ## Shell and layout
 
 - Sticky top bar on a solid background with a hairline rule: wordmark, underlined text nav (Rounds,
-  Takers), search with a `/` shortcut, the data-age control and the theme toggle.
+  Takers), search with a `/` shortcut, the data-age control and the theme toggle. Rounds stays
+  underlined while an auction is open, because an auction is opened on the rounds list.
 - The data-age control ("Updated 12s ago") opens a menu of networks with links to Status, Docs and
   API Docs. The footer repeats those links and is never fixed to the viewport.
 - It is also the one place a failed refresh is reported. When a request that already has data on
@@ -72,7 +73,8 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 - Cards, strips and panels: `surface` fill, 1px `divider` border, 6px corners, no shadow.
 - Controls: 4px corners. Inputs are bordered and flat; focus changes the border, never a glow.
 - Filter groups are flat segmented controls (`ChipGroup`, the pager): a hairline frame with the
-  chosen keys filled in `selected`.
+  chosen keys filled in `selected`. A group has no "All" key: with nothing filled it filters
+  nothing, and pressing a filled key lets it go.
 - Menus and the drawer are the only surfaces with a shadow (`--overlay-shadow`).
 
 ## Page anatomy
@@ -81,12 +83,38 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 | --- | --- |
 | Strip | Optional entity totals on detail pages; the rounds list starts directly with its filters |
 | Filters | One line of chip groups (round status with its counts, then chain) and a search field on the right. Version belongs in auction details, not list filters |
+| Auction head | An auction opened on the list: its identity and facts, heading the table's card |
 | Table | One card; see Tables |
 | Drawer | One round's execution workspace |
 
 The rounds list has no summary strip, totals or totals-window selector. Everything that filters
-its rows is a chip group on one line: there are no tabs. Round status is the first group, each
-chip carrying its count.
+its rows is a chip group on one line: there are no tabs.
+
+A filter offers only what is worth isolating, and only where there is a choice to make:
+
+- **Status** has two keys, each carrying its count: Live and Expired. They are what is open now
+  and what failed to clear. Sold and Settled are the normal outcome, which is the list itself, so
+  they are not filters.
+- **Chain** appears only once more than one chain is indexed.
+- The total is the pager's summary beneath the table, not a chip.
+
+### An auction is the list, narrowed
+
+There is no auction page. `/auction/:chainId/:address` is the rounds list narrowed to one auction,
+rendered by the same component, so opening an auction from a row, the drawer or search keeps the
+top bar, the filter line, the card and the table where they were. What changes:
+
+- The card gains a head. Its first line is the auction as it read on the row that opened it (chain
+  mark, address, version) with a close control at the far end. Its second line is one row of
+  small labelled facts: the pair (or what it sells and for what), receiver, rounds, takes, volume,
+  decay, duration and minimum price.
+- The table drops its Auction column: within one auction a row is its round. Every other column
+  stays, and rows kept on screen while the auction loads keep their old shape until they leave.
+- Status keeps its counts, now for this auction. The chain is fixed by the auction and is not
+  offered. The search field narrows by token or transaction.
+- The auction's recent takes sit beneath the pager.
+- The close control returns to the whole list with the filters and page it was left on; Back does
+  the same. An auction the index does not hold shows "Auction not found" and nothing else.
 
 When the list's filters or page change, keep the previous rows and counts visible until the
 response arrives. Rows that are waiting to be replaced dim after a short delay and open nothing, by
@@ -100,8 +128,8 @@ load only, so changing a filter never collapses the counts or swaps table geomet
   `col-xl` under 1040px, `col-md` under 860px, `col-lo` under 620px. Once a column is gone its
   meaning moves into the identity cell's `sub-line`; text that only belongs on phones goes in a
   `sub-lo` span. A round's takes add one tier, `col-xs` with `sub-xs`, under 440px.
-- Rounds keep Auction and PnL at every width. Round, progress and kick time go first, then status,
-  lot and received, which move into the sub-line on phones.
+- Rounds keep Auction and PnL at every width (inside an auction, Round and PnL). Round, progress
+  and kick time go first, then status, lot and received, which move into the sub-line on phones.
 - Long token amounts clip inside `cell-clip` with an ellipsis; the full amount is on hover.
 - Headers are sticky, uppercase and flat.
 - Hover is `hover`; the open row is `selected` with a 2px accent edge on its first cell.
@@ -135,19 +163,21 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
      the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address; the address reveals
      its utilities when pointed at. The version is a Details row, and the chain gets a mark only
      once there is more than one chain to tell apart.
-  2. **Result**, one row: Sold, Received, PnL. Each is a label, a bare 15px figure and its dollar
-     value on a quieter line, so the row reads as a sum: market value, proceeds, difference. The
-     head names the tokens in the order the figures follow. A cell exists only when it has something
-     to say: a round that ended without a take shows its Lot alone.
+  2. **Result**, one row: Sold, Received, PnL. Each is a label and one bare 15px figure, so the row
+     reads as a sum: what went out, what came in, the difference. The head names the tokens in the
+     order the figures follow. A cell exists only when it has something to say: a round that ended
+     without a take shows its Lot alone.
   3. **Facts**, one line: when it was kicked and how it ended (`sold in 10h 0m`). If the lot did not
      clear it says what happened to it: `nothing sold`, `38% sold · 445K GROVE left`, or
      `all but dust sold` when under 0.01% remained. An expiry is a fact about time, not about
      sales, so it never stands without this.
-  4. **Takes**, one line each: take, taker, time since the kick, received, PnL. Opening a row shows
-     the rest. An empty list is `none` beside the heading.
+  4. **Takes**, one line each: take, its transaction, taker, time since the kick, received, PnL.
+     Opening a row shows the rest. An empty list is `none` beside the heading.
   5. **Price**: the price path as a bare shape.
   6. **Details**, collapsed by default: the start price, kick quote and average take on consecutive
-     rows, then decay, cutoff, receiver and the contract version.
+     rows, then decay, cutoff, receiver and the contract version. Its head is the
+     control: the `›` of a row that opens in place sits beside the word and turns when open, and the
+     head fills like a row when pointed at.
 - A live round has different priorities, so it leads with what is still open:
   1. **Live row**, in place of the facts and in the result row's shape: Remaining over its value,
      Price now over its distance from the kick quote (`26.3× quote`, `+4.2% vs quote`), and Time
@@ -155,6 +185,14 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
   2. **Price** moves up to sit directly under it and marks the present moment on the curve, which
      is why the row above carries no meter.
   3. **Result** appears beneath the chart once the first take lands, then **Takes** and **Details**.
+- **Each figure is given once, in tokens or in dollars.** Sold, Received and PnL in the result row
+  and in every take show token amounts and percent, or their dollar values and the dollar
+  difference, never both. Clicking a result figure, or the Sold, Received or PnL header of the
+  takes, switches the whole round; the choice is remembered per browser. The other denomination is
+  on hover. A figure with no dollar value known is a dash.
+- **A take's transaction is always one click away.** Every take row carries an explorer mark under
+  a Tx header at every width, visible at rest rather than surfacing on hover, phones included. The
+  expanded workspace spells the hash beside it.
 - A token is named once, in the head, beside its logo. Figures beneath it are bare, in the summary
   and in rows of takes; the workspace's column headers carry the unit, and hovering a figure gives
   the exact amount with its symbol. Logos appear again only in an opened
@@ -163,8 +201,8 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
 - A take's time is its distance from the kick (`+9h 57m`), which is also its place on the price
   path; the timestamp is on hover and in the opened row.
 - The expand control widens it to an execution-review workspace (up to 1180px, remembered per
-  browser, never on a sheet): every take column (tx, taker, time, sold, received, price, PnL), with
-  the chart and the details side by side beneath.
+  browser, never on a sheet): every take column (tx hash, taker, time, sold, received, price, PnL),
+  with the chart and the details side by side beneath.
 - The price chart is a shape, not a figure to be read: the price stepping down from its start, the
   kick-time quote as a dashed line, each take as a dot, and a live round's present moment as a
   green dot. At rest it has no key, fill, axis, labels or grid.
@@ -186,7 +224,8 @@ off.
 
 - Money in lists is compact at three significant digits (`formatCompactUsd`): `$23.4M`, `$6.70M`,
   `$161K`. The exact value is on hover.
-- PnL percent is signed with a true minus (`−0.24%`); its USD delta follows in a quieter figure.
+- PnL percent is signed with a true minus (`−0.24%`); in lists its USD delta follows in a quieter
+  figure, and in the round drawer one or the other is shown.
 - A figure computed from incomplete pricing carries a small `partial` note with the coverage on hover.
 - Dense tables show relative ages (`4h ago`) or `MMM d HH:mm`; the full timestamp is in the title.
 - Version badges are small bordered marks with a `v` prefix.

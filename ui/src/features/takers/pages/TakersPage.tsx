@@ -112,18 +112,20 @@ export default function TakersPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="filter-line">
-          <ChipGroup
-            label="Chain"
-            resetLabel="All chains"
-            single
-            options={chainOptions}
-            selected={chainId ? [chainId] : []}
-            onChange={(nextChains) => update((next) => {
-              if (nextChains[0]) next.set("chain", String(nextChains[0]));
-              else next.delete("chain");
-              next.delete("page");
-            })}
-          />
+          {/* A choice between chains exists only once there is more than one. */}
+          {chainOptions.length < 2 ? null : (
+            <ChipGroup
+              label="Chain"
+              single
+              options={chainOptions}
+              selected={chainId ? [chainId] : []}
+              onChange={(nextChains) => update((next) => {
+                if (nextChains[0]) next.set("chain", String(nextChains[0]));
+                else next.delete("chain");
+                next.delete("page");
+              })}
+            />
+          )}
         </div>
         <FilterField
           label="Find a taker"

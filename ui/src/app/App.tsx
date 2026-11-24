@@ -5,7 +5,6 @@ import type { Location } from "react-router-dom";
 
 import AppShell from "./AppShell";
 import ErrorBoundary from "./ErrorBoundary";
-import AuctionPage from "../features/auctions/pages/AuctionPage";
 import DocsPage from "../features/docs/pages/DocsPage";
 import RoundModalRoute from "../features/rounds/pages/RoundModalRoute";
 import RoundsPage from "../features/rounds/pages/RoundsPage";
@@ -82,7 +81,8 @@ function AppRoutes() {
           <Route path="/" element={<RoundsPage />} />
           <Route path="/pricing" element={<DocsPage />} />
           <Route path="/status" element={<StatusPage />} />
-          <Route path="/auction/:chainId/:address" element={<AuctionPage />} />
+          {/* An auction is the rounds list narrowed to it: the same element, so the list stays mounted. */}
+          <Route path="/auction/:chainId/:address" element={<RoundsPage />} />
           <Route path="/takers" element={<TakersPage />} />
           <Route path="/taker/:address" element={<TakerProfilePage />} />
           <Route path="/search" element={<SearchPage />} />

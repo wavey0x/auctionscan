@@ -84,9 +84,9 @@ it("narrows an auction's rounds by status without leaving it", async () => {
   expect(new URLSearchParams(router.state.location.search)).toEqual(new URLSearchParams("keep=yes&status=expired"));
 });
 
-it("closes the auction back to the whole list", async () => {
+it("leads the auction with the way back to the whole list", async () => {
   await mount("");
-  fireEvent.click(screen.getByRole("button", { name: "Show all rounds" }));
+  fireEvent.click(screen.getByRole("link", { name: "All rounds" }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   await waitFor(() => expect(screen.getAllByRole("columnheader").map((header) => header.textContent)[0]).toBe("Auction"));
   expect(screen.queryByRole("region", { name: "Recent takes" })).toBeNull();

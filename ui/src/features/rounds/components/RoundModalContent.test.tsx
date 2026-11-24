@@ -1,4 +1,4 @@
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue({ as_of: {}, takes: [], available_price_sources: [] });
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
 });
-afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.useRealTimers(); window.localStorage.clear(); });
 function mount() {
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[buildRoundPath(1, auction, 1)]}><Routes><Route path="/round/:chainId/:auctionAddress/:roundId" element={<RoundModalContent onClose={() => {}} />} /></Routes></MemoryRouter></QueryClientProvider>);
 }
@@ -183,10 +183,57 @@ it.each([
   const { container } = mountRound({ ...ended, ...sales });
   await settle();
   const text = container.textContent ?? "";
-  expect(text).toContain("expired after 1d 0h");
+  // The head says it expired; the facts line gives the figures without naming them.
+  expect(text).toContain("1d 0h");
+  expect(text).not.toContain("expired after");
+  expect(text).not.toContain("Kicked");
   expect(text).toContain(statement);
   expect(text).not.toContain("Time left");
   // A round that ended without a take has no result to report beyond its lot.
   expect(text.includes("Received")).toBe(sales.take_count > 0);
 });
 
+const sold = {
+  status: "sold_out", is_active: false, initial_available: "100", available_amount: "0", sold_amount: "100", paid_amount: "50",
+  end_at: "2026-09-17T13:00:00Z", take_count: 1, paid_take_count: 1, paid_usd_take_count: 1, usd_priced_take_count: 1, priced_take_count: 1,
+  total_market_quote_usd: "200", total_actual_paid_usd: "190", total_auction_profit_usd: "-10", total_auction_profit_bps: -5,
+} as const;
+const soldTake = {
+  occurrence: { ...occurrence, log_index: 9 }, round_occurrence: occurrence, auction, chain_id: 1, round_id: 1, take_seq: 1, taker: auction,
+  amount_taken: "100", amount_paid: "50", amount_paid_usd: "190", market_quote_out_usd: "200",
+  price_differential_usd: "-10", price_differential_percent: -5, price: "0.5",
+  timestamp: "2026-09-17T13:00:00Z", tx_hash: occurrence.tx_hash, block_number: 100, confirmed: true,
+} as Awaited<ReturnType<typeof api.getAuctionTakes>>["takes"][number];
+
+it("gives each figure once and switches the whole round between tokens and dollars", async () => {
+  vi.mocked(api.getAuctionTakes).mockResolvedValue({ as_of: {}, takes: [soldTake], available_price_sources: [] });
+  const { container } = mountRound(sold);
+  await settle();
+  const figures = () => [...container.querySelectorAll(".outcome-figure, .takes-table tbody td.num")].map((node) => node.textContent ?? "");
+  // Sold, Received and PnL, then the take's own sold, received, price and PnL.
+  expect(figures()).toHaveLength(7);
+  expect(figures().some((figure) => figure.includes("$"))).toBe(false);
+  expect(container.querySelectorAll(".outcome-sub")).toHaveLength(0);
+
+  fireEvent.click(container.querySelector(".figure-toggle")!);
+  const inDollars = figures();
+  // Every figure but the execution price, which is a rate between the two tokens.
+  expect(inDollars.filter((figure) => figure.includes("$"))).toHaveLength(6);
+  expect(window.localStorage.getItem("round_figures_denomination")).toBe("usd");
+
+  fireEvent.click(container.querySelector(".figure-toggle")!);
+  expect(figures().some((figure) => figure.includes("$"))).toBe(false);
+});
+
+it("makes a take's label the link to its transaction, without opening the take", async () => {
+  vi.mocked(api.getChains).mockResolvedValue({ chains: { 1: { chain_id: 1, name: "Ethereum", short_name: "Ethereum", explorer: "https://etherscan.io" } }, count: 1 });
+  vi.mocked(api.getAuctionTakes).mockResolvedValue({ as_of: {}, takes: [soldTake], available_price_sources: [] });
+  const { container } = mountRound(sold);
+  await settle();
+  const link = container.querySelector<HTMLAnchorElement>(".takes-table a.tx-link")!;
+  expect(link.textContent).toBe("T1");
+  expect(link.getAttribute("href")).toBe(`https://etherscan.io/tx/${occurrence.tx_hash}`);
+  expect(link.target).toBe("_blank");
+  fireEvent.click(link);
+  expect(link.closest("tr")!.getAttribute("aria-expanded")).toBe("false");
+});

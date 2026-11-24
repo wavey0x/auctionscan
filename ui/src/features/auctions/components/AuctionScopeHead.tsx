@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { Link, type To } from "react-router-dom";
 
 import { formatAmount, formatCount, formatDuration, formatPrice } from "../../../shared/lib/format";
 import type { AuctionDetails } from "../../../shared/types/api";
@@ -85,25 +86,31 @@ function Facts({ auction }: { auction: AuctionDetails }) {
 /**
  * An auction opened on the rounds list. Its identity and settings head the
  * card its rounds are listed in, so opening an auction narrows the list where
- * it stands instead of leaving for another page; the close control widens it
- * again.
+ * it stands instead of leaving for another page. The head opens with the way
+ * back to the whole list.
  */
 export default function AuctionScopeHead({
   chainId,
   address,
   auctionQuery,
-  onClose,
+  backTo,
 }: {
   chainId: number;
   address: string;
   auctionQuery: UseQueryResult<AuctionDetails | null>;
-  onClose: () => void;
+  /** The whole list as the reader left it. */
+  backTo: To;
 }) {
   const auction = auctionQuery.data;
 
   return (
     <header className="scope-head" aria-label="Auction" aria-busy={auctionQuery.isLoading}>
       <div className="scope-title reveal-row">
+        <Link to={backTo} className="scope-back">
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.6} aria-hidden="true" />
+          All rounds
+        </Link>
+        <span className="scope-sep" aria-hidden="true">/</span>
         <ChainIcon chainId={chainId} size="md" />
         {/* The address reads exactly as it did on the row that opened it. */}
         <h1 className="m-0 min-w-0 whitespace-nowrap text-heading font-normal text-primary [&_.identity-link]:text-heading">
@@ -114,9 +121,6 @@ export default function AuctionScopeHead({
           />
         </h1>
         <AuctionVersionBadge version={auction?.version} />
-        <button type="button" className="icon-button ml-auto shrink-0" aria-label="Show all rounds" title="Show all rounds" onClick={onClose}>
-          <X className="h-4 w-4" strokeWidth={1.6} />
-        </button>
       </div>
       {auctionQuery.isLoading ? (
         <div className="scope-facts" aria-hidden="true">

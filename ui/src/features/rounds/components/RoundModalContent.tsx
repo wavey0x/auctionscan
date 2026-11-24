@@ -33,7 +33,7 @@ import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
 import RequestError from "../../../shared/ui/RequestError";
-import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
+import StatusBadge from "../../../shared/ui/StatusBadge";
 import TokenLogo from "../../../shared/ui/TokenLogo";
 import { useRoundDetails } from "../useRoundDetails";
 import DecayChart from "./DecayChart";
@@ -159,9 +159,10 @@ function progressInput(round: RoundListItem) {
 }
 
 /**
- * A finished round's timeline in one line: when it was kicked, how it ended,
- * and what was left if the lot did not clear. An expiry is a fact about time,
- * not about sales, so the line says how much sold alongside it.
+ * A finished round's timeline in bare figures: when it was kicked and how long
+ * it ran. The head already says how it ended, so the line names neither; the
+ * words are on hover. If the lot did not clear it adds what was left, because
+ * an expiry is a fact about time, not about sales.
  */
 function RoundFacts({
   round,
@@ -176,23 +177,18 @@ function RoundFacts({
 }) {
   const metrics = getRoundProgressMetrics(progressInput(round));
   const elapsed = metrics.elapsedDurationLabel;
-  const ending = round.status === "sold_out" ? "sold in" : round.status === "expired" ? "expired after" : "settled after";
+  const ending = round.status === "sold_out" ? "Sold in" : round.status === "expired" ? "Expired after" : "Settled after";
   const outcome = getSaleOutcome(round);
   const leftTitle = `${metrics.soldDetail} · ${formatFullAmount(round.available_amount)} ${fromSymbol} left`;
 
   return (
     <div className="facts">
       <span>
-        Kicked{" "}
-        <button type="button" className="fact-value underline-offset-4 hover:underline" title={formatDateTime(round.kicked_at)} onClick={onToggleKicked}>
+        <button type="button" className="fact-value underline-offset-4 hover:underline" title={`Kicked ${formatDateTime(round.kicked_at)}`} onClick={onToggleKicked}>
           {renderKickedValue(round.kicked_at, kickedDisplayMode)}
         </button>
       </span>
-      {elapsed ? (
-        <span>{ending} <span className="fact-value">{elapsed}</span></span>
-      ) : (
-        <span>{statusLabel(round.status).toLowerCase()}</span>
-      )}
+      {elapsed ? <span className="fact-value" title={`${ending} ${elapsed}`}>{elapsed}</span> : null}
       {outcome?.kind === "none" ? (
         <span>nothing sold</span>
       ) : outcome?.kind === "dust" ? (

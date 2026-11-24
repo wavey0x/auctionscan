@@ -4,16 +4,16 @@ import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { api } from "../../../shared/api/client";
 import { buildExplorerUrl, useChainInfo } from "../../../shared/lib/chains";
 import type { Denomination } from "../../../shared/lib/denomination";
-import { cn, formatAmount, formatCompactDateTime, formatDateTime, formatDuration, formatFullAmount, formatHash, formatPrice, formatUsd, parseTimestamp } from "../../../shared/lib/format";
+import { cn, formatAmount, formatCompactDateTime, formatDateTime, formatDuration, formatFullAmount, formatPrice, formatUsd, parseTimestamp } from "../../../shared/lib/format";
 import { linkRowKeyDown } from "../../../shared/lib/openRound";
 import { getTakePricingBySource } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
 import type { TakeListItem } from "../../../shared/types/api";
-import CopyIconButton from "../../../shared/ui/CopyIconButton";
 import PnlValue from "../../../shared/ui/PnlValue";
 import TakeExpandedRow from "../../../shared/ui/TakeExpandedRow";
 import TakerAddressValue from "../../../shared/ui/TakerAddressValue";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
+import TxHashValue from "../../../shared/ui/TxHashValue";
 
 /** How long after the kick a take landed, which in a Dutch auction is also where on the price path. */
 function sinceKick(kickedAt: string, timestamp: string): string | null {
@@ -27,40 +27,35 @@ function sinceKick(kickedAt: string, timestamp: string): string | null {
 const dash = <span className="text-faint">—</span>;
 
 /**
- * A take's transaction on the explorer. It is the way out of the drawer a
- * reader wants most, so the mark is on every row at every width instead of
- * surfacing on hover; the expanded workspace has room to spell the hash too.
+ * A take's label, which is also the way out to its transaction: the number
+ * with the outbound mark beside it. The transaction is what a reader wants
+ * most from a take, so the mark is on every row at every width instead of
+ * surfacing on hover, and it takes no column of its own. Following it leaves
+ * the row as it was.
  */
-function TakeTxLink({ txHash, chainId }: { txHash?: string | null; chainId: number }) {
+function TakeLabel({ seq, txHash, chainId }: { seq: number; txHash?: string | null; chainId: number }) {
   const { chain } = useChainInfo(chainId);
   const href = buildExplorerUrl(chain, "tx", txHash);
-  if (!href || !txHash) return dash;
-  const stopRowClick = (event: MouseEvent<HTMLElement>) => event.stopPropagation();
+  if (!href || !txHash) return <>T{seq}</>;
   return (
-    <span className="identity-inline">
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="tx-link"
-        title={`Open transaction ${txHash} in explorer`}
-        aria-label={`Open transaction ${txHash} in explorer`}
-        onClick={stopRowClick}
-      >
-        <span className="col-md font-mono">{formatHash(txHash, 6)}</span>
-        <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-      </a>
-      <span className="col-md">
-        <CopyIconButton valueToCopy={txHash} title={`Copy transaction hash ${txHash}`} ariaLabel={`Copy transaction hash ${txHash}`} />
-      </span>
-    </span>
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="tx-link"
+      title={`Open transaction ${txHash} in explorer`}
+      onClick={(event: MouseEvent<HTMLElement>) => event.stopPropagation()}
+    >
+      <span>T{seq}</span>
+      <ArrowUpRight className="h-3 w-3" strokeWidth={1.8} aria-hidden="true" />
+    </a>
   );
 }
 
 /**
  * A round's takes, one line each. The round has one pair, so amounts are bare
  * figures under a header that names the token. The narrow drawer keeps take,
- * transaction, taker, time, received and PnL; the expanded workspace adds the
+ * taker, time, received and PnL; the expanded workspace adds the transaction
  * hash, the amount sold and the execution price. Every figure is given once,
  * in the round's tokens or in dollars; a column header switches between them.
  */
@@ -109,7 +104,7 @@ export default function RoundTakesTable({
           <thead>
             <tr>
               <th className="fit">Take</th>
-              <th className="fit">Tx</th>
+              <th className="col-md">Tx</th>
               <th>Taker</th>
               <th className="col-xs">Time</th>
               <th className="col-md num">{figureHead("Sold", inUsd ? null : <span className="th-unit">{fromSymbol}</span>)}</th>
@@ -140,9 +135,11 @@ export default function RoundTakesTable({
                     onClick={() => onSelect(key)}
                     onKeyDown={linkRowKeyDown(() => onSelect(key))}
                   >
-                    <td className="mono fit pr-1 text-secondary" title={formatDateTime(take.timestamp)}>T{take.take_seq}</td>
-                    <td className="fit pr-3">
-                      <TakeTxLink txHash={take.tx_hash} chainId={take.chain_id} />
+                    <td className="mono fit pr-3 text-secondary" title={formatDateTime(take.timestamp)}>
+                      <TakeLabel seq={take.take_seq} txHash={take.tx_hash} chainId={take.chain_id} />
+                    </td>
+                    <td className="col-md fit pr-3">
+                      <TxHashValue txHash={take.tx_hash} chainId={take.chain_id} width={6} />
                     </td>
                     <td>
                       <TakerAddressValue address={take.taker} chainId={take.chain_id} showBlockie blockieSize={14} />

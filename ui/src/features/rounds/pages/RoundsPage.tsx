@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useMatch, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
+import { useMatch, useNavigationType, useSearchParams } from "react-router-dom";
 
 import AuctionRecentTakes from "../../auctions/components/AuctionRecentTakes";
 import AuctionScopeHead from "../../auctions/components/AuctionScopeHead";
@@ -96,7 +96,7 @@ function useAuctionScope(): { scope: AuctionScope | null; invalid: boolean } {
   }, [Boolean(match), chainId, address]);
 }
 
-/** Where the whole list was last left, so closing an auction returns to it with its filters and page. */
+/** Where the whole list was last left, so leaving an auction returns to it with its filters and page. */
 let lastListSearch = "";
 
 function lotSummary(round: RoundListItem): string {
@@ -195,7 +195,6 @@ function RoundRow({
  */
 export default function RoundsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const navigationType = useNavigationType();
   const [kickedDisplayMode, setKickedDisplayMode] = useState<KickedDisplayMode>("relative");
   const [progressDisplayMode, setProgressDisplayMode] = useState<RoundProgressMiniMode>("time");
@@ -316,7 +315,7 @@ export default function RoundsPage() {
             chainId={scope.chainId}
             address={scope.address}
             auctionQuery={auctionQuery}
-            onClose={() => navigate({ pathname: "/", search: lastListSearch })}
+            backTo={{ pathname: "/", search: lastListSearch }}
           />
         ) : null}
         {roundsQuery.isError && !roundsQuery.data && <RequestError message="Unable to load rounds." onRetry={() => { void roundsQuery.refetch(); }} />}

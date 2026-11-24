@@ -282,7 +282,21 @@ html.dark {
   }
 
   .scope-title {
-    @apply flex min-h-[28px] min-w-0 items-center gap-x-3;
+    @apply flex min-h-[28px] min-w-0 flex-wrap items-center gap-x-3 gap-y-1;
+  }
+
+  /* The way back to the whole list leads the head, where a reader looks first. */
+  .scope-back {
+    @apply inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-data text-tertiary;
+    transition: color 0.1s;
+  }
+
+  .scope-back:hover {
+    @apply text-primary;
+  }
+
+  .scope-sep {
+    @apply text-faint;
   }
 
   .scope-facts {
@@ -562,22 +576,26 @@ html.dark {
     @apply mt-0.5 truncate text-[11px] leading-[14px] text-tertiary;
   }
 
-  /* A take's transaction on the explorer: on every row at every width, not
-     surfaced on hover like a row's other utilities. */
+  /* A take's label is its link out to the transaction: the outbound mark is
+     on every row at every width, not surfaced on hover like a row's other
+     utilities. */
   .tx-link {
-    @apply inline-flex h-[18px] items-center gap-1 text-secondary;
+    @apply inline-flex items-center gap-1;
     transition: color 0.1s;
   }
 
-  .tx-link > span {
-    @apply text-primary underline-offset-4;
+  .tx-link svg {
+    @apply text-tertiary;
+    transition: color 0.1s;
   }
 
-  .tx-link:hover {
+  .tx-link:hover,
+  .tx-link:hover svg {
     @apply text-primary;
   }
 
   .tx-link:hover > span {
+    @apply underline-offset-4;
     text-decoration: underline;
     text-decoration-color: var(--color-tertiary);
   }
@@ -1201,6 +1219,9 @@ html.dark {
   .filter-line::-webkit-scrollbar { display: none; }
   .filter-line > * { flex: none; }
   .filter-field { width: 100%; }
+  /* On a phone the way back has its own line above the auction. */
+  .scope-back { flex-basis: 100%; }
+  .scope-sep { display: none; }
   .data-table tbody td { height: 44px; }
   .drawer,
   .drawer.is-wide {

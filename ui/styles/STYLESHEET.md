@@ -104,8 +104,9 @@ There is no auction page. `/auction/:chainId/:address` is the rounds list narrow
 rendered by the same component, so opening an auction from a row, the drawer or search keeps the
 top bar, the filter line, the card and the table where they were. What changes:
 
-- The card gains a head. Its first line is the auction as it read on the row that opened it (chain
-  mark, address, version) with a close control at the far end. Its second line is one row of
+- The card gains a head. Its first line opens with the way back, `← All rounds`, where a reader
+  looks first, then the auction as it read on the row that opened it (chain mark, address,
+  version). On a phone the way back has a line to itself. Its second line is one row of
   small labelled facts: the pair (or what it sells and for what), receiver, rounds, takes, volume,
   decay, duration and minimum price.
 - The table drops its Auction column: within one auction a row is its round. Every other column
@@ -113,7 +114,7 @@ top bar, the filter line, the card and the table where they were. What changes:
 - Status keeps its counts, now for this auction. The chain is fixed by the auction and is not
   offered. The search field narrows by token or transaction.
 - The auction's recent takes sit beneath the pager.
-- The close control returns to the whole list with the filters and page it was left on; Back does
+- `← All rounds` returns to the whole list with the filters and page it was left on; Back does
   the same. An auction the index does not hold shows "Auction not found" and nothing else.
 
 When the list's filters or page change, keep the previous rows and counts visible until the
@@ -167,11 +168,13 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
      reads as a sum: what went out, what came in, the difference. The head names the tokens in the
      order the figures follow. A cell exists only when it has something to say: a round that ended
      without a take shows its Lot alone.
-  3. **Facts**, one line: when it was kicked and how it ended (`sold in 10h 0m`). If the lot did not
+  3. **Facts**, one line of bare figures: when it was kicked and how long it ran
+     (`Nov 24 04:45 · 2h 30m`). The head already says how the round ended, so the line names
+     neither; the words are on hover. If the lot did not
      clear it says what happened to it: `nothing sold`, `38% sold · 445K GROVE left`, or
      `all but dust sold` when under 0.01% remained. An expiry is a fact about time, not about
      sales, so it never stands without this.
-  4. **Takes**, one line each: take, its transaction, taker, time since the kick, received, PnL.
+  4. **Takes**, one line each: take, taker, time since the kick, received, PnL.
      Opening a row shows the rest. An empty list is `none` beside the heading.
   5. **Price**: the price path as a bare shape.
   6. **Details**, collapsed by default: the start price, kick quote and average take on consecutive
@@ -190,9 +193,10 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
   difference, never both. Clicking a result figure, or the Sold, Received or PnL header of the
   takes, switches the whole round; the choice is remembered per browser. The other denomination is
   on hover. A figure with no dollar value known is a dash.
-- **A take's transaction is always one click away.** Every take row carries an explorer mark under
-  a Tx header at every width, visible at rest rather than surfacing on hover, phones included. The
-  expanded workspace spells the hash beside it.
+- **A take's transaction is always one click away.** The take's label is the link (`T3 ↗`): the
+  outbound mark sits beside the number at every width, visible at rest rather than surfacing on
+  hover, phones included, and takes no column of its own. The expanded workspace also has a column
+  that spells the hash.
 - A token is named once, in the head, beside its logo. Figures beneath it are bare, in the summary
   and in rows of takes; the workspace's column headers carry the unit, and hovering a figure gives
   the exact amount with its symbol. Logos appear again only in an opened

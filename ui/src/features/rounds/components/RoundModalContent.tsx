@@ -23,7 +23,7 @@ import {
 } from "../../../shared/lib/format";
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { useDenomination } from "../../../shared/lib/denomination";
-import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
+import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, roundMarketValue, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
 import { auctionLabel } from "../../../shared/lib/protocol";
 import { getRoundProgressMetrics, getSaleOutcome } from "../../../shared/lib/roundProgress";
 import { useChainsQuery } from "../../../shared/lib/chains";
@@ -492,7 +492,7 @@ export default function RoundModalContent({
   // Once something has sold, the first figure is what the result is measured
   // on: the amount sold, valued at the market quote that PnL compares against.
   const offered = hasTakes ? round.sold_amount : round.initial_available ?? round.sold_amount;
-  const offeredUsd = hasTakes ? roundPricing.total_market_quote_usd : round.kick_market_quote_usd;
+  const offeredUsd = roundMarketValue(round, roundPricing.total_market_quote_usd).usd;
   const pricedTakes = roundPricing.priced_take_count ?? 0;
   const usdPricedTakes = roundPricing.usd_priced_take_count ?? 0;
   const pnlPercent = coerceFiniteNumber(roundPricing.total_auction_profit_bps);

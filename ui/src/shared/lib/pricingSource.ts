@@ -11,6 +11,23 @@ export function roundPnlCoverageTitle(round: Pick<RoundListItem, "priced_take_co
   return details.join(" ");
 }
 
+/**
+ * The market value a round is measured against, and the moment it describes.
+ * Once anything has sold it is what the market quoted for what sold, when it
+ * sold: the figure PnL sets the payment against, so value, received and PnL
+ * read as one sum, and a sale with no market quote has neither a value nor a
+ * PnL. Until then it is what the market quoted for the lot when it was put up.
+ * The list and the round's own page both ask here, so they cannot disagree.
+ */
+export function roundMarketValue(
+  round: Pick<RoundListItem, "take_count" | "kick_market_quote_usd">,
+  soldMarketQuoteUsd: string | null | undefined,
+): { usd: string | null; at: "take" | "kick" } {
+  return round.take_count > 0
+    ? { usd: soldMarketQuoteUsd ?? null, at: "take" }
+    : { usd: round.kick_market_quote_usd ?? null, at: "kick" };
+}
+
 export function resolvePriceSource(
   requestedSource: string | null | undefined,
   options: PriceSourceOption[] | null | undefined,

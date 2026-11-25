@@ -112,3 +112,21 @@ it("has no round column: a Yearn row carries its round on its auction, a burner'
   expect(within(yearnRow).getByText("R66")).toBeTruthy();
   expect(within(yearnRow).queryByText(/^\(0xdddd…\)$/i)).toBeNull();
 });
+
+it("values a sold lot by what the market quoted when it sold, the figure its PnL is measured against", async () => {
+  const sold: RoundListItem = {
+    ...upcoming, round_id: 380, status: "sold_out", take_count: 8, paid_take_count: 8, paid_usd_take_count: 8, usd_priced_take_count: 8,
+    sold_amount: "190", initial_available: "190", available_amount: "0", paid_amount: "407",
+    kick_market_quote_usd: "326.24", total_market_quote_usd: "399.04", total_auction_profit_usd: "7.17",
+  };
+  const unsold: RoundListItem = { ...upcoming, round_id: 381, kick_market_quote_usd: "1500" };
+  vi.mocked(api.getRounds).mockResolvedValue({
+    as_of: {}, rounds: [sold, unsold], total: 2, status_counts: counts, page: 1, per_page: 20, has_next: false,
+  });
+  router = createMemoryRouter([{ path: "/", element: <RoundsPage /> }], { initialEntries: ["/"] });
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  await screen.findByText("2 matching rounds");
+
+  const values = Array.from(document.querySelectorAll("tbody .lot-usd")).map((cell) => cell.textContent);
+  expect(values).toEqual(["$399", "$1.50K"]);
+});

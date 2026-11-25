@@ -52,7 +52,8 @@ it("offers Live, Sold and Expired, each with its mark and count, and no key for 
 
   fireEvent.click(chips[1]);
   await waitFor(() => expect(lastRequest().status).toBe("sold_out"));
-  expect(router.state.location.search).toBe("?status=sold_out");
+  // The address bar spells the status as its key does; the API keeps its stored name.
+  expect(router.state.location.search).toBe("?status=sold");
 });
 
 it("falls back to all rounds for a status the list does not offer", async () => {

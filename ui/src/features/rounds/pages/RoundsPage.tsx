@@ -47,10 +47,14 @@ const PAGE_SIZE = 20;
 const STATUS_CHIPS = ["live", "sold_out", "expired"] as const;
 type RoundStatusFilter = "all" | (typeof STATUS_CHIPS)[number];
 
+/**
+ * How a status is spelled in the address bar: the word on its key. The API's
+ * `sold_out` is a stored status, not something a reader should have to type.
+ */
+const STATUS_URL: Record<(typeof STATUS_CHIPS)[number], string> = { live: "live", sold_out: "sold", expired: "expired" };
+
 function parseRoundStatus(value: string | null): RoundStatusFilter {
-  return (STATUS_CHIPS as readonly string[]).includes(value ?? "")
-    ? (value as RoundStatusFilter)
-    : "all";
+  return STATUS_CHIPS.find((status) => STATUS_URL[status] === value) ?? "all";
 }
 
 type Filters = {
@@ -88,7 +92,7 @@ function readFilters(searchParams: URLSearchParams): Filters {
 function withFilters(current: URLSearchParams, filters: Filters) {
   const next = new URLSearchParams(current);
   FILTER_KEYS.forEach((key) => next.delete(key));
-  if (filters.status !== "all") next.set("status", filters.status);
+  if (filters.status !== "all") next.set("status", STATUS_URL[filters.status]);
   if (filters.protocol) next.set("protocol", filters.protocol);
   if (filters.chainId) next.set("chain", String(filters.chainId));
   if (filters.from) next.set("from", filters.from);

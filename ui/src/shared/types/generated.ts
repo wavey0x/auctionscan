@@ -1577,6 +1577,10 @@ export interface operations {
                 time_window?: "all" | "24h" | "7d" | "30d" | "90d";
                 version?: string[] | null;
                 protocol?: "all" | "yearn" | "curve";
+                /** @description First UTC day a round may have been kicked on. */
+                kicked_from?: string | null;
+                /** @description Last UTC day a round may have been kicked on. */
+                kicked_to?: string | null;
                 page?: number;
                 limit?: number;
             };

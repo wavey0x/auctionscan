@@ -1322,6 +1322,24 @@ def test_filter_contract_rejects_values_instead_of_silently_widening(tmp_path):
     assert client.get("/api/rounds", params={"limit": 201}).status_code == 422
 
 
+def test_rounds_narrow_to_the_utc_days_they_were_kicked_on(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    _seed_api_db(db_path)
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    def rounds(**params):
+        payload = client.get("/api/rounds", params=params).json()
+        return payload["total"], payload["status_counts"]["all"]
+
+    # The seeded round was kicked on 2023-11-14 UTC. Both ends are inclusive and either may be open.
+    assert rounds(kicked_from="2023-11-14", kicked_to="2023-11-14") == (1, 1)
+    assert rounds(kicked_from="2023-11-14") == (1, 1)
+    assert rounds(kicked_to="2023-11-14") == (1, 1)
+    assert rounds(kicked_from="2023-11-15") == (0, 0)
+    assert rounds(kicked_to="2023-11-13") == (0, 0)
+    assert client.get("/api/rounds", params={"kicked_from": "14/11/2023"}).status_code == 422
+
+
 def test_openapi_publishes_the_filter_vocabularies(tmp_path):
     db_path = tmp_path / "auctionscan.sqlite3"
     _seed_api_db(db_path)

@@ -407,6 +407,43 @@ html.dark {
     opacity: 1;
   }
 
+  /* A span of days in a filter group's frame. The two fields keep their
+     width whether or not a day is set, so nothing after them moves. */
+  .date-range {
+    @apply inline-flex h-[28px] shrink-0 items-center gap-1 rounded-[4px] border border-divider px-1.5 text-[11px] text-faint;
+  }
+
+  .date-range:focus-within {
+    @apply border-divider-strong;
+  }
+
+  .date-range input {
+    @apply w-[104px] border-0 bg-transparent p-0 font-mono text-[11px] text-primary outline-none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .date-range input.is-empty {
+    @apply text-tertiary;
+  }
+
+  .date-range input::-webkit-calendar-picker-indicator {
+    @apply cursor-pointer;
+    opacity: 0.45;
+  }
+
+  .date-range input:hover::-webkit-calendar-picker-indicator {
+    opacity: 0.9;
+  }
+
+  .date-range button {
+    @apply inline-flex h-[18px] w-[18px] items-center justify-center rounded-[3px] text-tertiary;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .date-range button:hover {
+    @apply bg-hover text-primary;
+  }
+
   .filter-field {
     @apply flex h-[30px] w-[280px] max-w-full items-center gap-2 rounded-[4px] border border-divider-strong bg-surface px-2.5 text-tertiary;
     transition: border-color 0.12s;

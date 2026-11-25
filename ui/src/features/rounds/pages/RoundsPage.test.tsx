@@ -73,6 +73,21 @@ it("narrows by protocol and names Curve's burner in its rows", async () => {
   expect(rows.getAllByText(/^in \d+/).length).toBeGreaterThan(0);
 });
 
+it("narrows to the days rounds were kicked on, and lets either end go", async () => {
+  await mount("?from=2026-11-01&to=not-a-day");
+  const range = within(screen.getByRole("group", { name: "Kicked" }));
+  expect(lastRequest()).toMatchObject({ kicked_from: "2026-11-01", kicked_to: undefined });
+
+  fireEvent.change(range.getByLabelText("Kicked to"), { target: { value: "2026-11-24" } });
+  await waitFor(() => expect(lastRequest().kicked_to).toBe("2026-11-24"));
+  expect(router.state.location.search).toBe("?from=2026-11-01&to=2026-11-24");
+
+  fireEvent.click(range.getByRole("button", { name: "Clear kicked dates" }));
+  await waitFor(() => expect(lastRequest().kicked_from).toBeUndefined());
+  expect(router.state.location.search).toBe("");
+  expect(range.queryByRole("button")).toBeNull();
+});
+
 it("has no round column: a Yearn row carries its round on its auction, a burner's lot its token", async () => {
   const yearn: RoundListItem = { ...upcoming, auction_address: `0x${"a".repeat(40)}`, round_id: 66, protocol: "yearn", version: "1.0.4",
     occurrence: { ...upcoming.occurrence, log_index: 5 } };

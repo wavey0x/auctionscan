@@ -34,7 +34,7 @@ import SkeletonRows from "../../../shared/ui/SkeletonRows";
 import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
-import { ChipCount, ChipGroup, FilterField } from "../../../shared/ui/Toolbar";
+import { ChipCount, ChipGroup, DateRange, FilterField } from "../../../shared/ui/Toolbar";
 
 const PAGE_SIZE = 20;
 
@@ -57,11 +57,18 @@ type Filters = {
   status: RoundStatusFilter;
   protocol?: Protocol;
   chainId?: number;
+  /** The first and last UTC day a round may have been kicked on; empty leaves that end open. */
+  from: string;
+  to: string;
   query: string;
   page: number;
 };
 
-const FILTER_KEYS = ["status", "protocol", "chain", "filter", "pair", "page"];
+const FILTER_KEYS = ["status", "protocol", "chain", "from", "to", "filter", "pair", "page"];
+
+function parseDay(value: string | null): string {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? value : "";
+}
 
 function readFilters(searchParams: URLSearchParams): Filters {
   const page = Number(searchParams.get("page") || "1");
@@ -70,6 +77,8 @@ function readFilters(searchParams: URLSearchParams): Filters {
     status: parseRoundStatus(searchParams.get("status")),
     protocol: parseProtocol(searchParams.get("protocol")),
     chainId: Number.isFinite(chainId) ? chainId : undefined,
+    from: parseDay(searchParams.get("from")),
+    to: parseDay(searchParams.get("to")),
     query: searchParams.get("filter") || searchParams.get("pair") || "",
     page: Number.isFinite(page) && page > 0 ? page : 1,
   };
@@ -82,6 +91,8 @@ function withFilters(current: URLSearchParams, filters: Filters) {
   if (filters.status !== "all") next.set("status", filters.status);
   if (filters.protocol) next.set("protocol", filters.protocol);
   if (filters.chainId) next.set("chain", String(filters.chainId));
+  if (filters.from) next.set("from", filters.from);
+  if (filters.to) next.set("to", filters.to);
   if (filters.query) next.set("filter", filters.query);
   if (filters.page > 1) next.set("page", String(filters.page));
   return next;
@@ -236,6 +247,8 @@ export default function RoundsPage() {
         status: filters.status,
         protocol: scope ? "all" : filters.protocol ?? "all",
         chain_id: scope ? scope.chainId : filters.chainId,
+        kicked_from: filters.from || undefined,
+        kicked_to: filters.to || undefined,
         auction_address: scope ? scope.address : isAuctionAddressQuery ? normalizedQuery : undefined,
         tx_hash: isTxHashQuery ? normalizedQuery : undefined,
         pair: normalizedQuery && !isAuctionAddressQuery && !isTxHashQuery ? normalizedQuery : undefined,
@@ -322,6 +335,12 @@ export default function RoundsPage() {
                 onChange={(next) => updateFilters({ chainId: next[0], page: 1 })}
               />
             )}
+            <DateRange
+              label="Kicked"
+              from={filters.from}
+              to={filters.to}
+              onChange={(range) => updateFilters({ ...range, page: 1 })}
+            />
           </div>
           <FilterField
             label="Filter rounds"

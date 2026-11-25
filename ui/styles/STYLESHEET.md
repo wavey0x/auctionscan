@@ -102,6 +102,9 @@ A filter offers only what is worth isolating, and only where there is a choice t
   one burner per chain selling every fee token, so its rows name the auction `Curve burner`
   rather than repeat one address.
 - **Chain** appears only once more than one chain is indexed.
+- **Kicked** is a span of days in the same frame: a first and a last day (URL `from`, `to`; API
+  `kicked_from`, `kicked_to`), inclusive, in UTC, either of which may be left open. A clear mark
+  appears once a day is set. It narrows the status counts with the rows.
 - A key keeps its width whatever its count: the count sits in a slot wide enough for `99,999`, so
   changing a filter never moves a key or the groups after it. Groups stand 20px apart, further
   than their own keys, so each reads as one control.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -45,6 +46,8 @@ def get_rounds(
     time_window: TimeWindowFilter = Query(default="all"),
     version: list[str] | None = Query(default=None),
     protocol: ProtocolFilter = Query(default="all"),
+    kicked_from: date | None = Query(default=None, description="First UTC day a round may have been kicked on."),
+    kicked_to: date | None = Query(default=None, description="Last UTC day a round may have been kicked on."),
     page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
     db: Database = Depends(get_database),
@@ -63,6 +66,8 @@ def get_rounds(
             time_window=time_window,
             versions=version,
             protocol=protocol,
+            kicked_from=kicked_from,
+            kicked_to=kicked_to,
             page=page,
             limit=limit,
         )

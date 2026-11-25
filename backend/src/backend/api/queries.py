@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from backend.indexer.types import normalize_address
@@ -173,6 +174,23 @@ def _time_window_clause(time_window: str | None) -> tuple[str, list[Any]]:
     return f" AND {_activity_expr()} >= ?", [cutoff]
 
 
+def _kicked_range_clause(kicked_from: date | None, kicked_to: date | None) -> tuple[str, list[Any]]:
+    """Rounds kicked on or between two UTC dates; either end may be open."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if kicked_from is not None:
+        clauses.append(" AND r.kicked_at >= ?")
+        params.append(_utc_midnight(kicked_from))
+    if kicked_to is not None:
+        clauses.append(" AND r.kicked_at < ?")
+        params.append(_utc_midnight(kicked_to + timedelta(days=1)))
+    return "".join(clauses), params
+
+
+def _utc_midnight(day: date) -> int:
+    return int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
+
+
 def _version_clause(column: str, versions: list[str] | tuple[str, ...] | None) -> tuple[str, list[Any]]:
     normalized = normalize_version_filters(list(versions) if versions else None)
     if not normalized:
@@ -202,6 +220,8 @@ def build_round_filters(
     time_window: str | None,
     versions: list[str] | tuple[str, ...] | None,
     protocol: str | None = None,
+    kicked_from: date | None = None,
+    kicked_to: date | None = None,
 ) -> tuple[str, list[Any]]:
     clauses = [" WHERE 1 = 1"]
     params: list[Any] = []
@@ -238,6 +258,9 @@ def build_round_filters(
     time_sql, time_params = _time_window_clause(time_window)
     clauses.append(time_sql)
     params.extend(time_params)
+    range_sql, range_params = _kicked_range_clause(kicked_from, kicked_to)
+    clauses.append(range_sql)
+    params.extend(range_params)
     version_sql, version_params = _version_clause("a.version", versions)
     clauses.append(version_sql)
     params.extend(version_params)
@@ -285,6 +308,8 @@ def list_rounds(
     page: int,
     limit: int,
     protocol: str | None = None,
+    kicked_from: date | None = None,
+    kicked_to: date | None = None,
 ) -> tuple[int, dict[str, int], list[sqlite3.Row]]:
     """Return the matching total, counts by status under the other filters, and one page of rows."""
     filters = {
@@ -296,6 +321,8 @@ def list_rounds(
         "time_window": time_window,
         "versions": versions,
         "protocol": protocol,
+        "kicked_from": kicked_from,
+        "kicked_to": kicked_to,
     }
     unfiltered_sql, unfiltered_params = build_round_filters(status=None, **filters)
     counts = dict.fromkeys(ROUND_STATUSES, 0)

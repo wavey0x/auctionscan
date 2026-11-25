@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 import { cn, formatCount } from "../lib/format";
 
@@ -69,6 +69,55 @@ export function ChipGroup<T extends string | number>({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * A span of days, framed like a filter group: a first and a last day, either
+ * of which may be left open. Days are UTC calendar dates (`YYYY-MM-DD`).
+ */
+export function DateRange({
+  label,
+  from,
+  to,
+  onChange,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  onChange: (next: { from: string; to: string }) => void;
+}) {
+  return (
+    <div className="date-range" role="group" aria-label={label} title={`${label}, UTC days`}>
+      <input
+        type="date"
+        aria-label={`${label} from`}
+        value={from}
+        max={to || undefined}
+        className={cn(!from && "is-empty")}
+        onChange={(event) => onChange({ from: event.target.value, to })}
+      />
+      <span aria-hidden="true">→</span>
+      <input
+        type="date"
+        aria-label={`${label} to`}
+        value={to}
+        min={from || undefined}
+        className={cn(!to && "is-empty")}
+        onChange={(event) => onChange({ from, to: event.target.value })}
+      />
+      {/* The clear mark keeps its place while there is nothing to clear, so the frame never resizes. */}
+      <button
+        type="button"
+        aria-label={`Clear ${label.toLowerCase()} dates`}
+        title="Clear dates"
+        disabled={!from && !to}
+        style={from || to ? undefined : { visibility: "hidden" }}
+        onClick={() => onChange({ from: "", to: "" })}
+      >
+        <X className="h-3 w-3" strokeWidth={1.8} />
+      </button>
     </div>
   );
 }

@@ -1581,6 +1581,8 @@ export interface operations {
                 kicked_from?: string | null;
                 /** @description Last UTC day a round may have been kicked on. */
                 kicked_to?: string | null;
+                /** @description `kicked`: newest first. `value`: largest market value first. `pnl_percent`, `pnl_usd`: worst PnL first. Rounds without the figure come last. */
+                sort_by?: "kicked" | "value" | "pnl_percent" | "pnl_usd";
                 page?: number;
                 limit?: number;
             };

@@ -11,6 +11,7 @@ Protocol = Literal["yearn", "curve"]
 ProtocolFilter = Literal["all", "yearn", "curve"]
 TimeWindowFilter = Literal["all", "24h", "7d", "30d", "90d"]
 TakerSortKey = Literal["volume", "taker", "chains", "auctions", "takes", "recent"]
+RoundSortKey = Literal["kicked", "value", "pnl_percent", "pnl_usd"]
 MAX_PAGE = 1000
 MAX_SEARCH_LENGTH = 100
 

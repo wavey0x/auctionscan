@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ArrowDown } from "lucide-react";
 import { useMatch, useNavigationType, useSearchParams } from "react-router-dom";
 
 import AuctionRecentTakes from "../../auctions/components/AuctionRecentTakes";
@@ -57,6 +58,18 @@ function parseRoundStatus(value: string | null): RoundStatusFilter {
   return STATUS_CHIPS.find((status) => STATUS_URL[status] === value) ?? "all";
 }
 
+/**
+ * What the list is ordered by. It comes newest kick first; the other two bring
+ * what an operator is looking for to the top: the lots worth most, and the
+ * rounds that cleared worst.
+ */
+const SORTS = ["value", "pnl"] as const;
+type RoundSort = "kicked" | (typeof SORTS)[number];
+
+function parseSort(value: string | null): RoundSort {
+  return SORTS.find((sort) => sort === value) ?? "kicked";
+}
+
 type Filters = {
   status: RoundStatusFilter;
   protocol?: Protocol;
@@ -65,10 +78,11 @@ type Filters = {
   from: string;
   to: string;
   query: string;
+  sort: RoundSort;
   page: number;
 };
 
-const FILTER_KEYS = ["status", "protocol", "chain", "from", "to", "filter", "pair", "page"];
+const FILTER_KEYS = ["status", "protocol", "chain", "from", "to", "filter", "pair", "sort", "page"];
 
 function parseDay(value: string | null): string {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? value : "";
@@ -84,6 +98,7 @@ function readFilters(searchParams: URLSearchParams): Filters {
     from: parseDay(searchParams.get("from")),
     to: parseDay(searchParams.get("to")),
     query: searchParams.get("filter") || searchParams.get("pair") || "",
+    sort: parseSort(searchParams.get("sort")),
     page: Number.isFinite(page) && page > 0 ? page : 1,
   };
 }
@@ -98,6 +113,7 @@ function withFilters(current: URLSearchParams, filters: Filters) {
   if (filters.from) next.set("from", filters.from);
   if (filters.to) next.set("to", filters.to);
   if (filters.query) next.set("filter", filters.query);
+  if (filters.sort !== "kicked") next.set("sort", filters.sort);
   if (filters.page > 1) next.set("page", String(filters.page));
   return next;
 }
@@ -240,8 +256,11 @@ export default function RoundsPage() {
   const isAuctionAddressQuery = !scope && /^0x[a-fA-F0-9]{40}$/.test(normalizedQuery);
   const isTxHashQuery = /^0x[a-fA-F0-9]{64}$/.test(normalizedQuery);
 
+  // PnL is ordered by the figure its column is showing: the rate, or what it came to.
+  const sortBy = filters.sort === "pnl" ? (pnlDisplayMode === "percent" ? "pnl_percent" : "pnl_usd") : filters.sort;
+
   const roundsQuery = useQuery({
-    queryKey: ["rounds", scopeKey, filters],
+    queryKey: ["rounds", scopeKey, filters, sortBy],
     // Keep chip counts, rows and pagination in place while a new filter loads.
     placeholderData: keepPreviousData,
     refetchInterval: LIVE_REFETCH_INTERVAL_MS,
@@ -256,6 +275,7 @@ export default function RoundsPage() {
         auction_address: scope ? scope.address : isAuctionAddressQuery ? normalizedQuery : undefined,
         tx_hash: isTxHashQuery ? normalizedQuery : undefined,
         pair: normalizedQuery && !isAuctionAddressQuery && !isTxHashQuery ? normalizedQuery : undefined,
+        sort_by: sortBy,
         page: filters.page,
         limit: PAGE_SIZE,
       }, signal)),
@@ -290,6 +310,23 @@ export default function RoundsPage() {
 
   const updateFilters = (patch: Partial<Filters>) => {
     setSearchParams(withFilters(searchParams, { ...filters, ...patch }));
+  };
+
+  // A column's name orders the list by it; the name of the column it is ordered by returns it to newest first.
+  const toggleSort = (sort: (typeof SORTS)[number]) => {
+    updateFilters({ sort: filters.sort === sort ? "kicked" : sort, page: 1 });
+  };
+  const sortTitle = (sort: (typeof SORTS)[number], label: string) => (
+    filters.sort === sort ? "Back to newest first" : `Sort by ${label}`
+  );
+  const sortArrow = (sort: (typeof SORTS)[number]) => (
+    filters.sort === sort ? <ArrowDown className="sort-arrow h-3 w-3" strokeWidth={2} /> : null
+  );
+
+  const togglePnlUnit = () => {
+    setPnlDisplayMode((current) => (current === "percent" ? "usd" : "percent"));
+    // Ordered by PnL, the other unit is another order, read from its head.
+    if (filters.sort === "pnl" && filters.page > 1) updateFilters({ page: 1 });
   };
 
   if (scopeInvalid || auctionMissing) {
@@ -385,17 +422,39 @@ export default function RoundsPage() {
                         Progress <em>{progressDisplayMode === "time" ? "time" : "sold"}</em>
                       </button>
                     </th>
-                    <th className="col-lo"><span className="lot-cell">Lot <span className="lot-usd">value</span></span></th>
-                    <th className="col-lo">Received</th>
-                    <th className="num rcol-pnl">
+                    <th className="col-lo" aria-sort={filters.sort === "value" ? "descending" : undefined}>
                       <button
                         type="button"
-                        className="header-toggle"
-                        title={pnlDisplayMode === "percent" ? "Show PnL in USD" : "Show PnL as a percentage"}
-                        onClick={() => setPnlDisplayMode((current) => (current === "percent" ? "usd" : "percent"))}
+                        className={cn("sort-button lot-cell w-full", filters.sort === "value" && "is-active")}
+                        title={sortTitle("value", "lot value, largest first")}
+                        onClick={() => toggleSort("value")}
                       >
-                        PnL <em>{pnlDisplayMode === "percent" ? "%" : "$"}</em>
+                        <span>Lot</span>{" "}
+                        <span className="lot-usd inline-flex items-center gap-1">{sortArrow("value")}value</span>
                       </button>
+                    </th>
+                    <th className="col-lo">Received</th>
+                    {/* The name orders the list; the unit beside it still chooses the figure shown. */}
+                    <th className="num rcol-pnl" aria-sort={filters.sort === "pnl" ? "ascending" : undefined}>
+                      <span className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          className={cn("sort-button", filters.sort === "pnl" && "is-active")}
+                          title={sortTitle("pnl", "PnL, worst first")}
+                          onClick={() => toggleSort("pnl")}
+                        >
+                          {sortArrow("pnl")}
+                          <span>PnL</span>
+                        </button>{" "}
+                        <button
+                          type="button"
+                          className="header-toggle is-unit"
+                          title={pnlDisplayMode === "percent" ? "Show PnL in USD" : "Show PnL as a percentage"}
+                          onClick={togglePnlUnit}
+                        >
+                          <em>{pnlDisplayMode === "percent" ? "%" : "$"}</em>
+                        </button>
+                      </span>
                     </th>
                     <th className={cn("col-md num rcol-kicked", kickedDisplayMode === "absolute" && "is-dated")}>
                       <button

@@ -671,8 +671,22 @@ html.dark {
     @apply not-italic normal-case text-faint;
   }
 
+  /* A unit that is a control of its own, beside a name that sorts: the mark
+     is one character, so the target reaches past it and it answers the
+     pointer itself. */
+  .header-toggle.is-unit {
+    @apply -my-1.5 -mr-2 py-1.5 pl-0.5 pr-2;
+  }
+
+  .header-toggle.is-unit:hover em {
+    @apply text-primary;
+  }
+
+  /* The box clips 4px outside its content on either side: a matched value's
+     halo hangs that far out, into the cell's own padding, and would lose its
+     left edge to a clip drawn at the content. */
   .cell-clip {
-    @apply min-w-0 max-w-[13rem] overflow-hidden;
+    @apply -mx-1 min-w-0 max-w-[13.5rem] overflow-hidden px-1;
   }
 
   /* The rounds list holds its columns still. Widths are the table's own, set
@@ -955,6 +969,32 @@ html.dark {
   /* A long sold token gives way first, so what it was sold for stays readable. */
   .drawer-title .token.is-want {
     flex-shrink: 0.2;
+  }
+
+  /* The arrow and the sold token's copy control share one place. The control
+     has it while its token is pointed at, while it is focused, and while it
+     says the address was copied. Without a pointer nothing can ask for the
+     control, so the arrow keeps the place and the name's link is the way to
+     the address. */
+  .drawer-title .pair-arrow {
+    @apply inline-grid shrink-0 place-items-center;
+  }
+
+  .drawer-title .pair-arrow > * {
+    grid-area: 1 / 1;
+    transition: opacity 0.1s;
+  }
+
+  .drawer-title .token:hover .pair-arrow > svg,
+  .drawer-title .pair-arrow > .copy-trigger:focus-visible + svg,
+  .drawer-title .pair-arrow > .copy-trigger.is-copied + svg {
+    opacity: 0;
+  }
+
+  @media (hover: none) {
+    .drawer-title .copy-trigger {
+      display: none;
+    }
   }
 
   .drawer-meta {

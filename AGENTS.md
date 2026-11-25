@@ -242,6 +242,13 @@ the rules `taker_pricing_summary` is built with. The UI's status chips offer Liv
 (`sold_out`) and Expired; the list without a status chip is all rounds,
 scheduled and settled ones included.
 
+`sort_by` on `/api/rounds` orders the whole filtered list before it is paged:
+`kicked` (the default, newest first), `value` (largest first) and
+`pnl_percent` / `pnl_usd` (worst first). `value` is the market value a list
+row shows: what sold, valued when it sold, else the kick quote. The UI's
+`roundMarketValue` picks the figure by the same rule; change them together.
+Rounds without the figure come last.
+
 Address policy:
 
 - store addresses canonically normalized in SQLite

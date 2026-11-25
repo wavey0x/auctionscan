@@ -275,6 +275,24 @@ it("gives each figure once and switches the whole round between tokens and dolla
   expect(figures().some((figure) => figure.includes("$"))).toBe(false);
 });
 
+it("links each token in the head to its explorer page and offers its address to copy", async () => {
+  vi.mocked(api.getChains).mockResolvedValue({ chains: { 1: { chain_id: 1, name: "Ethereum", short_name: "Ethereum", explorer: "https://etherscan.io" } }, count: 1 });
+  const { container } = mountRound(sold);
+  await settle();
+  const tokens = Array.from(container.querySelectorAll<HTMLElement>(".drawer-title .token"));
+  expect(tokens).toHaveLength(2);
+  [`0x${"d".repeat(40)}`, `0x${"e".repeat(40)}`].forEach((address, index) => {
+    const link = tokens[index].querySelector<HTMLAnchorElement>("a")!;
+    expect(link.getAttribute("href")).toBe(`https://etherscan.io/token/${address}`);
+    expect(link.target).toBe("_blank");
+    expect(link.title).toContain(address);
+    expect(tokens[index].querySelector(".copy-trigger")!.getAttribute("aria-label")).toBe(`Copy token address ${address}`);
+  });
+  // The sold token's control shares the arrow's place; the want token's follows its name.
+  expect(tokens[0].querySelector(".pair-arrow .copy-trigger")).toBeTruthy();
+  expect(tokens[1].querySelector(".pair-arrow")).toBeNull();
+});
+
 it("makes a take's label the link to its transaction, without opening the take", async () => {
   vi.mocked(api.getChains).mockResolvedValue({ chains: { 1: { chain_id: 1, name: "Ethereum", short_name: "Ethereum", explorer: "https://etherscan.io" } }, count: 1 });
   vi.mocked(api.getAuctionTakes).mockResolvedValue({ as_of: {}, takes: [soldTake], available_price_sources: [] });

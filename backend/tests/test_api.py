@@ -974,6 +974,58 @@ def test_api_rounds_are_sorted_by_most_recent_kick_date(tmp_path):
     assert [item["round_id"] for item in rounds_payload["rounds"][:2]] == [2, 1]
 
 
+def test_rounds_sort_by_the_value_and_pnl_their_rows_show(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    writer = _seed_api_db(db_path)
+
+    def _prepare(conn):
+        apply_batch(conn, [
+            make_prepared(
+                event_name="AuctionKicked", tx_nonce=nonce, block_number=block,
+                payload={"from": DEFAULT_FROM_TOKEN, "available": 500 * ONE_ETHER},
+                snapshot=make_snapshot(block_number=block),
+            )
+            for nonce, block in ((5, 104), (6, 105), (7, 106))
+        ])
+        # Rounds 1 and 2 have sold, so they are valued by what sold; round 3 has not, so by its
+        # kick quote; round 4 has no pricing at all. The figures are chosen so that comparing the
+        # stored text would give a different order than comparing the numbers.
+        conn.execute("UPDATE rounds SET take_count = 1 WHERE round_id = 2")
+        conn.execute("UPDATE rounds SET status = 'expired' WHERE round_id = 3")
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO round_pricing (
+                chain_id, auction_address, round_id, kick_market_quote_usd, total_market_quote_usd,
+                total_auction_profit_usd, total_auction_profit_bps
+            ) VALUES (1, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (DEFAULT_AUCTION, 1, "5", "1000.5", "-2", -20),
+                (DEFAULT_AUCTION, 2, "99999", "90", "-1.8", -200),
+                (DEFAULT_AUCTION, 3, "250", None, None, None),
+            ],
+        )
+
+    writer.transaction(_prepare)
+    client = TestClient(create_app(db_path=str(db_path)))
+
+    def order(**params):
+        response = client.get("/api/rounds", params={"chain_id": 1, **params})
+        assert response.status_code == 200
+        return [item["round_id"] for item in response.json()["rounds"]]
+
+    assert order() == order(sort_by="kicked") == [4, 3, 2, 1]
+    # Largest first; the round with no value comes last.
+    assert order(sort_by="value") == [1, 3, 2, 4]
+    # Worst first; rounds with no PnL follow, newest kick first.
+    assert order(sort_by="pnl_percent") == [2, 1, 4, 3]
+    assert order(sort_by="pnl_usd") == [1, 2, 4, 3]
+    # The order holds across pages and under the other filters.
+    assert order(sort_by="value", limit=2, page=2) == [2, 4]
+    assert order(sort_by="value", status="live") == [1, 2, 4]
+    assert client.get("/api/rounds", params={"sort_by": "received"}).status_code == 422
+
+
 def test_rounds_keep_snapshot_settings_when_current_auction_settings_change(tmp_path):
     db_path = tmp_path / "auctionscan.sqlite3"
     writer = _seed_api_db(db_path)
@@ -1356,6 +1408,7 @@ def test_openapi_publishes_the_filter_vocabularies(tmp_path):
     assert enum_for("/api/rounds", "status") == ["all", "scheduled", "live", "sold_out", "expired", "settled"]
     assert enum_for("/api/rounds", "protocol") == ["all", "yearn", "curve"]
     assert enum_for("/api/rounds", "time_window") == ["all", "24h", "7d", "30d", "90d"]
+    assert enum_for("/api/rounds", "sort_by") == ["kicked", "value", "pnl_percent", "pnl_usd"]
     assert enum_for("/api/takers", "sort_by") == [
         "volume", "taker", "chains", "auctions", "takes", "recent",
     ]

@@ -90,6 +90,60 @@ it("narrows to the days rounds were kicked on, and lets either end go", async ()
   expect(range.queryByRole("button")).toBeNull();
 });
 
+it("orders by PnL from the worst and by lot value from the largest, and a second click returns to newest first", async () => {
+  await mount("?status=sold&page=3");
+  expect(lastRequest()).toMatchObject({ sort_by: "kicked", page: 3 });
+  const head = within(screen.getByRole("region", { name: "Rounds" }));
+  const pnl = head.getByRole("columnheader", { name: /PnL/ });
+  const lot = head.getByRole("columnheader", { name: /Lot/ });
+  expect(document.querySelectorAll("thead .sort-arrow")).toHaveLength(0);
+
+  fireEvent.click(within(pnl).getByRole("button", { name: "PnL" }));
+  await waitFor(() => expect(lastRequest()).toMatchObject({ sort_by: "pnl_percent", status: "sold_out", page: 1 }));
+  expect(router.state.location.search).toBe("?status=sold&sort=pnl");
+  expect(pnl.getAttribute("aria-sort")).toBe("ascending");
+  expect(pnl.querySelectorAll(".sort-arrow")).toHaveLength(1);
+
+  fireEvent.click(within(lot).getByRole("button"));
+  await waitFor(() => expect(lastRequest().sort_by).toBe("value"));
+  expect(router.state.location.search).toBe("?status=sold&sort=value");
+  expect(lot.getAttribute("aria-sort")).toBe("descending");
+  expect(pnl.getAttribute("aria-sort")).toBeNull();
+  expect(document.querySelectorAll("thead .sort-arrow")).toHaveLength(1);
+
+  fireEvent.click(within(lot).getByRole("button"));
+  await waitFor(() => expect(lastRequest().sort_by).toBe("kicked"));
+  expect(router.state.location.search).toBe("?status=sold");
+  expect(document.querySelectorAll("thead .sort-arrow")).toHaveLength(0);
+});
+
+it("orders PnL by the unit its column shows, and the unit still switches on its own", async () => {
+  await mount("?sort=pnl&page=2");
+  expect(lastRequest()).toMatchObject({ sort_by: "pnl_percent", page: 2 });
+  const pnl = within(screen.getByRole("region", { name: "Rounds" })).getByRole("columnheader", { name: /PnL/ });
+
+  // Another unit is another order, so it is read from its first page.
+  fireEvent.click(within(pnl).getByRole("button", { name: "%" }));
+  await waitFor(() => expect(lastRequest()).toMatchObject({ sort_by: "pnl_usd", page: 1 }));
+  expect(router.state.location.search).toBe("?sort=pnl");
+  expect(pnl.textContent).toBe("PnL $");
+});
+
+it("leaves the order and the page alone when the PnL unit changes under another order", async () => {
+  await mount("?page=2");
+  const pnl = within(screen.getByRole("region", { name: "Rounds" })).getByRole("columnheader", { name: /PnL/ });
+  const requests = vi.mocked(api.getRounds).mock.calls.length;
+  fireEvent.click(within(pnl).getByRole("button", { name: "%" }));
+  expect(pnl.textContent).toBe("PnL $");
+  expect(router.state.location.search).toBe("?page=2");
+  expect(vi.mocked(api.getRounds).mock.calls).toHaveLength(requests);
+});
+
+it("ignores an order the list does not offer", async () => {
+  await mount("?sort=received");
+  expect(lastRequest().sort_by).toBe("kicked");
+});
+
 it("has no round column: a Yearn row carries its round on its auction, a burner's lot its token", async () => {
   const yearn: RoundListItem = { ...upcoming, auction_address: `0x${"a".repeat(40)}`, round_id: 66, protocol: "yearn", version: "1.0.4",
     occurrence: { ...upcoming.occurrence, log_index: 5 } };

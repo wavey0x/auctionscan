@@ -15,6 +15,7 @@ from ..models import (
     MAX_SEARCH_LENGTH,
     RoundDetailResponse,
     RoundLivePrice,
+    RoundSortKey,
     RoundStatusCounts,
     RoundStatusFilter,
     ProtocolFilter,
@@ -48,6 +49,13 @@ def get_rounds(
     protocol: ProtocolFilter = Query(default="all"),
     kicked_from: date | None = Query(default=None, description="First UTC day a round may have been kicked on."),
     kicked_to: date | None = Query(default=None, description="Last UTC day a round may have been kicked on."),
+    sort_by: RoundSortKey = Query(
+        default="kicked",
+        description=(
+            "`kicked`: newest first. `value`: largest market value first. "
+            "`pnl_percent`, `pnl_usd`: worst PnL first. Rounds without the figure come last."
+        ),
+    ),
     page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
     db: Database = Depends(get_database),
@@ -68,6 +76,7 @@ def get_rounds(
             protocol=protocol,
             kicked_from=kicked_from,
             kicked_to=kicked_to,
+            sort_by=sort_by,
             page=page,
             limit=limit,
         )

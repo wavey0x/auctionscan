@@ -21,7 +21,7 @@ export function useChainInfo(chainId?: number | null) {
 
 export function buildExplorerUrl(
   chain: ChainInfo | undefined,
-  type: "address" | "tx",
+  type: "address" | "tx" | "token",
   value: string | null | undefined,
 ): string | null {
   if (!chain?.explorer || chain.explorer === "#" || !value) {

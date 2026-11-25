@@ -26,11 +26,12 @@ import { useDenomination } from "../../../shared/lib/denomination";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, roundMarketValue, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
 import { auctionLabel } from "../../../shared/lib/protocol";
 import { getRoundProgressMetrics, getSaleOutcome } from "../../../shared/lib/roundProgress";
-import { useChainsQuery } from "../../../shared/lib/chains";
+import { buildExplorerUrl, useChainInfo, useChainsQuery } from "../../../shared/lib/chains";
 import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
 import type { RoundListItem } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
 import ChainIcon from "../../../shared/ui/ChainIcon";
+import CopyIconButton from "../../../shared/ui/CopyIconButton";
 import EmptyState from "../../../shared/ui/EmptyState";
 import PriceSourceSelect from "../../../shared/ui/PriceSourceSelect";
 import RequestError from "../../../shared/ui/RequestError";
@@ -71,6 +72,54 @@ function ModalCloseButton({ onClose }: { onClose: () => void; autoFocus?: boolea
     <IconButton label="Close round detail" onClick={onClose}>
       <X className="h-4 w-4" strokeWidth={1.6} />
     </IconButton>
+  );
+}
+
+/**
+ * A token in the head. Its name leads to its page on the chain's explorer, and
+ * pointing at it brings up the control that copies its address: what an
+ * address offers anywhere else, on a line with no room to hold a place for it.
+ * The sold token's control takes the place of the arrow after it, which says
+ * nothing while the token itself is being pointed at. The arrow stays with
+ * what was sold, so when a narrow sheet breaks the pair the two logos stack
+ * on one edge.
+ */
+function HeadToken({
+  address,
+  chainId,
+  symbol,
+  name,
+  logoUrl,
+  want = false,
+}: {
+  address?: string | null;
+  chainId: number;
+  symbol: string;
+  name?: string | null;
+  logoUrl?: string | null;
+  want?: boolean;
+}) {
+  const { chain } = useChainInfo(chainId);
+  const href = buildExplorerUrl(chain, "token", address);
+  const title = [name && name !== symbol ? name : null, address].filter(Boolean).join("\n");
+  const copy = address ? (
+    <CopyIconButton valueToCopy={address} title={`Copy token address ${address}`} ariaLabel={`Copy token address ${address}`} />
+  ) : null;
+  return (
+    <span className={cn("token reveal-row", want && "is-want")}>
+      <TokenLogo logoUrl={logoUrl} symbol={symbol} size="md" />
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer" className="identity-link truncate" title={title}>{symbol}</a>
+      ) : (
+        <span className="truncate" title={title}>{symbol}</span>
+      )}
+      {want ? copy : (
+        <span className="pair-arrow">
+          {copy}
+          <ArrowRight className="h-3.5 w-3.5 text-faint" strokeWidth={1.5} aria-hidden="true" />
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -627,17 +676,22 @@ export default function RoundModalContent({
       <header className="drawer-head">
         <div className="min-w-0 flex-1">
           {/* The pair has the line to itself, so both tokens keep their logo and their whole name. */}
-          <div className="drawer-title" title={`${round.from_token_name ?? fromSymbol} → ${round.want_token_name ?? wantSymbol}`}>
-            {/* The arrow stays with what was sold, so when a narrow sheet breaks the pair the two logos stack on one edge. */}
-            <span className="token">
-              <TokenLogo logoUrl={round.from_token_logo_url} symbol={fromSymbol} size="md" />
-              <span className="truncate">{fromSymbol}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={1.5} aria-hidden="true" />
-            </span>
-            <span className="token is-want">
-              <TokenLogo logoUrl={round.want_token_logo_url} symbol={wantSymbol} size="md" />
-              <span className="truncate">{wantSymbol}</span>
-            </span>
+          <div className="drawer-title">
+            <HeadToken
+              address={round.from_token}
+              chainId={round.chain_id}
+              symbol={fromSymbol}
+              name={round.from_token_name}
+              logoUrl={round.from_token_logo_url}
+            />
+            <HeadToken
+              address={round.want_token}
+              chainId={round.chain_id}
+              symbol={wantSymbol}
+              name={round.want_token_name}
+              logoUrl={round.want_token_logo_url}
+              want
+            />
           </div>
           {/* Its state, then where it lives and which round, as a row in the list gives them. The address reveals its utilities when pointed at. */}
           <div className="drawer-meta">

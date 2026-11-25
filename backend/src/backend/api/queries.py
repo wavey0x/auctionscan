@@ -310,6 +310,7 @@ def list_rounds(
     protocol: str | None = None,
     kicked_from: date | None = None,
     kicked_to: date | None = None,
+    sort_by: str = "kicked",
 ) -> tuple[int, dict[str, int], list[sqlite3.Row]]:
     """Return the matching total, counts by status under the other filters, and one page of rows."""
     filters = {
@@ -333,9 +334,37 @@ def list_rounds(
     counts["all"] = sum(counts.values())
     total = counts.get(status or "all", 0)
     where_sql, params = build_round_filters(status=status, **filters)
-    query_sql = _round_select_clause() + where_sql + " ORDER BY r.kicked_at DESC, r.round_id DESC LIMIT ? OFFSET ?"
+    query_sql = _round_select_clause() + where_sql + f" ORDER BY {_round_order_clause(sort_by)} LIMIT ? OFFSET ?"
     rows = list(conn.execute(query_sql, (*params, limit, (page - 1) * limit)).fetchall())
     return total, counts, rows
+
+
+_NEWEST_KICK_FIRST = "r.kicked_at DESC, r.round_id DESC"
+
+# The market value a round's list row shows: what sold, valued when it sold,
+# once anything has; until then the lot as quoted at kick. The UI's
+# `roundMarketValue` picks the figure by the same rule, so the order matches
+# the column it is read from.
+_ROUND_MARKET_VALUE_USD = (
+    "CASE WHEN r.take_count > 0 THEN rp.total_market_quote_usd ELSE rp.kick_market_quote_usd END"
+)
+
+
+def _round_order_clause(sort_by: str) -> str:
+    """Order a rounds page: by kick, by market value, or by PnL from the worst.
+
+    A round without the figure it is ordered by comes after every round that
+    has one, and rounds level on the figure fall back to the newest kick. USD
+    figures are stored as decimal text and compared as numbers.
+    """
+    figure, direction = {
+        "value": (f"CAST({_ROUND_MARKET_VALUE_USD} AS REAL)", "DESC"),
+        "pnl_percent": ("rp.total_auction_profit_bps", "ASC"),
+        "pnl_usd": ("CAST(rp.total_auction_profit_usd AS REAL)", "ASC"),
+    }.get(sort_by, (None, None))
+    if figure is None:
+        return _NEWEST_KICK_FIRST
+    return f"({figure} IS NULL) ASC, {figure} {direction}, {_NEWEST_KICK_FIRST}"
 
 
 def round_stats(

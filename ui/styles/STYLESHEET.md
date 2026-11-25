@@ -173,6 +173,10 @@ load only, so changing a filter never collapses the counts or swaps table geomet
 - Copy and explorer icons surface on row hover or focus, stay visible on touch, and are dropped on
   phones. Rows open with a click, Enter, or ↑/↓ then Enter. A row that opens something ends in `›`.
 - Sort arrows show only on the active column.
+- The rounds list comes newest kick first and can be put in two other orders, each from the end
+  an operator looks for: Lot by market value, largest first, and PnL from the worst, by the
+  figure the column is showing. A column's name orders the list by it and, clicked again, returns
+  it to newest first. Rounds without the figure come last. The order is in the URL (`sort`).
 - Loading is skeleton rows in the shape of the table.
 
 Linked identity hover stays: within one table, hovering an auction, token or taker address outlines
@@ -198,7 +202,10 @@ round's time meter is empty.
 - It reads top to bottom as a receipt, and says nothing twice. A finished round:
   1. **Head**, two lines that share one left edge. First the pair, each token with its logo; it has
      the line to itself, so names are not cut, and on a sheet too narrow for both it breaks after
-     the arrow, so the two logos stack on one edge. Beneath, set apart by space and never by dots, the round's state and the auction address with the round as its quiet tag, as a list row gives them (named, for Curve's burner; on a phone sheet the name drops its short address and copy control to stay whole); the address reveals
+     the arrow, so the two logos stack on one edge. A token's name is its link to the token's
+     page on the explorer, with its full name and address on hover; pointing at a token brings up
+     the control that copies its address, after the want token and in the arrow's place for the
+     sold one, so the line holds no empty place for it. Beneath, set apart by space and never by dots, the round's state and the auction address with the round as its quiet tag, as a list row gives them (named, for Curve's burner; on a phone sheet the name drops its short address and copy control to stay whole); the address reveals
      its utilities when pointed at. The version is a Details row, and the chain gets a mark only
      once there is more than one chain to tell apart.
   2. **Result**, one row: Sold, Received, PnL. Each is a label and one bare 15px figure, so the row
@@ -266,8 +273,9 @@ off.
 - Money in lists is compact at three significant digits (`formatCompactUsd`): `$23.4M`, `$6.70M`,
   `$161K`. The exact value is on hover.
 - PnL percent is signed with a true minus (`−0.24%`). The rounds list and the round drawer state
-  one figure at a time, percent or USD: in the list the PnL header toggles between them, as the
-  Progress and Kicked headers do. Other lists follow the percent with its USD delta in a quieter
+  one figure at a time, percent or USD: in the list the unit beside the PnL header (`%`, `$`)
+  toggles between them, as the Progress and Kicked headers toggle theirs, and the name beside it
+  sorts. Other lists follow the percent with its USD delta in a quieter
   figure.
 - A figure computed from incomplete pricing carries a small `partial` note with the coverage on hover.
   The takers ranking is the exception: its volume is a bare figure with the coverage on hover only,

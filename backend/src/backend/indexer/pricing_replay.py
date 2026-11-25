@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 REPLAY_PROVIDER = "curve"
 # Recorded on every replayed quote. Raise it when the replay would answer the
 # same event differently, so --requote knows which answers an older method gave.
-METHOD_VERSION = 2
+METHOD_VERSION = 3
 # How nodes name a call that ran and broke instead of reverting: a bad jump (how
 # old Solidity threw), an undefined opcode, no gas left. Asking a token whether
 # it is a pool or a vault runs into these, and they are answers, not outages.
@@ -82,6 +82,11 @@ CHUNK_SIZE = 32
 IDLE_SECONDS = 60
 DEFERRED_RETRY_SECONDS = 3600
 THROTTLED_SECONDS = 300
+# The prices service allows a key 300 requests a minute, and an event can take
+# one request or nine (an LP lot whose coins need the routes for larger sizes).
+# After a batch the replay waits as long as its requests would take at this
+# rate, so what it leaves for live capture does not depend on what it replayed.
+REQUESTS_PER_MINUTE = 100
 # The best exit must absorb the lot: the lot is checked against the price of a
 # 1/PROBE_DIVISOR slice of it, and has to fetch ABSORBED_PERCENT of that price.
 # A lot that moves its own market further is one a seller with other venues
@@ -90,6 +95,12 @@ THROTTLED_SECONDS = 300
 # was below the market, by up to half; none that met it was moved by its size.
 PROBE_DIVISOR = 100
 ABSORBED_PERCENT = 95
+# Today's route is one sample of what Curve would use now, and it changes from
+# hour to hour: for a small amount it can name a pool that did not exist, or
+# held next to nothing, at the event's block. Where the route for the amount
+# will not do there, the routes for these multiples of it are tried in turn:
+# larger sizes lean on deeper pools, and deeper pools are older.
+ROUTE_SCALES = (1, 10, 100)
 ZERO_ADDRESS = "0x" + "00" * 20
 GET_DY_TYPES = ["address[11]", "uint256[5][5]", "uint256", "address[5]"]
 GET_DY_SELECTOR = keccak(text=f"get_dy({','.join(GET_DY_TYPES)})")[:4]
@@ -373,6 +384,11 @@ def _router_route(route: dict[str, Any], *, from_token: str, to_token: str) -> t
     return path, params, pools
 
 
+def _absorbed(amount: int, out: int, probe: int, probe_out: int) -> bool:
+    """Whether an amount fetched ABSORBED_PERCENT of the price its probe, a small slice of it, fetched."""
+    return out * probe * 100 >= probe_out * amount * ABSORBED_PERCENT
+
+
 def _uint(result: bytes, *, what: str) -> int:
     if len(result) < 32:
         raise ReplayFailed("no_code", f"{what} returned nothing at this block")
@@ -449,6 +465,7 @@ class Replayer:
         self._redemption_options: dict[tuple[str, str], list[Redemption]] = {}
         self._redeemed_amounts: dict[tuple[tuple[Redemption, ...], int, str, str], int] = {}
         self.throttled = False  # the prices service has refused a request for coming too fast
+        self.requests = 0  # asked of the prices service
 
     def header(self, number: int) -> tuple[str, int]:
         with self._lock:
@@ -477,6 +494,8 @@ class Replayer:
 
     def _route(self, *, token_in: str, token_out: str, amount_in: str) -> tuple[dict[str, Any], str | None]:
         """Today's Curve route; ReplayFailed when Curve has none, PricesApiError to retry later."""
+        with self._lock:
+            self.requests += 1
         response = self.client.fetch_quote(
             chain_id=self.chain_id, token_in=token_in, token_out=token_out, amount_in=amount_in,
             providers=[REPLAY_PROVIDER], use_underlying=False, timeout_ms=DEFAULT_TIMEOUT_MS,
@@ -543,6 +562,40 @@ class Replayer:
         with self._lock:
             self._pools[token] = found
         return found
+
+    def _sold(self, token_in: str, token_out: str, amount: int, *, block_hash: str,
+              ask: Callable[[int], tuple[dict[str, Any], str | None]]) -> tuple[int, dict[str, Any], str | None, int]:
+        """The most the amount fetches along today's routes at the block.
+
+        `ask` gives today's route for a size. The route for the amount itself
+        is tried first, and the routes for larger sizes only where that one
+        does not exist at the block or cannot absorb the amount. Returns what
+        the best one fetches, the route, its request id and the size it was
+        asked for; raises the first failure when none works.
+        """
+        best: tuple[int, dict[str, Any], str | None, int] | None = None
+        failure: ReplayFailed | None = None
+        probe = amount // PROBE_DIVISOR
+        for scale in ROUTE_SCALES:
+            try:
+                route, request_id = ask(amount * scale)
+            except ReplayFailed as exc:
+                failure = failure or exc
+                break  # Curve has no route at this size, and will have none for more
+            try:
+                out = self._get_dy(route, token_in=token_in, token_out=token_out, amount=amount, block_hash=block_hash)
+                absorbed = out > 0 and (probe == 0 or _absorbed(amount, out, probe, self._get_dy(
+                    route, token_in=token_in, token_out=token_out, amount=probe, block_hash=block_hash)))
+            except ReplayFailed as exc:
+                failure = failure or exc  # not at this block: a pool that was not there, or a route one router call cannot express
+                continue
+            if best is None or out > best[0]:
+                best = (out, route, request_id, amount * scale)
+            if absorbed:
+                break
+        if best is None:
+            raise failure
+        return best
 
     def _coin_route(self, coin: str, want: str, amount: int) -> dict[str, Any] | None:
         # Today's route depends on the size: what suits a small amount can be a
@@ -617,24 +670,33 @@ class Replayer:
         """
         coin = WETH if coin == ETH else coin
         final: Callable[[int], int] | None = None
+        out = 0
         detail: dict[str, Any] = {}
         if coin == want:
-            final = lambda value: value  # noqa: E731
-        elif (route := self._coin_route(coin, want, amount)) is not None:
-            final = lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)  # noqa: E731
-            detail["route"] = route
-        sold: Exit | None = None
-        if final is not None:
+            final, out = (lambda value: value), amount
+        else:
+            def ask(size: int) -> tuple[dict[str, Any], None]:
+                route = self._coin_route(coin, want, size)
+                if route is None:
+                    raise ReplayFailed("no_route", f"Curve has no route for {coin}")
+                return route, None
+
             try:
-                out = final(amount)
+                out, route, _, asked = self._sold(coin, want, amount, block_hash=block_hash, ask=ask)
             except ReplayFailed:
-                out = None  # today's route does not exist at this block
-            if out is not None and not steps:
-                sold = Exit(out=out, value_of=final, detail=detail)
-            elif out is not None:
-                detail["redemptions"] = [step.describe() for step in steps]
-                sold = Exit(out=out, detail=detail,
-                            value_of=lambda value: final(self._redeemed(steps, value, holder, block_hash)))
+                pass  # Curve has no route for the coin today, or none that works at this block
+            else:
+                final = lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)  # noqa: E731
+                detail["route"] = route
+                if asked != amount:
+                    detail["route_asked_for"] = str(asked)
+        sold: Exit | None = None
+        if final is not None and not steps:
+            sold = Exit(out=out, value_of=final, detail=detail)
+        elif final is not None:
+            detail["redemptions"] = [step.describe() for step in steps]
+            sold = Exit(out=out, detail=detail,
+                        value_of=lambda value: final(self._redeemed(steps, value, holder, block_hash)))
         if coin == want:
             return sold
         redeemed = self._redeemed_exit(coin, want, amount, holder=holder, block_hash=block_hash, timestamp=timestamp,
@@ -718,14 +780,19 @@ class Replayer:
         )
 
     def _routed_exit(self, target: ReplayTarget, *, amount: int, block_hash: str) -> Exit:
-        """The lot sold along today's route, at the block."""
-        route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
-        _router_route(route, from_token=target.from_token, to_token=target.want_token)
+        """The lot sold along the best of today's routes, at the block."""
+        out, route, request_id, asked = self._sold(
+            target.from_token, target.want_token, amount, block_hash=block_hash,
+            ask=lambda size: self._route(token_in=target.from_token, token_out=target.want_token, amount_in=str(size)),
+        )
 
         def value_of(value: int) -> int:
             return self._get_dy(route, token_in=target.from_token, token_out=target.want_token, amount=value, block_hash=block_hash)
 
-        return Exit(out=value_of(amount), value_of=value_of, detail={"request_id": request_id, "route": route})
+        detail = {"request_id": request_id, "route": route}
+        if asked != amount:
+            detail["route_asked_for"] = str(asked)
+        return Exit(out=out, value_of=value_of, detail=detail)
 
     def _best_exit(self, target: ReplayTarget, *, amount: int, block_hash: str, timestamp: int) -> Exit:
         """The most the lot fetches at the block: sold along today's route, withdrawn from its pool, or redeemed.
@@ -769,7 +836,7 @@ class Replayer:
             if probe > 0:
                 probe_out = best.value_of(probe)
                 payload["probe"] = {"amount_in": str(probe), "amount_out": str(probe_out)}
-                if amount_out * probe * 100 < probe_out * amount * ABSORBED_PERCENT:
+                if not _absorbed(amount, amount_out, probe, probe_out):
                     raise ReplayFailed("route_exhausted",
                                        f"the lot fetches {amount_out}, under {ABSORBED_PERCENT}% of the price of {probe} ({probe_out})")
             if amount_out == 0:
@@ -968,6 +1035,7 @@ class ReplayCapture:
         self.max_workers = max(1, max_workers)
         self._executor: ThreadPoolExecutor | None = None
         self._replayer: Replayer | None = None
+        self._started_at = 0
         self._batch: list[Future[ReplayOutcome]] = []
         self._next_scan_at = 0
         self._resting: dict[tuple, int] = {}
@@ -1000,8 +1068,12 @@ class ReplayCapture:
                     deferred += 1
             if throttled:
                 self._next_scan_at = max(self._next_scan_at, now + self.throttled_seconds)
+            elif self._replayer is not None:
+                spent = -(-self._replayer.requests * 60 // REQUESTS_PER_MINUTE)  # seconds this batch's requests are worth
+                self._next_scan_at = max(self._next_scan_at, self._started_at + spent)
             repriced = len(writer.transaction(lambda conn: persist_outcomes(conn, outcomes, chain_id=chain_id, now=now)))
-            logger.info("pricing replay batch events=%d deferred=%d rounds=%d throttled=%s", len(outcomes), deferred, repriced, throttled)
+            logger.info("pricing replay batch events=%d deferred=%d rounds=%d requests=%d throttled=%s", len(outcomes), deferred,
+                        repriced, self._replayer.requests if self._replayer is not None else 0, throttled)
         if now < self._next_scan_at:
             return repriced
         state = writer.fetchone("SELECT last_confirmed_processed FROM sync_state WHERE chain_id = ?", (chain_id,))
@@ -1024,6 +1096,7 @@ class ReplayCapture:
         self._batch = [
             self._executor.submit(self._replayer.replay, target, confirmed_block=int(confirmed_block)) for target in targets
         ]
+        self._started_at = now
         self._next_scan_at = now + self.idle_seconds
         return repriced
 

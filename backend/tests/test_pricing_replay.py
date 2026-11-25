@@ -56,8 +56,8 @@ NOW = 2_000_000_000
 TAKE_BLOCK, KICK_BLOCK = 103, 102
 
 
-def _route(token_in: str, token_out: str) -> dict:
-    return {"swap_addresses": [POOL], "pool_addresses": [POOL], "swap_params": [[0, 1, 1, 1, 2]],
+def _route(token_in: str, token_out: str, pool: str = POOL) -> dict:
+    return {"swap_addresses": [pool], "pool_addresses": [pool], "swap_params": [[0, 1, 1, 1, 2]],
             "coins": [[token_in, token_out]]}
 
 
@@ -553,6 +553,24 @@ def test_the_indexer_replays_the_newest_events_first(tmp_path):
     assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'round_kick'")["n"] == 1
 
 
+def test_a_batch_that_asked_a_lot_of_the_prices_service_is_followed_by_a_longer_wait(tmp_path, monkeypatch):
+    writer, _ = _seed_pricing_db(tmp_path / "budget.sqlite3")
+    _confirm(writer)
+    # A batch's two requests, at one a minute, are worth two minutes before the next.
+    monkeypatch.setattr(pricing_replay, "REQUESTS_PER_MINUTE", 1)
+    capture = ReplayCapture(lambda: Replayer(chain_id=1, config=CONFIG, client=FakeClient(), reads=FakeChain()), batch_size=1)
+
+    capture.poll(writer, chain_id=1, now=NOW)
+    capture.wait_for_outstanding()
+    capture.poll(writer, chain_id=1, now=NOW + 1)
+    assert capture._replayer.requests == 2  # the take's route and the want token's
+    for later in (60, 119):
+        capture.poll(writer, chain_id=1, now=NOW + later)
+        assert capture.in_flight == 0
+    capture.poll(writer, chain_id=1, now=NOW + 120)
+    assert capture.in_flight == 1
+
+
 def test_the_replay_waits_when_the_prices_service_says_to_slow_down(tmp_path):
     writer, _ = _seed_pricing_db(tmp_path / "throttled.sqlite3")
     _confirm(writer)
@@ -628,6 +646,63 @@ def test_a_call_that_breaks_instead_of_reverting_is_an_answer_not_an_outage(monk
     node_says(Web3RPCError("{'code': -32000, 'message': 'missing trie node'}"))
     with pytest.raises(Web3RPCError):
         reads.call(POOL, PRICE_SELECTOR, f"0x{1:064x}")
+
+
+NEW_POOL = "0x0000000000000000000000000000000000000f14"  # Curve's pick today for a small amount
+
+
+class SizedClient(FakeClient):
+    """Today's route goes through NEW_POOL for amounts under 1000, and through the old, deep POOL from there."""
+
+    def fetch_quote(self, *, chain_id, token_in, token_out, amount_in, providers, use_underlying, timeout_ms):
+        self.requests.append((token_in, token_out, amount_in))
+        pool = NEW_POOL if int(amount_in) < 1000 * ETHER else POOL
+        return {"request_id": "r", "providers": {"curve": {"success": True, "route": _route(token_in, token_out, pool)}}}
+
+
+class YoungPoolChain(FakeChain):
+    """At the event's block NEW_POOL is not deployed yet, or holds next to nothing."""
+
+    def __init__(self, *, holds: int | None = None) -> None:
+        super().__init__()
+        self.holds = holds
+
+    def call(self, to: str, data: bytes, block_hash: str) -> bytes:
+        if to == CONFIG.curve_router and decode(GET_DY_TYPES, data[4:])[0][1] == NEW_POOL:
+            if self.holds is None:
+                raise ReplayFailed("reverted", "no such pool at this block")
+            return min(decode(GET_DY_TYPES, data[4:])[2] // 10**12, self.holds).to_bytes(32, "big")
+        return super().call(to, data, block_hash)
+
+
+@pytest.mark.parametrize("holds", [None, ONE_USDC])
+def test_a_route_that_fails_at_the_block_gives_way_to_the_route_for_a_larger_size(tmp_path, holds):
+    writer, _ = _seed_pricing_db(tmp_path / "sized.sqlite3")
+    client = SizedClient()
+
+    summary = _replay(writer, client=client, chain=YoungPoolChain(holds=holds))
+
+    # Today's route for 200 names a pool that was not there, or was all but empty; the route for 2000 is the deep one.
+    assert summary["take_quote"] == summary["kick_quote"] == {"fresh": 1, "failed": 0, "deferred": 0}
+    assert _take_quote(writer)["market_quote_out_raw"] == str(220_400_000)
+    fact = writer.fetchone("SELECT amount_in_raw, aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    detail = json.loads(fact["aggregate_response_json"])
+    assert (detail["route"]["swap_addresses"], detail["route_asked_for"]) == ([POOL], str(2000 * ETHER))
+    assert fact["amount_in_raw"] == str(200 * ETHER)  # the quote is still for what was taken
+    asked = [request[2] for request in client.requests if request[0] == DEFAULT_FROM_TOKEN]
+    assert sorted(asked, key=int) == [str(n * ETHER) for n in (200, 500, 2000, 5000)]
+
+
+def test_larger_sizes_are_not_asked_about_when_the_route_works_or_there_is_none(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "once.sqlite3")
+    working = FakeClient()
+    _replay(writer, client=working)
+    assert len([request for request in working.requests if request[0] == DEFAULT_FROM_TOKEN]) == 2  # the take and the kick
+
+    writer, _ = _seed_pricing_db(tmp_path / "none.sqlite3")
+    none = FakeClient(failures={DEFAULT_FROM_TOKEN: "NO_ROUTE"})
+    _replay(writer, client=none)
+    assert len([request for request in none.requests if request[0] == DEFAULT_FROM_TOKEN]) == 2
 
 
 def test_a_coin_is_routed_for_about_its_own_size():

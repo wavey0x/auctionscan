@@ -112,7 +112,13 @@ Rules for this model:
   live quotes of the same takes, the replays that fell short of this were
   the ones below the market. A coin's route is asked for about its own size
   (amounts within a factor of four share one), since a route that suits a
-  small amount can be a pool too thin for a large one.
+  small amount can be a pool too thin for a large one. Today's route is one
+  sample of what Curve would use now and changes from hour to hour; for a
+  small amount it can name a pool that did not exist, or held next to
+  nothing, at the event's block. Where the route for the amount does not
+  work at the block or cannot absorb it, the routes for 10 and 100 times the
+  amount are tried in turn (`ROUTE_SCALES`), evaluated for the amount itself:
+  larger sizes lean on deeper pools, which are older.
 - replays are ordinary pricing facts with `capture_origin = 'block_replay'`,
   provider `curve`, `capture_state = 'fresh'` and zero lag. Projections
   choose one fresh observation per event: a live one if there is any, the

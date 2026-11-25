@@ -49,7 +49,7 @@ from eth_utils import keccak
 from web3 import HTTPProvider, Web3
 from web3.exceptions import ContractLogicError, Web3RPCError
 
-from .prices_api import PricesApiError, PricingApiClient, ProviderCapability
+from .prices_api import PricesApiError, PricesApiRateLimitError, PricingApiClient, ProviderCapability
 from .pricing import (
     DEFAULT_MAX_CAPTURE_LAG_SECONDS,
     DEFAULT_MAX_CONCURRENCY,
@@ -74,10 +74,14 @@ METHOD_VERSION = 2
 EVM_HALTS = ("evm error", "invalid jump", "opcode", "out of gas", "stack underflow", "stack limit", "stack overflow",
              "write protection", "return data out of bounds")
 CHUNK_SIZE = 32
-# Beside live capture: how long to rest when nothing is left to replay, and
-# before asking again about an event a network or provider error deferred.
+# Beside live capture, which shares the prices service and its rate limit: one
+# batch per IDLE_SECONDS, which is also the rest when nothing is left to
+# replay. An event a network or provider error deferred is asked about again
+# after DEFERRED_RETRY_SECONDS. When the service says to slow down, that is
+# about the pace and not the events: everything waits THROTTLED_SECONDS.
 IDLE_SECONDS = 60
 DEFERRED_RETRY_SECONDS = 3600
+THROTTLED_SECONDS = 300
 # The best exit must absorb the lot: the lot is checked against the price of a
 # 1/PROBE_DIVISOR slice of it, and has to fetch ABSORBED_PERCENT of that price.
 # A lot that moves its own market further is one a seller with other venues
@@ -444,6 +448,7 @@ class Replayer:
         self._pools: dict[str, LpPool | None] = {}
         self._redemption_options: dict[tuple[str, str], list[Redemption]] = {}
         self._redeemed_amounts: dict[tuple[tuple[Redemption, ...], int, str, str], int] = {}
+        self.throttled = False  # the prices service has refused a request for coming too fast
 
     def header(self, number: int) -> tuple[str, int]:
         with self._lock:
@@ -828,9 +833,18 @@ class Replayer:
             return ReplayOutcome(target=target, quote=None, price=None)
         return ReplayOutcome(
             target=target,
-            quote=_deferring(lambda: self.quote(target, block=block, block_hash=block_hash)) if target.needs_quote else None,
-            price=_deferring(lambda: self.price(target, block=block, block_hash=block_hash)) if target.needs_price else None,
+            quote=self._deferring(lambda: self.quote(target, block=block, block_hash=block_hash)) if target.needs_quote else None,
+            price=self._deferring(lambda: self.price(target, block=block, block_hash=block_hash)) if target.needs_price else None,
         )
+
+    def _deferring(self, observe) -> Observation | None:
+        try:
+            return observe()
+        except Exception as exc:  # noqa: BLE001 - transport, RPC and service errors are retried next run
+            if isinstance(exc, PricesApiRateLimitError):
+                self.throttled = True
+            logger.warning("pricing replay deferred error=%s", exc)
+            return None
 
 
 def _failed(payload: dict[str, Any], exc: ReplayFailed, started: float) -> Observation:
@@ -840,14 +854,6 @@ def _failed(payload: dict[str, Any], exc: ReplayFailed, started: float) -> Obser
         "latency_ms": int((time.monotonic() - started) * 1000), "retrieved_at": _iso_now(),
     }}
     return Observation(state="failed", payload=payload, error=error)
-
-
-def _deferring(observe) -> Observation | None:
-    try:
-        return observe()
-    except Exception as exc:  # noqa: BLE001 - transport, RPC and service errors are retried next run
-        logger.warning("pricing replay deferred error=%s", exc)
-        return None
 
 
 def _job(target: ReplayTarget, *, chain_id: int, entity_kind: str, now: int) -> PricingQueueJob:
@@ -944,16 +950,24 @@ class ReplayCapture:
     deferred rests for a while, so one that keeps failing does not hold up
     the rest. Each batch has a replayer of its own: what one remembers
     (today's routes above all) should not outlive the day it was true.
+
+    It is paced, not fast: live capture has minutes to quote an event and
+    asks the same prices service under the same rate limit, so a backlog is
+    worked off a batch at a time, and when the service says to slow down the
+    whole replay waits.
     """
 
     def __init__(self, make_replayer: Callable[[], Replayer], *, batch_size: int = CHUNK_SIZE, idle_seconds: int = IDLE_SECONDS,
-                 retry_seconds: int = DEFERRED_RETRY_SECONDS, max_workers: int = DEFAULT_MAX_CONCURRENCY) -> None:
+                 retry_seconds: int = DEFERRED_RETRY_SECONDS, throttled_seconds: int = THROTTLED_SECONDS,
+                 max_workers: int = DEFAULT_MAX_CONCURRENCY) -> None:
         self.make_replayer = make_replayer
         self.batch_size = batch_size
         self.idle_seconds = idle_seconds
         self.retry_seconds = retry_seconds
+        self.throttled_seconds = throttled_seconds
         self.max_workers = max(1, max_workers)
         self._executor: ThreadPoolExecutor | None = None
+        self._replayer: Replayer | None = None
         self._batch: list[Future[ReplayOutcome]] = []
         self._next_scan_at = 0
         self._resting: dict[tuple, int] = {}
@@ -975,16 +989,19 @@ class ReplayCapture:
                 return 0
             outcomes = [future.result() for future in self._batch]
             self._batch = []
+            throttled = self._replayer is not None and self._replayer.throttled
             deferred = 0
             for outcome in outcomes:
                 target = outcome.target
                 if outcome.waiting:
                     self._resting[self._source(target)] = now + self.idle_seconds
                 elif (target.needs_quote and outcome.quote is None) or (target.needs_price and outcome.price is None):
-                    self._resting[self._source(target)] = now + self.retry_seconds
+                    self._resting[self._source(target)] = now + (self.throttled_seconds if throttled else self.retry_seconds)
                     deferred += 1
+            if throttled:
+                self._next_scan_at = max(self._next_scan_at, now + self.throttled_seconds)
             repriced = len(writer.transaction(lambda conn: persist_outcomes(conn, outcomes, chain_id=chain_id, now=now)))
-            logger.info("pricing replay batch events=%d deferred=%d rounds=%d", len(outcomes), deferred, repriced)
+            logger.info("pricing replay batch events=%d deferred=%d rounds=%d throttled=%s", len(outcomes), deferred, repriced, throttled)
         if now < self._next_scan_at:
             return repriced
         state = writer.fetchone("SELECT last_confirmed_processed FROM sync_state WHERE chain_id = ?", (chain_id,))
@@ -1003,10 +1020,11 @@ class ReplayCapture:
             return repriced
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="pricing-replay")
-        replayer = self.make_replayer()
+        self._replayer = self.make_replayer()
         self._batch = [
-            self._executor.submit(replayer.replay, target, confirmed_block=int(confirmed_block)) for target in targets
+            self._executor.submit(self._replayer.replay, target, confirmed_block=int(confirmed_block)) for target in targets
         ]
+        self._next_scan_at = now + self.idle_seconds
         return repriced
 
     def wait_for_outstanding(self, *, timeout: float = 10.0) -> None:

@@ -10,7 +10,7 @@ from web3.exceptions import Web3RPCError
 
 from backend.indexer import pricing_replay
 from backend.indexer.config import _replay_pricing
-from backend.indexer.prices_api import PricesApiError
+from backend.indexer.prices_api import PricesApiError, PricesApiRateLimitError
 from backend.indexer.pricing_projections import rebuild_pricing_projections
 from backend.indexer.pricing_replay import (
     ASSET_SELECTOR,
@@ -543,9 +543,38 @@ def test_the_indexer_replays_the_newest_events_first(tmp_path):
     capture.poll(writer, chain_id=1, now=NOW + 1)
     # The take came after the kick: with a backlog, it is what a reader is looking at.
     assert [row["context_kind"] for row in writer.fetchall("SELECT context_kind FROM pricing_quote_facts")] == ["take"]
+    # A batch a minute: live capture asks the same prices service, and has only minutes to ask.
+    assert capture.in_flight == 0
+    capture.poll(writer, chain_id=1, now=NOW + 59)
+    assert capture.in_flight == 0
+    capture.poll(writer, chain_id=1, now=NOW + 60)
     capture.wait_for_outstanding()
-    capture.poll(writer, chain_id=1, now=NOW + 2)
+    capture.poll(writer, chain_id=1, now=NOW + 61)
     assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'round_kick'")["n"] == 1
+
+
+def test_the_replay_waits_when_the_prices_service_says_to_slow_down(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "throttled.sqlite3")
+    _confirm(writer)
+    limited = FakeClient(failures={DEFAULT_FROM_TOKEN: PricesApiRateLimitError("prices API rate limit exceeded")})
+    capture = ReplayCapture(lambda: Replayer(chain_id=1, config=CONFIG, client=limited, reads=FakeChain()),
+                            throttled_seconds=300, retry_seconds=3600)
+
+    capture.poll(writer, chain_id=1, now=NOW)
+    capture.wait_for_outstanding()
+    capture.poll(writer, chain_id=1, now=NOW + 1)
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts")["n"] == 0
+    # A refusal is about the pace, not these events: nothing is asked for five minutes, then they are asked again.
+    asked = len(limited.requests)
+    for later in (60, 120, 300):
+        capture.poll(writer, chain_id=1, now=NOW + later)
+        assert capture.in_flight == 0 and len(limited.requests) == asked
+    limited.failures.clear()
+    capture.poll(writer, chain_id=1, now=NOW + 301)
+    assert capture.in_flight == 2
+    capture.wait_for_outstanding()
+    assert capture.poll(writer, chain_id=1, now=NOW + 302) == 1
+    assert _take_quote(writer)["pricing_status"] == "priced"
 
 
 def test_an_event_the_network_deferred_rests_before_it_is_asked_again(tmp_path):

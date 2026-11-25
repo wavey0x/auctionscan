@@ -102,7 +102,10 @@ a batch at a time beside its normal work, so a backlog (takes indexed after an
 outage or a rewind, or a newly supported auction's history) drains without a
 maintenance run. After a release that improves the replay method it also
 quotes again what the older method quoted, so replayed values move for a while
-after such a release and then settle. That replay needs an archive RPC that serves
+after such a release and then settle. It works at one batch of 32 events a
+minute and waits five minutes when the prices service rate-limits it, so a
+backlog of thousands takes a few hours; `throttled=True` on a batch's log line
+means the service refused requests and the replay is waiting. That replay needs an archive RPC that serves
 `eth_simulateV1` (redemptions are simulated at past blocks) and the prices
 service; the log line `pricing replay batch` reports each batch.
 

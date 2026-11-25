@@ -83,7 +83,10 @@ Rules for this model:
   block, once the event is confirmed: the indexer runs it beside live capture
   (`ReplayCapture`, a batch at a time off the writer's thread), where it also
   quotes again whatever an older method quoted, and `--backfill-pricing`
-  (writer maintenance) runs the same replay over a whole backlog. The prices service's `curve` provider supplies today's route,
+  (writer maintenance) runs the same replay over a whole backlog. Beside
+  live capture the replay is paced, one batch a minute, and waits five
+  minutes when the prices service rate-limits it: live capture asks the same
+  service under the same limit and has only minutes to quote an event. The prices service's `curve` provider supplies today's route,
   Curve Router NG's `get_dy` evaluates it at the block before the event (a
   staged window: the last block before it opens), and crvUSD's
   `AggregatorStablePrice` values the want token through crvUSD at that block.

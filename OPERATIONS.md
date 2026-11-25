@@ -97,11 +97,22 @@ and run `--reproject` before restarting indexing. Rehearse these steps on a rest
 copy first. Preserve chain logs, snapshots, RPC observations, pricing audit facts,
 and checkpoint state through projection-only repairs.
 
-`--backfill-pricing` adds pricing facts for confirmed events that live capture
-missed, for example takes indexed after an outage or a rewind. It holds the
-network's writer lock, so stop that indexer, run it, and start the indexer
-again; the API can keep serving. It needs an archive RPC that serves
+The indexer prices confirmed events that live capture left unquoted by itself,
+a batch at a time beside its normal work, so a backlog (takes indexed after an
+outage or a rewind, or a newly supported auction's history) drains without a
+maintenance run. After a release that improves the replay method it also
+quotes again what the older method quoted, so replayed values move for a while
+after such a release and then settle. That replay needs an archive RPC that serves
 `eth_simulateV1` (redemptions are simulated at past blocks) and the prices
-service, commits as it goes and can be interrupted and rerun. `--auction`
-limits it to one auction. A failed replay is final until `--retry-failed`
-asks again, for when the method has improved.
+service; the log line `pricing replay batch` reports each batch.
+
+`--backfill-pricing` runs the same replay over the whole backlog at once. It
+holds the network's writer lock, so stop that indexer, run it, and start the
+indexer again; the API can keep serving. It commits as it goes and can be
+interrupted and rerun. `--auction` limits it to one auction. A replay is final
+until asked again, for when the method has improved: `--retry-failed` tries
+again where an earlier replay found no price, and `--requote` quotes again
+the events an older version of the method quoted. The newest replay of an
+event is the one shown; a live quote is never replaced. A `--requote` run
+skips what the current method has already answered, so it too can be
+interrupted and rerun.

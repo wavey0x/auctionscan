@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import json
+from types import SimpleNamespace
 
 import pytest
 from eth_abi import decode
+from web3.exceptions import Web3RPCError
 
 from backend.indexer import pricing_replay
 from backend.indexer.config import _replay_pricing
@@ -27,6 +30,7 @@ from backend.indexer.pricing_replay import (
     UNWRAP_SELECTOR,
     VAULT_SHARE_SELECTOR,
     WITHDRAW_SELECTORS,
+    ReplayCapture,
     Replayer,
     ReplayFailed,
     backfill_pricing,
@@ -78,9 +82,10 @@ class FakeClient:
 class FakeChain:
     """A lot is worth (1000 + block) / 1000 want per 1e12 raw units, so the block used shows."""
 
-    def __init__(self, *, depth: int | None = None) -> None:
+    def __init__(self, *, depth: int | None = None, percent: int = 100) -> None:
         self.calls: list[tuple[str, int]] = []
         self.depth = depth  # the most WANT the lot's route can pay out, like a LLAMMA's bands
+        self.percent = percent  # of that price: a market that pays less for any amount
 
     def header(self, number: int) -> tuple[str, int]:
         return f"0x{number:064x}", 1_700_000_000 + number
@@ -97,13 +102,13 @@ class FakeChain:
         path, _params, amount, _pools = decode(GET_DY_TYPES, data[4:])
         if path[0] == DEFAULT_WANT_TOKEN:
             return (10**18).to_bytes(32, "big")  # one want unit buys one crvUSD
-        out = amount // 10**12 * (1000 + block) // 1000
+        out = amount // 10**12 * (1000 + block) // 1000 * self.percent // 100
         return (out if self.depth is None else min(out, self.depth)).to_bytes(32, "big")
 
 
-def _replay(writer, *, client=None, chain=None, auction=None):
+def _replay(writer, *, client=None, chain=None, auction=None, now=NOW, **again):
     replayer = Replayer(chain_id=1, config=CONFIG, client=client or FakeClient(), reads=chain or FakeChain())
-    return backfill_pricing(writer, chain_id=1, replayer=replayer, confirmed_block=200, auction=auction, now=NOW)
+    return backfill_pricing(writer, chain_id=1, replayer=replayer, confirmed_block=200, auction=auction, now=now, **again)
 
 
 def test_replay_prices_a_take_and_its_kick_at_the_blocks_before_them(tmp_path):
@@ -397,6 +402,213 @@ def test_a_redeemable_lot_is_redeemed_by_the_auction_holding_it(tmp_path):
     detail = json.loads(fact["aggregate_response_json"])
     assert (detail["method"], detail["holder"]) == ("redeem", DEFAULT_AUCTION)
     assert [step["kind"] for step in detail["redemptions"]] == ["pt_redeem_for_ibt", "unwrap"]
+
+
+@pytest.mark.parametrize(("depth", "method", "expected"), [
+    (None, None, 220_400_000),  # a deep pool pays more than redeeming: the route stands
+    (150 * ONE_USDC, "redeem", 200 * ONE_USDC),  # a thin pool pays less for the lot than redeeming it does
+    (ONE_USDC, "redeem", 200 * ONE_USDC),  # a pool that cannot absorb the lot is no reason to have no price
+])
+def test_a_lot_takes_its_best_exit_whether_or_not_it_has_a_route(tmp_path, depth, method, expected):
+    writer, _ = _seed_pricing_db(tmp_path / "best.sqlite3")
+    # The lot is a matured principal token: Curve routes it, and it redeems 1:1.
+    chain = RedeemChain(
+        views={(DEFAULT_FROM_TOKEN, MATURITY_SELECTOR): REPLAY_TIME - 1, (DEFAULT_FROM_TOKEN, UNDERLYING_SELECTOR): UNDERLYING},
+        redeems={(DEFAULT_FROM_TOKEN, REDEEM_SELECTOR): (UNDERLYING, 1, 1)},
+        balances={(DEFAULT_FROM_TOKEN, DEFAULT_AUCTION): 1000 * ETHER},
+    )
+    chain.depth = depth
+
+    summary = _replay(writer, chain=chain)
+
+    assert summary["take_quote"] == {"fresh": 1, "failed": 0, "deferred": 0}
+    assert writer.fetchone("SELECT market_quote_out_raw FROM take_pricing")["market_quote_out_raw"] == str(expected)
+    fact = writer.fetchone("SELECT aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    assert json.loads(fact["aggregate_response_json"]).get("method") == method
+
+
+def _take_quote(writer):
+    return writer.fetchone("""SELECT p.market_quote_out_raw, p.canonical_quote_fact_id, p.pricing_status, q.capture_origin, q.captured_at
+                                FROM take_pricing p LEFT JOIN pricing_quote_facts q ON q.id = p.canonical_quote_fact_id""")
+
+
+def test_a_newer_method_replaces_an_older_ones_replay_when_asked(tmp_path, monkeypatch):
+    writer, _ = _seed_pricing_db(tmp_path / "requote.sqlite3")
+    _replay(writer)
+    assert _take_quote(writer)["market_quote_out_raw"] == str(220_400_000)
+
+    # A replay is final until asked again, and asking reaches only what an older method answered.
+    lower = FakeChain(percent=50)
+    assert _replay(writer, chain=lower, now=NOW + 60)["targets"] == 0
+    assert _replay(writer, chain=lower, now=NOW + 60, retry_failed=True)["targets"] == 0
+    assert _replay(writer, chain=lower, now=NOW + 60, requote=True)["targets"] == 0
+    monkeypatch.setattr(pricing_replay, "METHOD_VERSION", pricing_replay.METHOD_VERSION + 1)
+    summary = _replay(writer, chain=lower, now=NOW + 60, requote=True)
+    assert summary["take_quote"] == summary["kick_quote"] == {"fresh": 1, "failed": 0, "deferred": 0}
+    # A want price is the same read either way: it is not taken again.
+    assert summary["take_price"] == summary["kick_price"] == {"fresh": 0, "failed": 0, "deferred": 0}
+
+    # The newest answer stands, not the highest: a later method corrects an earlier one.
+    take = _take_quote(writer)
+    assert (take["market_quote_out_raw"], take["captured_at"]) == (str(110_200_000), NOW + 60)
+    assert writer.fetchone("SELECT kick_market_quote_out_raw FROM round_pricing")["kick_market_quote_out_raw"] == str(275_250_000)
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'take'")["n"] == 2
+    # Both events now have the current method's answer: asking again is a rerun that finds nothing to do.
+    assert _replay(writer, chain=lower, now=NOW + 120, requote=True)["targets"] == 0
+
+    # A later method that finds no price does not take one away.
+    monkeypatch.setattr(pricing_replay, "METHOD_VERSION", pricing_replay.METHOD_VERSION + 1)
+    summary = _replay(writer, client=FakeClient(failures={DEFAULT_FROM_TOKEN: "NO_ROUTE"}), now=NOW + 180, requote=True)
+    assert summary["take_quote"] == summary["kick_quote"] == {"fresh": 0, "failed": 1, "deferred": 0}
+    take = _take_quote(writer)
+    assert (take["market_quote_out_raw"], take["pricing_status"]) == (str(110_200_000), "priced")
+
+
+def test_no_replay_replaces_a_live_quote(tmp_path, monkeypatch):
+    writer, _ = _seed_pricing_db(tmp_path / "live_first.sqlite3")
+    _replay(writer)
+    conn = writer.connection
+    conn.execute("UPDATE pricing_quote_facts SET capture_origin = 'native' WHERE context_kind = 'take'")
+    conn.commit()
+
+    # A newer method asking again reaches the kick, whose quote is a replay, and leaves the take alone.
+    monkeypatch.setattr(pricing_replay, "METHOD_VERSION", pricing_replay.METHOD_VERSION + 1)
+    targets = load_replay_targets(conn, chain_id=1, confirmed_block=200, before_timestamp=NOW, requote=True)
+    assert [target.context_kind for target in targets] == ["round_kick"]
+
+    # Even a replay recorded later (by an earlier version, or an import) does not stand in for it.
+    conn.execute("""INSERT INTO pricing_quote_facts (chain_id, auction_address, round_id, take_seq, context_kind, capture_origin,
+                        source_tx_hash, source_log_index, source_event_name, source_block_number, source_block_hash, event_timestamp,
+                        captured_at, capture_lag_seconds, from_token, to_token, amount_in_raw, capture_state, created_at)
+                    SELECT chain_id, auction_address, round_id, take_seq, context_kind, 'block_replay', source_tx_hash,
+                           source_log_index, source_event_name, source_block_number, source_block_hash, event_timestamp,
+                           captured_at + 60, 0, from_token, to_token, amount_in_raw, capture_state, created_at
+                      FROM pricing_quote_facts WHERE context_kind = 'take'""")
+    later = conn.execute("SELECT MAX(id) FROM pricing_quote_facts").fetchone()[0]
+    conn.execute("""INSERT INTO pricing_quote_provider_facts (quote_fact_id, provider_id, provider_position, participation_status, amount_out_raw)
+                    VALUES (?, 'curve', 0, 'ok', '1')""", (later,))
+    conn.commit()
+    writer.transaction(lambda conn: rebuild_pricing_projections(conn, chain_id=1))
+    take = _take_quote(writer)
+    assert (take["market_quote_out_raw"], take["capture_origin"]) == (str(220_400_000), "native")
+
+
+def _confirm(writer, block: int = 200) -> None:
+    writer.transaction(lambda conn: conn.execute(
+        """INSERT INTO sync_state (chain_id, network_name, last_live_processed, last_confirmed_processed) VALUES (1, 'ethereum', ?, ?)
+           ON CONFLICT (chain_id) DO UPDATE SET last_confirmed_processed = excluded.last_confirmed_processed""", (block, block)))
+
+
+def test_the_indexer_replays_what_live_capture_left_unquoted(tmp_path, monkeypatch):
+    writer, _ = _seed_pricing_db(tmp_path / "beside.sqlite3")
+    _confirm(writer)
+    client, chain = FakeClient(), FakeChain()
+    capture = ReplayCapture(lambda: Replayer(chain_id=1, config=CONFIG, client=client, reads=chain))
+
+    # Like live capture, a poll never waits: it starts the batch, and a later one commits it.
+    assert capture.poll(writer, chain_id=1, now=NOW) == 0
+    assert capture.in_flight == 2 and writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts")["n"] == 0
+    capture.wait_for_outstanding()
+    assert capture.poll(writer, chain_id=1, now=NOW + 1) == 1
+    take = _take_quote(writer)
+    assert (take["market_quote_out_raw"], take["capture_origin"], take["pricing_status"]) == (str(220_400_000), "block_replay", "priced")
+
+    # With nothing left it rests, and asks the prices service nothing.
+    asked = len(client.requests)
+    assert capture.poll(writer, chain_id=1, now=NOW + 2) == 0 and capture.in_flight == 0
+    assert capture.poll(writer, chain_id=1, now=NOW + 120) == 0 and capture.in_flight == 0
+    assert len(client.requests) == asked
+
+    # A release with a better method: the indexer quotes both events again by itself, and the newer answers stand.
+    monkeypatch.setattr(pricing_replay, "METHOD_VERSION", pricing_replay.METHOD_VERSION + 1)
+    chain.percent = 50
+    capture.poll(writer, chain_id=1, now=NOW + 300)
+    assert capture.in_flight == 2
+    capture.wait_for_outstanding()
+    assert capture.poll(writer, chain_id=1, now=NOW + 301) == 1
+    assert writer.fetchone("SELECT kick_market_quote_out_raw FROM round_pricing")["kick_market_quote_out_raw"] == str(275_250_000)
+    assert _take_quote(writer)["market_quote_out_raw"] == str(110_200_000)
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts")["n"] == 4
+    capture.poll(writer, chain_id=1, now=NOW + 400)
+    assert capture.in_flight == 0
+
+
+def test_the_indexer_replays_the_newest_events_first(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "newest.sqlite3")
+    _confirm(writer)
+    capture = ReplayCapture(lambda: Replayer(chain_id=1, config=CONFIG, client=FakeClient(), reads=FakeChain()), batch_size=1)
+
+    capture.poll(writer, chain_id=1, now=NOW)
+    capture.wait_for_outstanding()
+    capture.poll(writer, chain_id=1, now=NOW + 1)
+    # The take came after the kick: with a backlog, it is what a reader is looking at.
+    assert [row["context_kind"] for row in writer.fetchall("SELECT context_kind FROM pricing_quote_facts")] == ["take"]
+    capture.wait_for_outstanding()
+    capture.poll(writer, chain_id=1, now=NOW + 2)
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'round_kick'")["n"] == 1
+
+
+def test_an_event_the_network_deferred_rests_before_it_is_asked_again(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "resting.sqlite3")
+    _confirm(writer)
+    down = FakeClient(failures={DEFAULT_FROM_TOKEN: PricesApiError("prices API request failed: timed out")})
+    capture = ReplayCapture(lambda: Replayer(chain_id=1, config=CONFIG, client=down, reads=FakeChain()), retry_seconds=3600)
+
+    capture.poll(writer, chain_id=1, now=NOW)
+    capture.wait_for_outstanding()
+    capture.poll(writer, chain_id=1, now=NOW + 1)
+    # The want prices were read from the chain; the quotes left no fact and are not asked for again yet.
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_price_facts")["n"] == 2
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts")["n"] == 0
+    assert capture.in_flight == 0
+    capture.poll(writer, chain_id=1, now=NOW + 600)
+    assert capture.in_flight == 0
+
+    capture.poll(writer, chain_id=1, now=NOW + 3602)
+    assert capture.in_flight == 2
+
+
+def test_a_staged_lot_waits_for_its_window_to_open_below_the_confirmed_head(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "waiting.sqlite3")
+    target = next(target for target in load_replay_targets(writer.connection, chain_id=1, confirmed_block=200, before_timestamp=NOW)
+                  if target.context_kind == "round_kick")
+    staged = dataclasses.replace(target, market_block=None, event_timestamp=1_700_000_000 + 150)
+    replayer = Replayer(chain_id=1, config=CONFIG, client=FakeClient(), reads=FakeChain())
+
+    # The window opens at block 150: not a market yet at head 140, and block 149 once it is.
+    outcome = replayer.replay(staged, confirmed_block=140)
+    assert outcome.waiting and outcome.quote is None and outcome.price is None
+    outcome = replayer.replay(staged, confirmed_block=200)
+    assert not outcome.waiting and outcome.quote.payload["block_number"] == 149
+
+
+def test_a_call_that_breaks_instead_of_reverting_is_an_answer_not_an_outage(monkeypatch):
+    reads = pricing_replay.Web3BlockReads(SimpleNamespace(rpc_url="http://localhost:1", request_timeout_seconds=1))
+
+    def node_says(error):
+        def call(*_args, **_kwargs):
+            raise error
+        monkeypatch.setattr(reads, "_w3", lambda: SimpleNamespace(eth=SimpleNamespace(call=call)))
+
+    # reth and geth on a token that jumps nowhere when asked for a function it does not have.
+    for message in ("{'code': -32003, 'message': 'EVM error: InvalidJump'}", "{'code': -32000, 'message': 'invalid opcode: INVALID'}"):
+        node_says(Web3RPCError(message))
+        with pytest.raises(ReplayFailed):
+            reads.call(POOL, PRICE_SELECTOR, f"0x{1:064x}")
+    # Anything else the node says is the node's trouble, and the event is asked about again later.
+    node_says(Web3RPCError("{'code': -32000, 'message': 'missing trie node'}"))
+    with pytest.raises(Web3RPCError):
+        reads.call(POOL, PRICE_SELECTOR, f"0x{1:064x}")
+
+
+def test_a_coin_is_routed_for_about_its_own_size():
+    client = FakeClient()
+    replayer = Replayer(chain_id=1, config=CONFIG, client=client, reads=FakeChain())
+
+    # Today's route for a handful of a coin can be a pool too thin for a thousand times as much.
+    for amount in (10 * ETHER, 12 * ETHER, 10_000 * ETHER, 11_000 * ETHER):
+        replayer._coin_route(COIN, DEFAULT_WANT_TOKEN, amount)
+    assert [request[2] for request in client.requests] == [str(10 * ETHER), str(10_000 * ETHER)]
 
 
 def test_window_open_block_is_the_last_block_before_it():

@@ -8,6 +8,9 @@ from typing import Any
 
 from .pricing_summary import QuoteSelection, PriceSelection, summarize_quote, summarize_price
 
+# An observation reconstructed from the chain at the event's block (pricing_replay).
+REPLAY_ORIGIN = "block_replay"
+
 
 def _decimal_from_value(value: Any) -> Decimal | None:
     if value is None:
@@ -348,6 +351,30 @@ def _load_pricing_observations(conn, *, chain_id: int, rounds) -> _PricingObserv
     )
 
 
+class _Selected:
+    """Which fresh observation speaks for each event, offered oldest first.
+
+    What was captured live is what the market said then: the first stands, and
+    no replay replaces it. A replay is our own reconstruction, so a later one
+    is the same question answered by a better method, and the newest stands.
+    """
+
+    def __init__(self) -> None:
+        self.live: dict[tuple, Any] = {}
+        self.replayed: dict[tuple, Any] = {}
+
+    def offer(self, key: tuple, row, selection) -> None:
+        if selection is None:
+            return
+        if row["capture_origin"] == REPLAY_ORIGIN:
+            self.replayed[key] = selection
+        else:
+            self.live.setdefault(key, selection)
+
+    def chosen(self) -> dict[tuple, Any]:
+        return {**self.replayed, **self.live}
+
+
 def _select_pricing_observations(
     quote_facts, quote_provider_rows, price_facts, price_provider_rows, *, take_sources, kick_sources,
     lots: dict[tuple[str, int], str],
@@ -361,8 +388,7 @@ def _select_pricing_observations(
         price_providers_by_fact.setdefault(int(row["price_fact_id"]), []).append(row)
 
     take_quote_rows: dict[tuple[str, int, int], list[Any]] = {}
-    take_quote_selection: dict[tuple[str, int, int], QuoteSelection] = {}
-    round_quote_selection: dict[tuple[str, int], QuoteSelection] = {}
+    take_quotes, round_quotes = _Selected(), _Selected()
     for row in quote_facts:
         resolved = _resolved_quote_fact_key(
             row,
@@ -374,19 +400,14 @@ def _select_pricing_observations(
         context_kind, key = resolved
         if context_kind == "take":
             take_quote_rows.setdefault(key, []).insert(0, row)
-            selection = summarize_quote(row, quote_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
-            if selection is not None and key not in take_quote_selection:
-                take_quote_selection[key] = selection
-        elif context_kind == "round_kick":
-            if row["amount_in_raw"] is not None and str(row["amount_in_raw"]) != lots.get(key):
-                continue
-            selection = summarize_quote(row, quote_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
-            if selection is not None and key not in round_quote_selection:
-                round_quote_selection[key] = selection
+        elif row["amount_in_raw"] is not None and str(row["amount_in_raw"]) != lots.get(key):
+            continue
+        if row["capture_state"] == "fresh":
+            (take_quotes if context_kind == "take" else round_quotes).offer(
+                key, row, summarize_quote(row, quote_providers_by_fact.get(int(row["id"]), [])))
 
     take_price_rows: dict[tuple[str, int, int], list[Any]] = {}
-    take_price_selection: dict[tuple[str, int, int], PriceSelection] = {}
-    round_price_selection: dict[tuple[str, int], PriceSelection] = {}
+    take_prices, round_prices = _Selected(), _Selected()
     for row in price_facts:
         resolved = _resolved_price_fact_key(
             row,
@@ -398,22 +419,18 @@ def _select_pricing_observations(
         context_kind, key = resolved
         if context_kind == "take":
             take_price_rows.setdefault(key, []).insert(0, row)
-            selection = summarize_price(row, price_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
-            if selection is not None and key not in take_price_selection:
-                take_price_selection[key] = selection
-        elif context_kind == "round_kick":
-            selection = summarize_price(row, price_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
-            if selection is not None and key not in round_price_selection:
-                round_price_selection[key] = selection
+        if row["capture_state"] == "fresh":
+            (take_prices if context_kind == "take" else round_prices).offer(
+                key, row, summarize_price(row, price_providers_by_fact.get(int(row["id"]), [])))
 
     return _PricingObservations(
         quote_providers_by_fact=quote_providers_by_fact,
         take_quote_rows=take_quote_rows,
         take_price_rows=take_price_rows,
-        take_quote_selection=take_quote_selection,
-        take_price_selection=take_price_selection,
-        round_quote_selection=round_quote_selection,
-        round_price_selection=round_price_selection,
+        take_quote_selection=take_quotes.chosen(),
+        take_price_selection=take_prices.chosen(),
+        round_quote_selection=round_quotes.chosen(),
+        round_price_selection=round_prices.chosen(),
     )
 
 

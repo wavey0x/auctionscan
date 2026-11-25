@@ -78,34 +78,53 @@ Rules for this model:
   in-flight rows are excluded from selection, and all HTTP stays outside the
   writer transaction
 - live capture quotes an event within `DEFAULT_MAX_CAPTURE_LAG_SECONDS` or
-  not at all. `--backfill-pricing` (writer maintenance) prices what it missed
-  at the event's own block: the prices service's `curve` provider supplies
-  today's route, Curve Router NG's `get_dy` evaluates it at the block before
-  the event (a staged window: the last block before it opens), and crvUSD's
+  not at all, and some lots (LP tokens, principal tokens) no live source
+  quotes at any time. The replay prices what that leaves, at the event's own
+  block, once the event is confirmed: the indexer runs it beside live capture
+  (`ReplayCapture`, a batch at a time off the writer's thread), where it also
+  quotes again whatever an older method quoted, and `--backfill-pricing`
+  (writer maintenance) runs the same replay over a whole backlog. The prices service's `curve` provider supplies today's route,
+  Curve Router NG's `get_dy` evaluates it at the block before the event (a
+  staged window: the last block before it opens), and crvUSD's
   `AggregatorStablePrice` values the want token through crvUSD at that block.
-  Results are ordinary pricing facts with `capture_origin = 'block_replay'`,
-  provider `curve`, `capture_state = 'fresh'` and zero lag, so projections
-  select them after any live quote. A route must absorb the lot: if the lot
-  fetches under half the price of a 1% slice at the same block (a crvUSD
-  LLAMMA hop holds only what its bands hold), there is no quote. A lot with
-  no single route (none at all, or Curve's multi-path route, which one router
-  call cannot express) takes its best exit at that block. An LP lot is
-  withdrawn from its pool, into one coin (`calc_withdraw_one_coin`) or into
-  every coin in proportion to the pool's balances; the pool is the
-  MetaRegistry's, else the LP's `minter()`, else the LP itself. A coin, or the
-  lot itself, with no route is redeemed, at most twice in a row: a matured
-  principal token (`redeem`, else `redeemForIBT`), a Spectra wrapper
-  (`unwrap`), an ERC-4626 share (`redeem`). A principal token before maturity
-  has no redemption. A redemption counts for what it delivers, never for
-  `previewRedeem`: `eth_simulateV1` runs it as the holder at that block (the
-  pool for its coins, the auction for its lot) between two reads of the
-  holder's balance, so one that reverts, queues or delivers nothing is no
-  exit. Atomic takers' own exits (withdraw, redeem, route to crvUSD in the
-  take transaction) are what these paths reproduce. A missing
-  route, an unabsorbed lot or a reverted call is recorded as a failed replay
-  and not retried unless `--retry-failed` asks again, adding a new attempt
-  beside the old; network and provider errors leave no fact. The contracts
-  live in `config.yaml` under `replay_pricing`
+- a replayed quote is the lot's best exit at that block, as an aggregator's
+  quote would have been: the route is one exit among the others, not the
+  answer whenever it exists, because a thin pool can pay far less for a lot
+  than redeeming it does. An LP lot is also withdrawn from its pool, into one
+  coin (`calc_withdraw_one_coin`) or into every coin in proportion to the
+  pool's balances; the pool is the MetaRegistry's, else the LP's `minter()`,
+  else the LP itself. A coin, or the lot itself, is also redeemed, at most
+  twice in a row: a matured principal token (`redeem`, else `redeemForIBT`),
+  a Spectra wrapper (`unwrap`), an ERC-4626 share (`redeem`). A principal
+  token before maturity has no redemption. A redemption counts for what it
+  delivers, never for `previewRedeem`: `eth_simulateV1` runs it as the holder
+  at that block (the pool for its coins, the auction for its lot) between two
+  reads of the holder's balance, so one that reverts, queues or delivers
+  nothing is no exit. Atomic takers' own exits (withdraw, redeem, route to
+  crvUSD in the take transaction) are what these paths reproduce. The best
+  exit must absorb the lot: the lot has to fetch 95% of the price a 1% slice
+  of it fetches along the same exit, or there is no quote. A lot that moves
+  its own market further would not have been sold whole there by a seller
+  with other venues, and Curve is the only venue the replay knows: set beside
+  live quotes of the same takes, the replays that fell short of this were
+  the ones below the market. A coin's route is asked for about its own size
+  (amounts within a factor of four share one), since a route that suits a
+  small amount can be a pool too thin for a large one.
+- replays are ordinary pricing facts with `capture_origin = 'block_replay'`,
+  provider `curve`, `capture_state = 'fresh'` and zero lag. Projections
+  choose one fresh observation per event: a live one if there is any, the
+  first captured, because it is what the market said at the time; otherwise
+  the newest replay, because a later replay is the same question answered by
+  a better method. Facts stay append-only. An event with no exit, or none
+  that absorbs the lot, is recorded as a failed replay and is final until
+  asked again: `--retry-failed` reopens the events a replay found no price
+  for, `--requote` the events an older method answered, each adding a new
+  attempt beside the old. Every replayed quote records the method's
+  `METHOD_VERSION`; raise it whenever the replay would answer the same event
+  differently, or `--requote` finds nothing to do. A failed attempt never
+  takes a price away. Network and provider errors leave no fact, and a call
+  that breaks instead of reverting (an old token's bad jump) is an answer,
+  not an error. The contracts live in `config.yaml` under `replay_pricing`
 - projections store decoded values for query/API use
 - pricing projections rebuild from stored pricing facts, not from live repricing
 - the canonical parameter decoder lives in the indexer layer
@@ -295,8 +314,9 @@ Reproject intent:
 - `auctions`: singleton auctions no factory deploys (Curve burners), each with
   its deployment block as `start_block` and a factory-less version.
 - `replay_pricing`: the Curve Router NG, crvUSD, crvUSD price aggregator and
-  Curve MetaRegistry that `--backfill-pricing` reads at past blocks. A network
-  without it cannot backfill pricing.
+  Curve MetaRegistry that the pricing replay reads at past blocks. A network
+  with it replays beside live capture and can backfill pricing; one without
+  it does neither.
 - `disabled: true` means no indexer process exists for that network. The API
   omits disabled networks from `/api/health`, and `--network` refuses them.
   Only `ethereum` is enabled; enabling a network means deploying an

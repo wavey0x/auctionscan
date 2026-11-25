@@ -7,23 +7,29 @@ provider for its route today, evaluates that route with Curve Router NG's
 crvUSD's USD price aggregator at the same block. Only the route is found now;
 every amount comes from the chain as it stood when the event happened.
 
-A lot Curve cannot route may still have an exit through tokens it can. An LP
-lot is withdrawn from its pool, into one coin or into all of them in
-proportion. A token with no route of its own is redeemed: a matured principal
-token for its underlying or its yield-bearing token, a Spectra wrapper for the
-token it wraps, an ERC-4626 vault share for its asset. A redemption counts for
-what it delivers, not what a view promises: it is simulated with
-`eth_simulateV1` as the holder that has the tokens at the block (the pool,
-or the auction holding the lot), and the holder's balance is read before and
-after. A redemption that reverts, queues or delivers nothing is no exit.
+The quote is the lot's best exit at that block, as an aggregator's would have
+been: the route is one exit among others, because a thin pool can pay far less
+for a lot than its other exits do. An LP lot is also withdrawn from its pool,
+into one coin or into all of them in proportion. A token that redeems is also
+redeemed: a matured principal token for its underlying or its yield-bearing
+token, a Spectra wrapper for the token it wraps, an ERC-4626 vault share for
+its asset. A redemption counts for what it delivers, not what a view promises:
+it is simulated with `eth_simulateV1` as the holder that has the tokens at the
+block (the pool, or the auction holding the lot), and the holder's balance is
+read before and after. A redemption that reverts, queues or delivers nothing
+is no exit.
 
 Replays are stored as ordinary pricing facts with capture_origin
 'block_replay' and provider 'curve'. They are 'fresh' because they describe
-the event's own block, so projections select them like a live quote, after
-any live quote, and reproject keeps them. Network, chain and provider errors
-leave no fact, so a later run retries them; a missing route, a route that
-cannot absorb the lot or a reverted call is recorded as a failed replay and
-not retried.
+the event's own block, so projections select them like a live quote: after
+any live quote, and the newest replay of an event in place of an older one.
+Reproject keeps them. Network, chain and provider errors leave no fact, so a
+later run retries them; an event with no exit, or none that can absorb the
+lot, is recorded as a failed replay and not retried.
+
+The indexer runs the same replay beside live capture (ReplayCapture), so an
+event the capture window left unquoted is priced without a maintenance run,
+and one an older method quoted is quoted again by the current one.
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
@@ -41,7 +47,7 @@ from typing import Any, Protocol
 from eth_abi import encode
 from eth_utils import keccak
 from web3 import HTTPProvider, Web3
-from web3.exceptions import ContractLogicError
+from web3.exceptions import ContractLogicError, Web3RPCError
 
 from .prices_api import PricesApiError, PricingApiClient, ProviderCapability
 from .pricing import (
@@ -52,19 +58,34 @@ from .pricing import (
     _persist_price_fact,
     _persist_quote_fact,
 )
-from .pricing_projections import rebuild_pricing_projections
+from .pricing_projections import REPLAY_ORIGIN, rebuild_pricing_projections
 from .types import ChainConfig, ReplayPricingConfig, normalize_address
 
 
 logger = logging.getLogger(__name__)
 
-REPLAY_ORIGIN = "block_replay"
 REPLAY_PROVIDER = "curve"
+# Recorded on every replayed quote. Raise it when the replay would answer the
+# same event differently, so --requote knows which answers an older method gave.
+METHOD_VERSION = 2
+# How nodes name a call that ran and broke instead of reverting: a bad jump (how
+# old Solidity threw), an undefined opcode, no gas left. Asking a token whether
+# it is a pool or a vault runs into these, and they are answers, not outages.
+EVM_HALTS = ("evm error", "invalid jump", "opcode", "out of gas", "stack underflow", "stack limit", "stack overflow",
+             "write protection", "return data out of bounds")
 CHUNK_SIZE = 32
-# A route must absorb the lot: the lot is checked against the price of a
-# 1/PROBE_DIVISOR slice, and a lot fetching under half that is not a market
-# (a crvUSD LLAMMA hop, say, holds only what its bands hold at that block).
+# Beside live capture: how long to rest when nothing is left to replay, and
+# before asking again about an event a network or provider error deferred.
+IDLE_SECONDS = 60
+DEFERRED_RETRY_SECONDS = 3600
+# The best exit must absorb the lot: the lot is checked against the price of a
+# 1/PROBE_DIVISOR slice of it, and has to fetch ABSORBED_PERCENT of that price.
+# A lot that moves its own market further is one a seller with other venues
+# would not have sold whole here, and what they would have had is unknown. Set
+# beside live quotes of the same takes, every replay that fell short of this
+# was below the market, by up to half; none that met it was moved by its size.
 PROBE_DIVISOR = 100
+ABSORBED_PERCENT = 95
 ZERO_ADDRESS = "0x" + "00" * 20
 GET_DY_TYPES = ["address[11]", "uint256[5][5]", "uint256", "address[5]"]
 GET_DY_SELECTOR = keccak(text=f"get_dy({','.join(GET_DY_TYPES)})")[:4]
@@ -137,6 +158,10 @@ class Web3BlockReads:
             ))
         except ContractLogicError as exc:
             raise ReplayFailed("reverted", str(exc)) from exc
+        except Web3RPCError as exc:
+            if any(halt in str(exc).lower() for halt in EVM_HALTS):
+                raise ReplayFailed("reverted", str(exc)) from exc
+            raise
 
     def simulate(self, calls: list[tuple[str, str, bytes]], block_hash: str) -> list[bytes | None]:
         payload = {"blockStateCalls": [{"calls": [
@@ -191,10 +216,17 @@ class ReplayOutcome:
     target: ReplayTarget
     quote: Observation | None  # None: not needed, or deferred to a later run
     price: Observation | None
+    waiting: bool = False  # a staged window not yet open below the confirmed head
 
 
-def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str = "", retry_failed: bool = False) -> set[tuple]:
-    """Sources that already have a usable observation, or a recorded replay unless retrying failures."""
+def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str = "", retry_failed: bool = False,
+             requote: bool = False) -> set[tuple]:
+    """Sources a replay has nothing to add to.
+
+    A live observation settles its event. So does a replay, until asked
+    again: retry_failed reopens the events a replay found no price for, and
+    requote the events whose replays all came from an older method.
+    """
     return {
         tuple(row)
         for row in conn.execute(
@@ -202,28 +234,34 @@ def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str =
             SELECT source_block_hash, source_tx_hash, source_log_index{', amount_in_raw' if table == 'pricing_quote_facts' else ''}
               FROM {table}
              WHERE chain_id = ? AND context_kind = ? {extra}
-               AND (capture_state = 'fresh' OR (capture_origin = ? AND NOT ?))
+               AND CASE WHEN capture_origin = ?
+                        THEN (NOT ? OR json_extract(aggregate_response_json, '$.method_version') = ?)
+                             AND (capture_state = 'fresh' OR NOT ?)
+                        ELSE capture_state = 'fresh' END
             """,
-            (chain_id, context_kind, REPLAY_ORIGIN, retry_failed),
+            (chain_id, context_kind, REPLAY_ORIGIN, requote, METHOD_VERSION, retry_failed),
         )
     }
 
 
 def load_replay_targets(
     conn, *, chain_id: int, confirmed_block: int, before_timestamp: int, auction: str | None = None,
-    retry_failed: bool = False,
+    retry_failed: bool = False, requote: bool = False,
 ) -> list[ReplayTarget]:
     """Confirmed takes and kicks that live capture left without a quote or a want price.
 
     Only events older than the live capture window: a newer one may still be
-    quoted live.
+    quoted live. requote adds the events whose replayed quote came from an
+    older method, so a better one can replace its answers; a want price is
+    one on-chain read either way and is not taken again.
     """
     auction_params = (normalize_address(auction),) if auction else ()
     take_scope = "AND t.auction_address = ?" if auction else ""
     round_scope = "AND r.auction_address = ?" if auction else ""
     targets: list[ReplayTarget] = []
 
-    quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="take", retry_failed=retry_failed)
+    quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="take", retry_failed=retry_failed,
+                      requote=requote)
     quoted = {key[:3] for key in quoted}
     priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="take", extra="AND price_role = 'want_token'",
                       retry_failed=retry_failed)
@@ -257,7 +295,8 @@ def load_replay_targets(
 
     # A kick quote prices the lot as finally offered, linked to the round's
     # first kick; a staged window's market is the block before it opens.
-    kick_quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="round_kick", retry_failed=retry_failed)
+    kick_quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="round_kick", retry_failed=retry_failed,
+                           requote=requote)
     kick_priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="round_kick", extra="AND price_role = 'want_token'",
                            retry_failed=retry_failed)
     for row in conn.execute(
@@ -398,9 +437,10 @@ class Replayer:
         self.reads = reads
         self._lock = threading.Lock()
         self._headers: dict[int, tuple[str, int]] = {}
+        self._opens: dict[int, int] = {}
         self._usd_routes: dict[tuple[str, int], dict[str, Any]] = {}
         self._crvusd_prices: dict[str, int] = {}
-        self._coin_routes: dict[tuple[str, str], dict[str, Any] | None] = {}
+        self._coin_routes: dict[tuple[str, str, int], dict[str, Any] | None] = {}
         self._pools: dict[str, LpPool | None] = {}
         self._redemption_options: dict[tuple[str, str], list[Redemption]] = {}
         self._redeemed_amounts: dict[tuple[tuple[Redemption, ...], int, str, str], int] = {}
@@ -413,6 +453,22 @@ class Replayer:
             with self._lock:
                 self._headers[number] = cached
         return cached
+
+    def market_block(self, target: ReplayTarget, *, confirmed_block: int) -> int | None:
+        """The block whose closing state was the target's market; None while a staged window is not confirmed open.
+
+        Every staged lot sharing a window shares the block before it opens.
+        """
+        if target.market_block is not None:
+            return target.market_block
+        with self._lock:
+            found = self._opens.get(target.event_timestamp)
+        if found is None:
+            found = last_block_before(self, target.event_timestamp, low=target.source_block_number, high=confirmed_block)
+            if found is not None:
+                with self._lock:
+                    self._opens[target.event_timestamp] = found
+        return found
 
     def _route(self, *, token_in: str, token_out: str, amount_in: str) -> tuple[dict[str, Any], str | None]:
         """Today's Curve route; ReplayFailed when Curve has none, PricesApiError to retry later."""
@@ -484,7 +540,9 @@ class Replayer:
         return found
 
     def _coin_route(self, coin: str, want: str, amount: int) -> dict[str, Any] | None:
-        key = (coin, want)
+        # Today's route depends on the size: what suits a small amount can be a
+        # pool too thin for a large one. Amounts within a factor of four share one.
+        key = (coin, want, amount.bit_length() // 2)
         with self._lock:
             if key in self._coin_routes:
                 return self._coin_routes[key]
@@ -547,7 +605,7 @@ class Replayer:
 
     def _coin_exit(self, coin: str, want: str, amount: int, *, holder: str, block_hash: str, timestamp: int,
                    steps: tuple[Redemption, ...] = (), start: int | None = None) -> Exit | None:
-        """The most want a coin amount fetches: itself, along today's route, or redeemed.
+        """The most want a coin amount fetches: itself, or the better of today's route and redeeming it.
 
         `steps` are the redemptions that turned `start` of the first token into
         `amount` of this coin; the exit's value_of takes an amount of that first token.
@@ -560,14 +618,23 @@ class Replayer:
         elif (route := self._coin_route(coin, want, amount)) is not None:
             final = lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)  # noqa: E731
             detail["route"] = route
-        if final is None:
-            return self._redeemed_exit(coin, want, amount, holder=holder, block_hash=block_hash, timestamp=timestamp,
+        sold: Exit | None = None
+        if final is not None:
+            try:
+                out = final(amount)
+            except ReplayFailed:
+                out = None  # today's route does not exist at this block
+            if out is not None and not steps:
+                sold = Exit(out=out, value_of=final, detail=detail)
+            elif out is not None:
+                detail["redemptions"] = [step.describe() for step in steps]
+                sold = Exit(out=out, detail=detail,
+                            value_of=lambda value: final(self._redeemed(steps, value, holder, block_hash)))
+        if coin == want:
+            return sold
+        redeemed = self._redeemed_exit(coin, want, amount, holder=holder, block_hash=block_hash, timestamp=timestamp,
                                        steps=steps, start=start)
-        if not steps:
-            return Exit(out=final(amount), value_of=final, detail=detail)
-        detail["redemptions"] = [step.describe() for step in steps]
-        return Exit(out=final(amount), detail=detail,
-                    value_of=lambda value: final(self._redeemed(steps, value, holder, block_hash)))
+        return max((found for found in (sold, redeemed) if found is not None), key=lambda found: found.out, default=None)
 
     def _redeemed_exit(self, token: str, want: str, amount: int, *, holder: str, block_hash: str, timestamp: int,
                        steps: tuple[Redemption, ...] = (), start: int | None = None) -> Exit | None:
@@ -645,9 +712,29 @@ class Replayer:
             ]},
         )
 
-    def _fallback_exit(self, target: ReplayTarget, *, amount: int, block_hash: str, timestamp: int) -> Exit:
-        """The best exit for a lot Curve cannot route: withdrawn from its pool, or redeemed by the auction holding it."""
+    def _routed_exit(self, target: ReplayTarget, *, amount: int, block_hash: str) -> Exit:
+        """The lot sold along today's route, at the block."""
+        route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
+        _router_route(route, from_token=target.from_token, to_token=target.want_token)
+
+        def value_of(value: int) -> int:
+            return self._get_dy(route, token_in=target.from_token, token_out=target.want_token, amount=value, block_hash=block_hash)
+
+        return Exit(out=value_of(amount), value_of=value_of, detail={"request_id": request_id, "route": route})
+
+    def _best_exit(self, target: ReplayTarget, *, amount: int, block_hash: str, timestamp: int) -> Exit:
+        """The most the lot fetches at the block: sold along today's route, withdrawn from its pool, or redeemed.
+
+        A quote is what a seller could have had, so a route is one exit among
+        the others, not the answer whenever it exists: a thin pool can pay far
+        less for a lot than redeeming it does.
+        """
         exits = []
+        unrouted: ReplayFailed | None = None
+        try:
+            exits.append(self._routed_exit(target, amount=amount, block_hash=block_hash))
+        except ReplayFailed as exc:
+            unrouted = exc
         lp = self._lp_pool(target.from_token, block_hash)
         if lp is not None:
             exits += self._withdraw_exits(target, lp, amount=amount, block_hash=block_hash, timestamp=timestamp)
@@ -657,44 +744,31 @@ class Replayer:
             exits.append(Exit(out=redeemed.out, value_of=redeemed.value_of,
                               detail={"method": "redeem", "holder": target.auction_address, **redeemed.detail}))
         if not exits:
-            if lp is None:
-                raise ReplayFailed("no_route", "not a Curve LP token, and nothing redeems it")
-            raise ReplayFailed("no_route", f"no coin of pool {lp.pool} reaches the want token, sold or redeemed")
-        return max(exits, key=lambda exit: exit.out)
+            other = ("not a Curve LP token, and nothing redeems it" if lp is None
+                     else f"no coin of pool {lp.pool} reaches the want token, sold or redeemed")
+            raise ReplayFailed(unrouted.code, f"{unrouted}; {other}")
+        return max(exits, key=lambda found: found.out)  # a route wins a tie
 
     def quote(self, target: ReplayTarget, *, block: int, block_hash: str) -> Observation:
-        """Today's route for the lot at the block; a lot Curve cannot route is withdrawn or redeemed."""
+        """The lot's best exit at the block, if that exit can absorb it."""
         started = time.monotonic()
-        payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "block_number": block, "block_hash": block_hash,
-                                   "router": self.config.curve_router}
+        payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "method_version": METHOD_VERSION, "block_number": block,
+                                   "block_hash": block_hash, "router": self.config.curve_router}
         amount = int(target.amount_in_raw)
+        timestamp = self.header(block)[1]
         try:
-            try:
-                route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
-                _router_route(route, from_token=target.from_token, to_token=target.want_token)
-                payload.update(request_id=request_id, route=route)
-
-                def value_of(value: int) -> int:
-                    return self._get_dy(route, token_in=target.from_token, token_out=target.want_token, amount=value, block_hash=block_hash)
-
-                amount_out = value_of(amount)
-            except ReplayFailed as direct:
-                if direct.code not in ("no_route", "bad_route"):
-                    raise
-                try:
-                    best = self._fallback_exit(target, amount=amount, block_hash=block_hash, timestamp=self.header(block)[1])
-                except ReplayFailed as fallback:
-                    raise ReplayFailed(direct.code, f"{direct}; {fallback}") from fallback
-                payload.update(best.detail)
-                value_of, amount_out = best.value_of, best.out
+            best = self._best_exit(target, amount=amount, block_hash=block_hash, timestamp=timestamp)
+            payload.update(best.detail)
+            amount_out = best.out
             probe = amount // PROBE_DIVISOR
             if probe > 0:
-                probe_out = value_of(probe)
+                probe_out = best.value_of(probe)
                 payload["probe"] = {"amount_in": str(probe), "amount_out": str(probe_out)}
-                if amount_out * 2 * probe < probe_out * amount:
-                    raise ReplayFailed("route_exhausted", f"the lot fetches {amount_out}, under half the price of {probe} ({probe_out})")
+                if amount_out * probe * 100 < probe_out * amount * ABSORBED_PERCENT:
+                    raise ReplayFailed("route_exhausted",
+                                       f"the lot fetches {amount_out}, under {ABSORBED_PERCENT}% of the price of {probe} ({probe_out})")
             if amount_out == 0:
-                raise ReplayFailed("route_exhausted", "the route returns nothing for the lot")
+                raise ReplayFailed("route_exhausted", "the lot's best exit returns nothing for it")
         except ReplayFailed as exc:
             return _failed(payload, exc, started)
         payload["providers"] = {REPLAY_PROVIDER: {
@@ -738,12 +812,19 @@ class Replayer:
         }}
         return Observation(state="fresh", payload=payload, error=None)
 
-    def replay(self, target: ReplayTarget, *, block: int) -> ReplayOutcome:
-        """Network and chain errors defer an observation; they are never recorded."""
+    def replay(self, target: ReplayTarget, *, block: int | None = None, confirmed_block: int | None = None) -> ReplayOutcome:
+        """Network and chain errors defer an observation; they are never recorded.
+
+        Without a block, the target's own market block is found first, below the confirmed head.
+        """
         try:
+            if block is None:
+                block = self.market_block(target, confirmed_block=confirmed_block)
+                if block is None:
+                    return ReplayOutcome(target=target, quote=None, price=None, waiting=True)
             block_hash, _ = self.header(block)
         except Exception as exc:  # noqa: BLE001 - any read failure defers the whole target
-            logger.warning("pricing replay deferred block=%d error=%s", block, exc)
+            logger.warning("pricing replay deferred block=%s error=%s", block, exc)
             return ReplayOutcome(target=target, quote=None, price=None)
         return ReplayOutcome(
             target=target,
@@ -812,29 +893,23 @@ def persist_outcomes(conn, outcomes: list[ReplayOutcome], *, chain_id: int, now:
 
 def backfill_pricing(
     writer, *, chain_id: int, replayer: Replayer, confirmed_block: int, auction: str | None = None,
-    retry_failed: bool = False, now: int | None = None, max_workers: int = DEFAULT_MAX_CONCURRENCY,
+    retry_failed: bool = False, requote: bool = False, now: int | None = None,
+    max_workers: int = DEFAULT_MAX_CONCURRENCY,
 ) -> dict[str, Any]:
     """Replay every missing quote and want price; resumable, commits as it goes.
 
-    A recorded failure is final unless retry_failed, for when the method has
-    learned something since; a new attempt is added beside the old one.
+    A recorded replay is final unless asked again, for when the method has
+    learned something since: retry_failed where it found no price, requote
+    wherever an older method answered. A new attempt is added beside the old
+    one, and the newest fresh one is the one projections use.
     """
     now = int(time.time()) if now is None else now
     targets = load_replay_targets(
         writer.connection, chain_id=chain_id, confirmed_block=confirmed_block,
         before_timestamp=now - DEFAULT_MAX_CAPTURE_LAG_SECONDS, auction=auction, retry_failed=retry_failed,
+        requote=requote,
     )
-    # Every staged lot sharing a window shares the block before it opens.
-    opens: dict[int, int | None] = {}
-    for target in targets:
-        if target.market_block is None and target.event_timestamp not in opens:
-            opens[target.event_timestamp] = last_block_before(
-                replayer, target.event_timestamp, low=target.source_block_number, high=confirmed_block,
-            )
-    planned = [
-        (target, target.market_block if target.market_block is not None else opens[target.event_timestamp])
-        for target in targets
-    ]
+    planned = [(target, replayer.market_block(target, confirmed_block=confirmed_block)) for target in targets]
     planned = [(target, block) for target, block in planned if block is not None]
     logger.info("pricing replay start chain_id=%d targets=%d auction=%s", chain_id, len(planned), auction or "all")
 
@@ -853,3 +928,95 @@ def backfill_pricing(
                         counts[kind][observation.state if observation else "deferred"] += 1
             logger.info("pricing replay progress %d/%d", min(start + CHUNK_SIZE, len(planned)), len(planned))
     return {"targets": len(planned), "rounds": len(rounds), **counts}
+
+
+class ReplayCapture:
+    """The replay beside live capture: whatever the capture window left unquoted, a batch at a time.
+
+    Live capture quotes an event within minutes or not at all, and some lots
+    no live source quotes at any time. This prices those events once they are
+    confirmed, so nobody has to run a backfill for them. It also quotes again
+    whatever an older method quoted, so after a release that raises
+    METHOD_VERSION every replayed event comes to rest on the one method by
+    itself. Like live capture, poll never waits: a batch is replayed on
+    worker threads, off the writer, and a later poll commits it. The current
+    method's answer is final; an event that a network or provider error
+    deferred rests for a while, so one that keeps failing does not hold up
+    the rest. Each batch has a replayer of its own: what one remembers
+    (today's routes above all) should not outlive the day it was true.
+    """
+
+    def __init__(self, make_replayer: Callable[[], Replayer], *, batch_size: int = CHUNK_SIZE, idle_seconds: int = IDLE_SECONDS,
+                 retry_seconds: int = DEFERRED_RETRY_SECONDS, max_workers: int = DEFAULT_MAX_CONCURRENCY) -> None:
+        self.make_replayer = make_replayer
+        self.batch_size = batch_size
+        self.idle_seconds = idle_seconds
+        self.retry_seconds = retry_seconds
+        self.max_workers = max(1, max_workers)
+        self._executor: ThreadPoolExecutor | None = None
+        self._batch: list[Future[ReplayOutcome]] = []
+        self._next_scan_at = 0
+        self._resting: dict[tuple, int] = {}
+
+    @staticmethod
+    def _source(target: ReplayTarget) -> tuple:
+        return (target.context_kind, target.source_block_hash, target.source_tx_hash, target.source_log_index)
+
+    @property
+    def in_flight(self) -> int:
+        return len(self._batch)
+
+    def poll(self, writer, *, chain_id: int, now: int | None = None) -> int:
+        """Commit a finished batch and start the next; returns the rounds repriced."""
+        now = int(time.time()) if now is None else now
+        repriced = 0
+        if self._batch:
+            if not all(future.done() for future in self._batch):
+                return 0
+            outcomes = [future.result() for future in self._batch]
+            self._batch = []
+            deferred = 0
+            for outcome in outcomes:
+                target = outcome.target
+                if outcome.waiting:
+                    self._resting[self._source(target)] = now + self.idle_seconds
+                elif (target.needs_quote and outcome.quote is None) or (target.needs_price and outcome.price is None):
+                    self._resting[self._source(target)] = now + self.retry_seconds
+                    deferred += 1
+            repriced = len(writer.transaction(lambda conn: persist_outcomes(conn, outcomes, chain_id=chain_id, now=now)))
+            logger.info("pricing replay batch events=%d deferred=%d rounds=%d", len(outcomes), deferred, repriced)
+        if now < self._next_scan_at:
+            return repriced
+        state = writer.fetchone("SELECT last_confirmed_processed FROM sync_state WHERE chain_id = ?", (chain_id,))
+        confirmed_block = state["last_confirmed_processed"] if state is not None else None
+        self._resting = {source: until for source, until in self._resting.items() if until > now}
+        targets = [] if confirmed_block is None else [
+            target for target in load_replay_targets(
+                writer.connection, chain_id=chain_id, confirmed_block=int(confirmed_block),
+                before_timestamp=now - DEFAULT_MAX_CAPTURE_LAG_SECONDS, requote=True,
+            ) if self._source(target) not in self._resting
+        ]
+        # The newest first: they are what a reader is looking at, and a backlog should not keep them waiting.
+        targets = sorted(targets, key=lambda target: target.event_timestamp, reverse=True)[:self.batch_size]
+        if not targets:
+            self._next_scan_at = now + self.idle_seconds
+            return repriced
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="pricing-replay")
+        replayer = self.make_replayer()
+        self._batch = [
+            self._executor.submit(replayer.replay, target, confirmed_block=int(confirmed_block)) for target in targets
+        ]
+        return repriced
+
+    def wait_for_outstanding(self, *, timeout: float = 10.0) -> None:
+        """Block until the batch in flight finishes; for fixtures."""
+        for future in list(self._batch):
+            future.result(timeout=timeout)
+
+    def discard(self) -> None:
+        """Maintenance discards a batch in flight; nothing was recorded, so its events are found again."""
+        self._batch = []
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._executor = None

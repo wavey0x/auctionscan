@@ -54,6 +54,11 @@ def parse_args() -> argparse.Namespace:
         help="When backfilling pricing, try again where an earlier replay found no price",
     )
     parser.add_argument(
+        "--requote",
+        action="store_true",
+        help="When backfilling pricing, quote again the events an older replay method quoted, so the current one replaces its answers",
+    )
+    parser.add_argument(
         "--takes-only",
         action="store_true",
         help="When reprojecting, rebuild only derived takes and take rollups",
@@ -83,15 +88,15 @@ def main() -> int:
         raise SystemExit("--takes-only requires --reproject")
     if args.force_alias_backfill and not args.backfill_receiver_aliases:
         raise SystemExit("--force-alias-backfill requires --backfill-receiver-aliases")
-    if (args.auction or args.retry_failed) and not args.backfill_pricing:
-        raise SystemExit("--auction and --retry-failed require --backfill-pricing")
+    if (args.auction or args.retry_failed or args.requote) and not args.backfill_pricing:
+        raise SystemExit("--auction, --retry-failed and --requote require --backfill-pricing")
     runtime = IndexerRuntime(db_path=args.db, target_network=args.network)
     if args.backfill_observations or args.check_observations:
         result = runtime.backfill_observations(check_only=args.check_observations, max_blocks=args.max_blocks)
         print(json.dumps({args.network: result}, indent=2, sort_keys=True))
         return 0 if result["missing"] == 0 else 1
     if args.backfill_pricing:
-        result = runtime.backfill_pricing(auction=args.auction, retry_failed=args.retry_failed)
+        result = runtime.backfill_pricing(auction=args.auction, retry_failed=args.retry_failed, requote=args.requote)
         print(json.dumps({args.network: result}, indent=2, sort_keys=True))
         return 0
     if args.reproject:

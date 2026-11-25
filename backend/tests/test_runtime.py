@@ -332,6 +332,8 @@ def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path, 
 
     monkeypatch.setattr(collection_module, "scan_factory_events", scan_factory_events)
     monkeypatch.setattr(collection_module, "scan_auction_events", scan_auction_events)
+    replay_polls = []
+    runtime.replays = SimpleNamespace(poll=lambda writer, *, chain_id: replay_polls.append((writer is runtime.writer, chain_id)))
 
     inserted = runtime.sync_chain_once()
     idle_inserted = runtime.sync_chain_once()
@@ -339,6 +341,8 @@ def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path, 
     assert inserted == 2
     assert idle_inserted == 0
     assert scan_ranges == [("factory", 100, 101), ("auction", 100, 101, 1)]
+    # Every pass, busy or idle, gives the pricing replay its turn beside live capture.
+    assert replay_polls == [(True, 1), (True, 1)]
 
     sync_state = runtime.writer.fetchone(
         """

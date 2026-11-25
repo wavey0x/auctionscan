@@ -81,6 +81,8 @@ class IndexerRuntime:
         self.hydrator = Hydrator(self.abi_registry)
         self.take_detector = TakeDetector(self.abi_registry, self.hydrator)
         self.pricing = PricingCaptureRuntime()
+        # A network that can replay prices does so beside live capture, for whatever that leaves unquoted.
+        self.replays = pricing_replay.ReplayCapture(self._replayer) if self.chain_config.replay_pricing else None
         self.chain = ChainState.from_config(self.chain_config)
         self.discovery_chain = ChainState(self.chain_config, Web3(HTTPProvider(
             self.chain_config.rpc_url, request_kwargs={"timeout": 5}, exception_retry_configuration=None,
@@ -406,6 +408,9 @@ class IndexerRuntime:
         pricing = getattr(self, "pricing", None)
         if pricing is not None:
             pricing.poll(self.writer, chain_id=chain.config.chain_id)
+        replays = getattr(self, "replays", None)
+        if replays is not None:
+            replays.poll(self.writer, chain_id=chain.config.chain_id)
 
         total_inserted = len(inserted_events)
         if total_inserted == 0 and promoted_blocks == 0 and not reorg_recovered:
@@ -524,6 +529,9 @@ class IndexerRuntime:
         pricing = getattr(self, "pricing", None)
         if pricing is not None:
             pricing.discard()
+        replays = getattr(self, "replays", None)
+        if replays is not None:
+            replays.discard()
         state = self.writer.fetchone("SELECT * FROM sync_state WHERE chain_id = ?", (chain.config.chain_id,))
         reader = BlockReader(
             self.writer.connection, chain_id=chain.config.chain_id,
@@ -897,23 +905,25 @@ class IndexerRuntime:
                 "captured": captured, "first_missing": first_missing if complete < len(blocks) else None}
 
 
-    def backfill_pricing(self, *, auction: str | None = None, retry_failed: bool = False) -> dict:
+    def backfill_pricing(self, *, auction: str | None = None, retry_failed: bool = False, requote: bool = False) -> dict:
         """Price confirmed takes and kicks that live capture missed, at their own blocks."""
-        config = self.chain.config.replay_pricing
-        if config is None:
+        if self.chain_config.replay_pricing is None:
             raise ValueError(f"network {self.network_name!r} has no replay_pricing in config.yaml")
         state = self.writer.fetchone(
             "SELECT last_confirmed_processed FROM sync_state WHERE chain_id = ?", (self.chain.config.chain_id,),
         )
         if state is None or state["last_confirmed_processed"] is None:
             raise ValueError(f"network {self.network_name!r} has not been indexed")
-        replayer = pricing_replay.Replayer(
-            chain_id=self.chain.config.chain_id, config=config, client=self.pricing.client,
-            reads=pricing_replay.Web3BlockReads(self.chain.config),
-        )
         return pricing_replay.backfill_pricing(
-            self.writer, chain_id=self.chain.config.chain_id, replayer=replayer,
+            self.writer, chain_id=self.chain.config.chain_id, replayer=self._replayer(),
             confirmed_block=int(state["last_confirmed_processed"]), auction=auction, retry_failed=retry_failed,
+            requote=requote,
+        )
+
+    def _replayer(self) -> pricing_replay.Replayer:
+        return pricing_replay.Replayer(
+            chain_id=self.chain_config.chain_id, config=self.chain_config.replay_pricing, client=self.pricing.client,
+            reads=pricing_replay.Web3BlockReads(self.chain_config),
         )
 
     def _mark_chain_error(self, exc: Exception) -> None:

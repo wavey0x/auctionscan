@@ -393,6 +393,11 @@ html.dark {
     @apply text-tertiary;
   }
 
+  /* A key's status mark names the state; only a row's live mark moves. */
+  .chip .status-dot.is-live::after {
+    animation: none;
+  }
+
   .chip-icon {
     @apply w-7 justify-center px-0;
   }

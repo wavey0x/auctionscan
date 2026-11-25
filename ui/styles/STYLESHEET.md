@@ -93,11 +93,11 @@ its rows is a chip group on one line: there are no tabs.
 
 A filter offers only what is worth isolating, and only where there is a choice to make:
 
-- **Status** has four keys, each carrying its count: Upcoming, Live, Sold and Expired. They are what
-  is about to open, what is open now, what cleared and what failed to. Their counts account for the
-  list between them, so no single count reads as the total: on Curve, where most weekly lots are
-  dust that never sells, Expired outnumbers Sold. Settled is not a filter; those rounds stay in the
-  unfiltered list.
+- **Status** has three keys, each wearing its status mark and carrying its count: Live, Sold and
+  Expired. They are what is open now, what cleared and what failed to. The mark is the one the rows
+  carry, held still: only a row's live mark moves. No single count reads as the total: on Curve,
+  where most weekly lots are dust that never sells, Expired outnumbers Sold. Upcoming and Settled
+  are not filters; an upcoming round leads the unfiltered list and a settled one stays in it.
 - **Protocol** (Yearn, Curve; URL `protocol`, API `protocol=all|yearn|curve`) follows. Curve has
   one burner per chain selling every fee token, so its rows name the auction `Curve burner`
   rather than repeat one address.

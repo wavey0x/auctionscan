@@ -39,17 +39,18 @@ function lastRequest() {
   return vi.mocked(api.getRounds).mock.calls.at(-1)![0];
 }
 
-it("offers Upcoming, Live, Sold and Expired with their counts, and Upcoming asks for scheduled rounds", async () => {
+it("offers Live, Sold and Expired, each with its mark and count, and no key for upcoming rounds", async () => {
   await mount();
   const chips = within(screen.getByRole("group", { name: "Round status" })).getAllByRole("button");
-  expect(chips.map((chip) => chip.textContent)).toEqual(["Upcoming3", "Live5", "Sold20", "Expired7"]);
+  expect(chips.map((chip) => chip.textContent)).toEqual(["Live5", "Sold20", "Expired7"]);
+  expect(chips.every((chip) => chip.querySelector(".status-mark"))).toBe(true);
   expect(lastRequest().status).toBe("all");
 
   fireEvent.click(chips[0]);
-  await waitFor(() => expect(lastRequest().status).toBe("scheduled"));
-  expect(router.state.location.search).toBe("?status=scheduled");
+  await waitFor(() => expect(lastRequest().status).toBe("live"));
+  expect(router.state.location.search).toBe("?status=live");
 
-  fireEvent.click(chips[2]);
+  fireEvent.click(chips[1]);
   await waitFor(() => expect(lastRequest().status).toBe("sold_out"));
   expect(router.state.location.search).toBe("?status=sold_out");
 });

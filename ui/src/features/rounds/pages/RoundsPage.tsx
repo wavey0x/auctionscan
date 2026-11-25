@@ -31,7 +31,7 @@ import RequestError from "../../../shared/ui/RequestError";
 import { RoundLotCell } from "../../../shared/ui/RoundCells";
 import RoundProgressMini, { toggleProgressDisplayMode, type RoundProgressMiniMode } from "../../../shared/ui/RoundProgressMini";
 import SkeletonRows from "../../../shared/ui/SkeletonRows";
-import StatusBadge, { statusLabel } from "../../../shared/ui/StatusBadge";
+import StatusBadge, { StatusDot, statusLabel } from "../../../shared/ui/StatusBadge";
 import { TableHoverScope } from "../../../shared/ui/TableHoverContext";
 import TokenAmountValue from "../../../shared/ui/TokenAmountValue";
 import { ChipCount, ChipGroup, DateRange, FilterField } from "../../../shared/ui/Toolbar";
@@ -39,12 +39,12 @@ import { ChipCount, ChipGroup, DateRange, FilterField } from "../../../shared/ui
 const PAGE_SIZE = 20;
 
 /**
- * The states worth isolating from the list: what is about to open, what is
- * open now, what cleared and what failed to. Together their counts account for
- * the list, so no one of them reads as its total; a settled round stays in the
- * unfiltered list.
+ * The states worth isolating from the list: what is open now, what cleared
+ * and what failed to. A round about to open leads the unfiltered list and a
+ * settled one stays in it, so neither needs a key. Each key wears its
+ * status's mark, the one its rows carry.
  */
-const STATUS_CHIPS = ["scheduled", "live", "sold_out", "expired"] as const;
+const STATUS_CHIPS = ["live", "sold_out", "expired"] as const;
 type RoundStatusFilter = "all" | (typeof STATUS_CHIPS)[number];
 
 function parseRoundStatus(value: string | null): RoundStatusFilter {
@@ -311,7 +311,7 @@ export default function RoundsPage() {
               single
               options={STATUS_CHIPS.map((status) => ({
                 value: status,
-                label: <>{statusLabel(status)}<ChipCount value={counts?.[status]} /></>,
+                label: <><StatusDot status={status} />{statusLabel(status)}<ChipCount value={counts?.[status]} /></>,
               }))}
               selected={filters.status === "all" ? [] : [filters.status]}
               onChange={(next) => updateFilters({ status: next[0] ?? "all", page: 1 })}

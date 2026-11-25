@@ -198,9 +198,9 @@ spellings. `protocol` (`all`, `yearn`, `curve`) is resolved to contract
 versions, not stored. On `/api/takers` it narrows the totals as well as the
 rows: the taker summaries are per taker across every protocol, so one
 protocol's totals are rolled up from its takes and their `take_pricing` by
-the rules `taker_pricing_summary` is built with. The UI's status chips offer Upcoming (`scheduled`),
-Live, Sold (`sold_out`) and Expired; the list without a status chip is all
-rounds, settled ones included.
+the rules `taker_pricing_summary` is built with. The UI's status chips offer Live, Sold
+(`sold_out`) and Expired; the list without a status chip is all rounds,
+scheduled and settled ones included.
 
 Address policy:
 

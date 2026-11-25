@@ -5,26 +5,15 @@ from typing import Any
 
 from backend.indexer.types import normalize_address
 
-from .queries import like_pattern
+from .queries import like_pattern, protocol_clause
 
 
-def _taker_ctes(
-    *,
-    chain_id: int | None,
-    taker_query: str | None,
-) -> tuple[str, tuple[Any, ...]]:
-    summary_filter = ""
-    auction_filter = ""
-    params: list[Any] = []
-    if chain_id is not None:
-        summary_filter = "WHERE ts.chain_id = ?"
-        auction_filter = "WHERE chain_id = ?"
-        params.extend([chain_id, chain_id])
-    normalized_query = (taker_query or "").strip().lower()
-    params.extend([normalized_query, like_pattern(normalized_query)])
+def _stored_summaries(chain_id: int | None) -> tuple[str, str, list[Any]]:
+    """Every protocol together: the taker summaries as projected."""
+    summary_filter = "WHERE ts.chain_id = ?" if chain_id is not None else ""
+    auction_filter = "WHERE chain_id = ?" if chain_id is not None else ""
     return (
         f"""
-        WITH chain_summaries AS (
             SELECT ts.chain_id,
                    ts.taker,
                    ts.take_count,
@@ -41,11 +30,88 @@ def _taker_ctes(
                 ON tps.chain_id = ts.chain_id
                AND tps.taker = ts.taker
               {summary_filter}
-        ),
-        auction_keys AS (
+        """,
+        f"""
             SELECT DISTINCT chain_id, taker, auction_address
               FROM takes
               {auction_filter}
+        """,
+        [] if chain_id is None else [chain_id],
+    )
+
+
+def _protocol_summaries(chain_id: int | None, protocol_sql: str, protocol_params: list[Any]) -> tuple[str, str, list[Any]]:
+    """One protocol's takes, rolled up as `taker_pricing_summary` rolls up all of them.
+
+    The stored summaries are per taker, and a protocol is a set of contract
+    versions that only a take's auction carries, so a protocol's totals are
+    summed from its takes and their projected pricing.
+    """
+    scope = f"""
+              FROM takes t
+              JOIN auctions a
+                ON a.chain_id = t.chain_id
+               AND a.auction_address = t.auction_address
+    """
+    where = f" WHERE 1 = 1{' AND t.chain_id = ?' if chain_id is not None else ''}{protocol_sql}"
+    return (
+        f"""
+            SELECT t.chain_id,
+                   t.taker,
+                   COUNT(*) AS take_count,
+                   MIN(t.timestamp) AS first_seen_at,
+                   MAX(t.timestamp) AS last_seen_at,
+                   SUM(CAST(tp.priced_volume_usd AS REAL)) AS total_actual_paid_usd,
+                   -SUM(CAST(tp.auction_profit_usd AS REAL)) AS total_taker_profit_usd,
+                   COUNT(tp.auction_profit_usd) AS priced_take_count,
+                   COUNT(tp.priced_volume_usd) AS paid_usd_take_count,
+                   COALESCE(SUM(
+                       CASE WHEN tp.canonical_quote_fact_id IS NOT NULL
+                            THEN CAST(tp.priced_volume_usd AS REAL)
+                       END
+                   ), 0) AS priced_volume_usd,
+                   COALESCE(SUM(CAST(tp.priced_volume_usd AS REAL)), 0) AS total_volume_usd_for_share
+              {scope}
+              LEFT JOIN take_pricing tp
+                ON tp.chain_id = t.chain_id
+               AND tp.auction_address = t.auction_address
+               AND tp.round_id = t.round_id
+               AND tp.take_seq = t.take_seq
+              {where}
+             GROUP BY t.chain_id, t.taker
+        """,
+        f"""
+            SELECT DISTINCT t.chain_id, t.taker, t.auction_address
+              {scope}
+              {where}
+        """,
+        ([] if chain_id is None else [chain_id]) + protocol_params,
+    )
+
+
+def _taker_ctes(
+    *,
+    chain_id: int | None,
+    taker_query: str | None,
+    protocol: str | None = None,
+) -> tuple[str, tuple[Any, ...]]:
+    protocol_sql, protocol_params = protocol_clause("a.version", protocol)
+    chain_summaries, auction_keys, scope_params = (
+        _protocol_summaries(chain_id, protocol_sql, protocol_params)
+        if protocol_sql
+        else _stored_summaries(chain_id)
+    )
+    # Both sources are scoped alike, in the order the statement names them.
+    params: list[Any] = [*scope_params, *scope_params]
+    normalized_query = (taker_query or "").strip().lower()
+    params.extend([normalized_query, like_pattern(normalized_query)])
+    return (
+        f"""
+        WITH chain_summaries AS (
+            {chain_summaries}
+        ),
+        auction_keys AS (
+            {auction_keys}
         ),
         auction_counts AS (
             SELECT taker, COUNT(*) AS unique_auctions
@@ -173,10 +239,11 @@ def list_takers(
     chain_id: int | None,
     sort_by: str,
     taker_query: str | None = None,
+    protocol: str | None = None,
     page: int,
     limit: int,
 ) -> tuple[int, list[dict[str, Any]]]:
-    ctes, params = _taker_ctes(chain_id=chain_id, taker_query=taker_query)
+    ctes, params = _taker_ctes(chain_id=chain_id, taker_query=taker_query, protocol=protocol)
     total = int(conn.execute(ctes + "SELECT COUNT(*) AS count FROM filtered", params).fetchone()["count"])
     order_by = {
         "taker": "taker ASC, COALESCE(last_take, 0) DESC",

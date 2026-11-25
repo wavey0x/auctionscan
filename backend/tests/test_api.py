@@ -1341,6 +1341,7 @@ def test_openapi_publishes_the_filter_vocabularies(tmp_path):
     assert enum_for("/api/takers", "sort_by") == [
         "volume", "taker", "chains", "auctions", "takes", "recent",
     ]
+    assert enum_for("/api/takers", "protocol") == ["all", "yearn", "curve"]
 
 
 def test_read_only_api_advertises_no_credentialed_cors(tmp_path, monkeypatch):

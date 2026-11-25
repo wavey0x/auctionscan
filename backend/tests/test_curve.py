@@ -14,7 +14,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from backend.api.app import create_app
-from backend.indexer import replay as replay_module
+from backend.indexer import pricing_projections, replay as replay_module
 from backend.indexer.auction_params import RawAuctionParams, decode_params
 from backend.indexer.config import load_settings
 from backend.indexer.decode import AbiRegistry
@@ -44,7 +44,16 @@ from backend.indexer.takes import (
 from backend.indexer.types import AuctionSeed, IndexedBlockRecord, RawLogRecord, TokenMetadata
 from backend.indexer.writer import Writer
 
-from .helpers import DEFAULT_FROM_TOKEN, DEFAULT_WANT_TOKEN, make_hydrator, make_prepared, make_snapshot
+from .helpers import (
+    DEFAULT_AUCTION,
+    DEFAULT_FACTORY,
+    DEFAULT_FROM_TOKEN,
+    DEFAULT_RECEIVER,
+    DEFAULT_WANT_TOKEN,
+    make_hydrator,
+    make_prepared,
+    make_snapshot,
+)
 
 
 BURNER = "0xc014a92c76709d6c7f7c7841823b7164d6d2abd4"
@@ -662,7 +671,7 @@ def test_takes_resolve_to_the_window_that_holds_them(tmp_path):
     assert window(WETH, WEEK_TWO + 5, in_flight) == (WEEK_TWO, CRVUSD, FEE_COLLECTOR)
 
 
-def _seed_api(path) -> None:
+def _seed_api(path) -> Writer:
     writer = Writer(str(path))
     _seed_week(writer)
     take = make_prepared(
@@ -680,6 +689,7 @@ def _seed_api(path) -> None:
         conn, chain_id=1, network_name="ethereum", latest_rpc_head=900, confirmed_head=900,
         last_confirmed_processed=900, last_live_processed=900, health="ok",
     ))
+    return writer
 
 
 def test_api_lists_burner_rounds_with_protocol_and_floor(tmp_path):
@@ -705,6 +715,96 @@ def test_api_lists_burner_rounds_with_protocol_and_floor(tmp_path):
     assert detail["protocol"] == "curve"
     assert (detail["parameters"]["starting_price"], detail["parameters"]["floor_price"]) == ("250000", "100")
     assert {token["address"].lower() for token in detail["from_tokens"]} == {USDC, WETH}
+
+
+def test_api_narrows_taker_totals_to_one_protocol(tmp_path):
+    path = tmp_path / "curve.sqlite3"
+    writer = _seed_api(path)  # TAKER buys the burner's USDC lot for 1,499 crvUSD.
+    other = "0x0000000000000000000000000000000000000def"
+
+    def yearn_take(tx_nonce: int, taker: str, taken: int, paid: int):
+        return make_prepared(
+            event_name="Take", tx_nonce=tx_nonce, block_number=800 + tx_nonce, log_index=4,
+            payload={
+                "roundId": 1, "taker": taker, "receiver": DEFAULT_RECEIVER, "from": WETH, "to": DEFAULT_WANT_TOKEN,
+                "amountTaken": taken, "amountPaid": paid, "expectedAmountPaid": paid,
+                "priceE18": WAD, "matchingMethod": "receiver_transfer",
+            },
+        )
+
+    yearn = [
+        make_prepared(
+            event_name="DeployedNewAuction", tx_nonce=50, block_number=850, address=DEFAULT_FACTORY,
+            auction_address=DEFAULT_AUCTION, payload={"want": DEFAULT_WANT_TOKEN},
+            snapshot=make_snapshot(block_number=850),
+        ),
+        make_prepared(event_name="AuctionEnabled", tx_nonce=51, block_number=851,
+                      payload={"from": WETH, "to": DEFAULT_WANT_TOKEN}),
+        make_prepared(event_name="AuctionKicked", tx_nonce=52, block_number=852,
+                      payload={"from": WETH, "available": 10 * WAD}, snapshot=make_snapshot(block_number=852)),
+        yearn_take(53, TAKER, 4 * WAD, 400 * 10**6),
+        yearn_take(54, other, WAD, 100 * 10**6),
+    ]
+    writer.transaction(lambda conn: apply_batch(conn, yearn))
+
+    # TAKER's two payments have a USD value, and the Yearn one a market quote
+    # to compare against; the other taker's take is unpriced.
+    def price(conn):
+        conn.execute(
+            "INSERT OR REPLACE INTO tokens (chain_id, token_address, symbol, name, decimals, metadata_updated_at)"
+            " VALUES (1, ?, 'WANT', 'Want Token', 6, 0)",
+            (DEFAULT_WANT_TOKEN,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO take_pricing (
+                chain_id, auction_address, round_id, take_seq, canonical_quote_fact_id, amount_taken_raw,
+                want_token_price_usd, market_quote_out_usd, auction_profit_usd, priced_volume_usd, pricing_status
+            ) SELECT chain_id, auction_address, round_id, take_seq, ?, amount_taken_raw, '1', ?, ?, ?, 'priced'
+                FROM takes WHERE auction_address = ? AND taker = ?
+            """,
+            [(None, None, None, "1499", BURNER, TAKER), (7, "392", "8", "400", DEFAULT_AUCTION, TAKER)],
+        )
+        # The stored summaries, as the pricing projection rolls them up.
+        pricing_projections._rebuild_taker_pricing_summaries(conn, chain_id=1, takers=None)
+
+    writer.transaction(price)
+    client = TestClient(create_app(db_path=str(path)))
+
+    def takers(**params):
+        payload = client.get("/api/takers", params=params).json()
+        return payload["total"], {item["taker"].lower(): item for item in payload["takers"]}
+
+    total, everyone = takers()
+    curve_total, curve = takers(protocol="curve")
+    yearn_total, yearn_only = takers(protocol="yearn")
+    assert (total, curve_total, yearn_total) == (2, 1, 2)
+
+    def figures(item):
+        return {key: item[key] for key in (
+            "total_takes", "unique_auctions", "total_volume_usd", "paid_usd_take_count",
+            "priced_take_count", "total_taker_profit_usd", "priced_volume_share", "rank_by_volume",
+        )}
+
+    assert figures(curve[TAKER]) == {
+        "total_takes": 1, "unique_auctions": 1, "total_volume_usd": 1499.0, "paid_usd_take_count": 1,
+        "priced_take_count": 0, "total_taker_profit_usd": None, "priced_volume_share": 0.0, "rank_by_volume": 1,
+    }
+    assert figures(yearn_only[TAKER]) == {
+        "total_takes": 1, "unique_auctions": 1, "total_volume_usd": 400.0, "paid_usd_take_count": 1,
+        "priced_take_count": 1, "total_taker_profit_usd": -8.0, "priced_volume_share": 1.0, "rank_by_volume": 1,
+    }
+    assert figures(yearn_only[other]) | {"rank_by_volume": 2} == figures(everyone[other])
+    assert yearn_only[other]["total_volume_usd"] is None
+    assert curve[TAKER]["last_take"] != yearn_only[TAKER]["last_take"] == everyone[TAKER]["last_take"]
+
+    # A protocol's totals are rolled up from its takes, the unfiltered ones read
+    # from the stored summaries: the two must agree.
+    for key in ("total_takes", "unique_auctions", "total_volume_usd", "paid_usd_take_count", "priced_take_count"):
+        assert everyone[TAKER][key] == curve[TAKER][key] + yearn_only[TAKER][key], key
+    assert everyone[TAKER]["total_taker_profit_usd"] == yearn_only[TAKER]["total_taker_profit_usd"]
+
+    assert client.get("/api/takers", params={"protocol": "other"}).status_code == 422
 
 
 def test_api_counts_rounds_waiting_for_their_window(tmp_path):

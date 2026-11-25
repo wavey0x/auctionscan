@@ -10,6 +10,7 @@ from ..queries import load_as_of, occurrence_from_row, list_take_pricing_sources
 from ..models import (
     MAX_PAGE,
     MAX_SEARCH_LENGTH,
+    ProtocolFilter,
     TakerDetail,
     TakerListResponse,
     TakerSortKey,
@@ -36,6 +37,7 @@ def get_takers(
     page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
     sort_by: TakerSortKey = Query(default="volume"),
+    protocol: ProtocolFilter = Query(default="all"),
     q: str | None = Query(default=None, max_length=MAX_SEARCH_LENGTH),
     db: Database = Depends(get_database),
 ) -> TakerListResponse:
@@ -47,6 +49,7 @@ def get_takers(
             chain_id=chain_id,
             sort_by=sort_by,
             taker_query=q,
+            protocol=protocol,
             page=page,
             limit=limit,
         )

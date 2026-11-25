@@ -6,6 +6,7 @@ import { api } from "../../../shared/api/client";
 import { useChainsQuery } from "../../../shared/lib/chains";
 import { cn, formatCompactDateTime, formatCompactUsd, formatCount, formatDateTime, formatUsd } from "../../../shared/lib/format";
 import { linkRowKeyDown } from "../../../shared/lib/openRound";
+import { parseProtocol, PROTOCOL_LABELS, PROTOCOLS } from "../../../shared/lib/protocol";
 import { handleRowNavigation } from "../../../shared/lib/rowNavigation";
 import ChainIcon from "../../../shared/ui/ChainIcon";
 import EmptyState from "../../../shared/ui/EmptyState";
@@ -49,14 +50,15 @@ export default function TakersPage() {
   const page = Math.max(1, Number(searchParams.get("page") || "1"));
   const sortBy = ((searchParams.get("sort") as TakerSortKey | null) || "volume");
   const chainId = searchParams.get("chain") ? Number(searchParams.get("chain")) : undefined;
+  const protocol = parseProtocol(searchParams.get("protocol"));
   const query = searchParams.get("q") || "";
 
   const chainsQuery = useChainsQuery();
   const chainsData = chainsQuery.data;
 
   const takersQuery = useQuery({
-    queryKey: ["takers", page, sortBy, chainId, query],
-    queryFn: ({ signal }) => api.getTakers({ page, limit: PAGE_SIZE, sort_by: sortBy, chain_id: chainId, q: query }, signal),
+    queryKey: ["takers", page, sortBy, chainId, protocol, query],
+    queryFn: ({ signal }) => api.getTakers({ page, limit: PAGE_SIZE, sort_by: sortBy, chain_id: chainId, protocol: protocol ?? "all", q: query }, signal),
   });
 
   const update = (mutate: (next: URLSearchParams) => void) => {
@@ -112,6 +114,18 @@ export default function TakersPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="filter-line">
+          {/* Narrows every figure to one protocol's takes, not just the rows. */}
+          <ChipGroup
+            label="Protocol"
+            single
+            options={PROTOCOLS.map((value) => ({ value, label: PROTOCOL_LABELS[value] }))}
+            selected={protocol ? [protocol] : []}
+            onChange={(nextProtocols) => update((next) => {
+              if (nextProtocols[0]) next.set("protocol", nextProtocols[0]);
+              else next.delete("protocol");
+              next.delete("page");
+            })}
+          />
           {/* A choice between chains exists only once there is more than one. */}
           {chainOptions.length < 2 ? null : (
             <ChipGroup
@@ -200,7 +214,6 @@ export default function TakersPage() {
                               <i style={{ width: `${maxVolume ? Math.max(1, (volume / maxVolume) * 100) : 0}%`, marginLeft: "auto" }} />
                             </span>
                             <span className="min-w-[4.5rem] text-primary">{formatCompactUsd(taker.total_volume_usd)}</span>
-                            {partialVolume ? <span className="stat-note">partial</span> : null}
                           </span>
                         </td>
                         <td className="col-md num">{formatCount(taker.total_takes)}</td>

@@ -103,6 +103,9 @@ A filter offers only what is worth isolating, and only where there is a choice t
   rather than repeat one address.
 - **Chain** appears only once more than one chain is indexed.
 - The total is the pager's summary beneath the table, not a chip.
+- The takers ranking offers the same **Protocol** group (and Chain once there is a choice). Choosing
+  one narrows every figure in the ranking to that protocol's takes (volume, takes, auctions and
+  last take), not only which takers are listed.
 
 ### An auction is the list, narrowed
 
@@ -140,6 +143,11 @@ load only, so changing a filter never collapses the counts or swaps table geomet
   `sub-lo` span. A round's takes add one tier, `col-xs` with `sub-xs`, under 440px.
 - Rounds keep Auction and PnL at every width (inside an auction, Round and PnL). Round, progress
   and kick time go first, then status, lot and received, which move into the sub-line on phones.
+- The rounds table holds its columns still (`rounds-table`, `table-layout: fixed`). Its header sizes
+  every column but Lot and Received (`rcol-*`), which split what is left and clip at their column's
+  edge, so a filter, a page turn or a refresh never moves a column. Under 1200px the auction column
+  narrows and a named auction drops its short address; on phones the identity column takes the
+  width the dropped columns leave.
 - Long token amounts clip inside `cell-clip` with an ellipsis; the full amount is on hover.
 - Headers are sticky, uppercase and flat.
 - Hover is `hover`; the open row is `selected` with a 2px accent edge on its first cell.
@@ -244,6 +252,8 @@ off.
 - PnL percent is signed with a true minus (`−0.24%`); in lists its USD delta follows in a quieter
   figure, and in the round drawer one or the other is shown.
 - A figure computed from incomplete pricing carries a small `partial` note with the coverage on hover.
+  The takers ranking is the exception: its volume is a bare figure with the coverage on hover only,
+  because a note that sits on most rows of a ranking marks nothing.
 - Dense tables show relative ages (`4h ago`) or `MMM d HH:mm`; the full timestamp is in the title.
   An upcoming round's Kicked cell reads forward (`in 6h`).
 - Version badges are small bordered marks with a `v` prefix; Curve's burner shows its version id, `curve-1`,

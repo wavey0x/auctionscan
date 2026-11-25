@@ -181,7 +181,8 @@ def _version_clause(column: str, versions: list[str] | tuple[str, ...] | None) -
     return f" AND LOWER({column}) IN ({placeholders})", normalized
 
 
-def _protocol_clause(column: str, protocol: str | None) -> tuple[str, list[Any]]:
+def protocol_clause(column: str, protocol: str | None) -> tuple[str, list[Any]]:
+    """Narrow an auction's version column to one protocol's contract versions."""
     if not protocol or protocol == "all":
         return "", []
     versions = versions_for_protocol("curve")
@@ -240,7 +241,7 @@ def build_round_filters(
     version_sql, version_params = _version_clause("a.version", versions)
     clauses.append(version_sql)
     params.extend(version_params)
-    protocol_sql, protocol_params = _protocol_clause("a.version", protocol)
+    protocol_sql, protocol_params = protocol_clause("a.version", protocol)
     clauses.append(protocol_sql)
     params.extend(protocol_params)
     if pair:

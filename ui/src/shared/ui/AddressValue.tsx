@@ -75,7 +75,7 @@ export default function AddressValue({
 
   return (
     <span
-      className={cn("identity-inline max-w-full", className)}
+      className={cn("identity-inline", className)}
       title={title}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

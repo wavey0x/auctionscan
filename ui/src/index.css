@@ -626,14 +626,39 @@ html.dark {
     @apply min-w-0 max-w-[13rem] overflow-hidden;
   }
 
+  /* The rounds list holds its columns still. Widths are the table's own, set
+     on its header, not measured from whichever rows are on screen, so a
+     filter, a page turn or a refresh moves nothing. Lot and Received share
+     what the sized columns leave, and clip at their column's edge. */
+  .rounds-table {
+    table-layout: fixed;
+  }
+
+  .rounds-table .cell-clip {
+    max-width: none;
+  }
+
+  .rounds-table .rcol-auction { width: 240px; }
+  .rounds-table .rcol-id { width: 88px; }
+  .rounds-table .rcol-round { width: 62px; }
+  .rounds-table .rcol-status { width: 94px; }
+  .rounds-table .rcol-progress { width: 132px; }
+  .rounds-table .rcol-pnl { width: 124px; }
+  .rounds-table .rcol-kicked { width: 72px; }
+  .rounds-table .rcol-kicked.is-dated { width: 104px; }
+
   /* ---------------------------------------------------------------- identity */
 
   .identity-inline {
     @apply inline-flex min-w-0 max-w-full items-center gap-1.5 text-primary;
   }
 
+  /* The halo hangs outside the value's own measure, so the value's cap allows
+     for it: capped at the bare 100%, a value in a box sized to its content
+     comes out 8px short and clips its last characters. */
   .hover-match-target {
     @apply -mx-1 rounded-[3px] border border-transparent px-1 py-0.5;
+    max-width: calc(100% + 0.5rem);
   }
 
   .hover-match-active {
@@ -1256,6 +1281,13 @@ html.dark {
 
 /* Columns drop by priority as the table narrows instead of scrolling. These
    sit after the component layer so they win over any element's own display. */
+/* A named auction shows its short address only once Lot and Received have
+   room for their longest values; below that the name stands alone. */
+@container table (max-width: 1200px) {
+  .rounds-table .rcol-auction { width: 188px; }
+  .rounds-table .address-suffix { display: none; }
+}
+
 @container table (max-width: 1040px) {
   .col-xl { display: none !important; }
 }
@@ -1269,6 +1301,9 @@ html.dark {
   .col-lo { display: none !important; }
   .sub-lo { display: inline; }
   .cell-clip { max-width: 7.5rem; }
+  /* With lot and received folded into it, a round's identity takes the width they left. */
+  .rounds-table .rcol-auction,
+  .rounds-table .rcol-id { width: auto; }
 }
 
 /* A round's takes stay one line each down to the drawer's width; only on a

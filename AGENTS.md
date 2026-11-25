@@ -174,7 +174,10 @@ carries their values and invalid input returns 422 rather than silently
 falling back. `status` accepts the stored round statuses only (`all`,
 `scheduled`, `live`, `sold_out`, `expired`, `settled`); there are no alias
 spellings. `protocol` (`all`, `yearn`, `curve`) is resolved to contract
-versions, not stored. The UI's status chips offer Upcoming (`scheduled`),
+versions, not stored. On `/api/takers` it narrows the totals as well as the
+rows: the taker summaries are per taker across every protocol, so one
+protocol's totals are rolled up from its takes and their `take_pricing` by
+the rules `taker_pricing_summary` is built with. The UI's status chips offer Upcoming (`scheduled`),
 Live, Sold (`sold_out`) and Expired; the list without a status chip is all
 rounds, settled ones included.
 

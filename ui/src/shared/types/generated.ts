@@ -1746,6 +1746,7 @@ export interface operations {
                 page?: number;
                 limit?: number;
                 sort_by?: "volume" | "taker" | "chains" | "auctions" | "takes" | "recent";
+                protocol?: "all" | "yearn" | "curve";
                 q?: string | null;
             };
             header?: never;

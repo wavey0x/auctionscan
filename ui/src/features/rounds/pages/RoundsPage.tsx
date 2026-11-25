@@ -127,7 +127,7 @@ function RoundRow({
   return (
     <tr {...rowProps}>
       {scoped ? (
-        <td className="max-w-[15rem]">
+        <td>
           <span className="font-mono">R{round.round_id}</span>
           <div className="sub-line">
             <span className="sub-lo">{`${statusLabel(round.status)} · ${lotSummary(round)} · `}</span>
@@ -136,7 +136,7 @@ function RoundRow({
         </td>
       ) : (
         <>
-          <td className="max-w-[15rem]">
+          <td>
             <span className="flex min-w-0 items-center gap-2.5">
               <ChainIcon chainId={round.chain_id} />
               <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} label={auctionLabel(round.protocol)} />
@@ -147,11 +147,11 @@ function RoundRow({
               {` · ${renderKickedValue(round.kicked_at, "relative")}`}
             </div>
           </td>
-          <td className="col-md mono fit pr-3 text-secondary">R{round.round_id}</td>
+          <td className="col-md mono pr-3 text-secondary">R{round.round_id}</td>
         </>
       )}
-      <td className="col-lo fit pr-4"><StatusBadge status={round.status} /></td>
-      <td className="col-md fit pr-4">
+      <td className="col-lo pr-4"><StatusBadge status={round.status} /></td>
+      <td className="col-md pr-4">
         <RoundProgressMini
           status={round.status}
           kickedAt={round.kicked_at}
@@ -186,7 +186,7 @@ function RoundRow({
           title={roundPnlCoverageTitle(round)}
         />
       </td>
-      <td className="col-md num dim fit pl-4" title={formatDateTime(round.kicked_at)}>{kicked}</td>
+      <td className="col-md num dim pl-4" title={formatDateTime(round.kicked_at)}>{kicked}</td>
       <OpenMark />
     </tr>
   );
@@ -337,17 +337,18 @@ export default function RoundsPage() {
         {roundsQuery.isError && !roundsQuery.data ? null : (
           <div className="table-wrap">
             <TableHoverScope>
-              <table className="data-table" aria-busy={roundsQuery.isLoading || roundsQuery.isPlaceholderData}>
+              <table className="data-table rounds-table" aria-busy={roundsQuery.isLoading || roundsQuery.isPlaceholderData}>
                 <thead>
+                  {/* The header sizes the columns (`rcol-*`); Lot and Received take what is left. */}
                   <tr>
-                    {tableScoped ? <th>Round</th> : (
+                    {tableScoped ? <th className="rcol-id">Round</th> : (
                       <>
-                        <th>Auction</th>
-                        <th className="col-md">Round</th>
+                        <th className="rcol-auction">Auction</th>
+                        <th className="col-md rcol-round">Round</th>
                       </>
                     )}
-                    <th className="col-lo">Status</th>
-                    <th className="col-md">
+                    <th className="col-lo rcol-status">Status</th>
+                    <th className="col-md rcol-progress">
                       <button
                         type="button"
                         className="header-toggle"
@@ -359,8 +360,8 @@ export default function RoundsPage() {
                     </th>
                     <th className="col-lo">Lot</th>
                     <th className="col-lo">Received</th>
-                    <th className="num">PnL</th>
-                    <th className="col-md num">
+                    <th className="num rcol-pnl">PnL</th>
+                    <th className={cn("col-md num rcol-kicked", kickedDisplayMode === "absolute" && "is-dated")}>
                       <button
                         type="button"
                         className="header-toggle"

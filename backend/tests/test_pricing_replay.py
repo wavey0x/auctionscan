@@ -10,11 +10,22 @@ from backend.indexer.config import _replay_pricing
 from backend.indexer.prices_api import PricesApiError
 from backend.indexer.pricing_projections import rebuild_pricing_projections
 from backend.indexer.pricing_replay import (
+    ASSET_SELECTOR,
+    BALANCE_OF_SELECTOR,
+    BALANCES_SELECTORS,
     COINS_SELECTORS,
     GET_DY_SELECTOR,
     GET_DY_TYPES,
+    GET_IBT_SELECTOR,
+    MATURITY_SELECTOR,
     POOL_FROM_LP_SELECTOR,
     PRICE_SELECTOR,
+    REDEEM_FOR_IBT_SELECTOR,
+    REDEEM_SELECTOR,
+    TOTAL_SUPPLY_SELECTOR,
+    UNDERLYING_SELECTOR,
+    UNWRAP_SELECTOR,
+    VAULT_SHARE_SELECTOR,
     WITHDRAW_SELECTORS,
     Replayer,
     ReplayFailed,
@@ -24,7 +35,7 @@ from backend.indexer.pricing_replay import (
 )
 from backend.indexer.types import ReplayPricingConfig
 
-from .helpers import DEFAULT_FROM_TOKEN, DEFAULT_WANT_TOKEN
+from .helpers import DEFAULT_AUCTION, DEFAULT_FROM_TOKEN, DEFAULT_WANT_TOKEN
 from .test_pricing import ONE_USDC, _seed_pricing_db
 
 # Pricing the live capture missed: today's Curve route, evaluated at the block
@@ -228,6 +239,164 @@ def test_an_lp_lot_without_a_route_is_withdrawn_into_its_best_coin(tmp_path):
     assert (detail["method"], detail["pool"], detail["coin_index"], detail["coin"]) == ("withdraw_one_coin", LP_POOL, 1, COIN)
     # The earlier failure stays beside the new attempt.
     assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'take'")["n"] == 2
+
+
+IBT = "0x0000000000000000000000000000000000000f10"  # a vault share worth 2 UNDERLYING
+PT = "0x0000000000000000000000000000000000000f11"  # a principal token redeeming 1:1 for UNDERLYING
+UNDERLYING = "0x0000000000000000000000000000000000000f12"  # routes to the want token 1:1
+WRAPPER = "0x0000000000000000000000000000000000000f13"  # a Spectra wrapper unwrapping into 1.5 UNDERLYING
+ETHER = 10**18
+REPLAY_TIME = 1_700_000_000 + TAKE_BLOCK - 1
+
+
+def _uint(value: int) -> bytes:
+    return value.to_bytes(32, "big")
+
+
+class RedeemChain(FakeChain):
+    """Tokens that redeem: views answer from a table, redemptions move simulated balances.
+
+    `redeems` maps (token, selector) to (delivers, numerator, denominator); a
+    queued redemption reports its amount and delivers nothing.
+    """
+
+    def __init__(self, *, views: dict, redeems: dict, balances: dict, pool: str | None = None,
+                 pool_balances: tuple[int, ...] = (), queued: tuple[str, ...] = ()) -> None:
+        super().__init__()
+        self.views, self.redeems, self.balances = views, redeems, balances
+        self.pool, self.pool_balances, self.queued = pool, pool_balances, queued
+        self.simulated: list[int] = []
+
+    def call(self, to: str, data: bytes, block_hash: str) -> bytes:
+        selector, args = data[:4], data[4:]
+        if self.pool and to == CONFIG.curve_meta_registry and selector == POOL_FROM_LP_SELECTOR:
+            return encode_address(self.pool)
+        if to == self.pool and selector == COINS_SELECTORS[0]:
+            index = decode(["uint256"], args)[0]
+            if index >= len(self.pool_balances):
+                raise ReplayFailed("reverted", "no such coin")
+            return encode_address((IBT, PT)[index])
+        if to == self.pool and selector == WITHDRAW_SELECTORS[0]:
+            amount, _index = decode(["uint256", "uint256"], args)
+            return _uint(amount * 9 // 10)  # one coin alone pays a tenth less than its share
+        if to == self.pool and selector == BALANCES_SELECTORS[0]:
+            return _uint(self.pool_balances[decode(["uint256"], args)[0]])
+        if (to, selector) in self.views:
+            value = self.views[(to, selector)]
+            return encode_address(value) if isinstance(value, str) else _uint(value)
+        if to == CONFIG.curve_router and decode(GET_DY_TYPES, data[4:])[0][0] == UNDERLYING:
+            return _uint(decode(GET_DY_TYPES, data[4:])[2] // 10**12)
+        if to != CONFIG.curve_router and to != CONFIG.crvusd_price_aggregator:
+            raise ReplayFailed("reverted", "no such function")
+        return super().call(to, data, block_hash)
+
+    def simulate(self, calls, block_hash):
+        self.simulated.append(int(block_hash, 16))
+        balances = dict(self.balances)
+        results = []
+        for sender, to, data in calls:
+            selector, args = data[:4], data[4:]
+            if selector == BALANCE_OF_SELECTOR:
+                results.append(_uint(balances.get((to, decode(["address"], args)[0]), 0)))
+                continue
+            if (to, selector) not in self.redeems:
+                results.append(None)
+                continue
+            amount, receiver, owner = decode(["uint256", "address", "address"], args)
+            delivers, numerator, denominator = self.redeems[(to, selector)]
+            if sender != owner or balances.get((to, owner), 0) < amount:
+                results.append(None)
+                continue
+            balances[(to, owner)] -= amount
+            out = amount * numerator // denominator
+            if to not in self.queued:
+                balances[(delivers, receiver)] = balances.get((delivers, receiver), 0) + out
+            results.append(_uint(out))
+        return results
+
+
+def _spectra_chain(*, matured: bool = True, queued: tuple[str, ...] = ()) -> RedeemChain:
+    """The lot is the LP of a pool holding 1000 IBT and 1000 PT, with 1000 LP in all."""
+    return RedeemChain(
+        pool=LP_POOL, pool_balances=(1000 * ETHER, 1000 * ETHER), queued=queued,
+        views={(DEFAULT_FROM_TOKEN, TOTAL_SUPPLY_SELECTOR): 1000 * ETHER,
+               (IBT, ASSET_SELECTOR): UNDERLYING,
+               (PT, MATURITY_SELECTOR): REPLAY_TIME - (1 if matured else -1),
+               (PT, UNDERLYING_SELECTOR): UNDERLYING, (PT, GET_IBT_SELECTOR): IBT},
+        redeems={(IBT, REDEEM_SELECTOR): (UNDERLYING, 2, 1), (PT, REDEEM_SELECTOR): (UNDERLYING, 1, 1),
+                 (PT, REDEEM_FOR_IBT_SELECTOR): (IBT, 1, 2)},
+        balances={(IBT, LP_POOL): 1000 * ETHER, (PT, LP_POOL): 1000 * ETHER, (UNDERLYING, LP_POOL): 5 * ETHER},
+    )
+
+
+def _no_routes(*tokens: str) -> FakeClient:
+    return FakeClient(failures={token: "NO_ROUTE" for token in (DEFAULT_FROM_TOKEN, *tokens)})
+
+
+def test_a_principal_token_pool_lot_is_withdrawn_and_redeemed_at_the_block(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "spectra.sqlite3")
+    chain = _spectra_chain()
+
+    summary = _replay(writer, client=_no_routes(IBT, PT), chain=chain)
+
+    assert summary["take_quote"] == {"fresh": 1, "failed": 0, "deferred": 0}
+    assert TAKE_BLOCK - 1 in chain.simulated
+    # 200 of 1000 LP withdraws in proportion into 200 IBT and 200 PT, redeemed
+    # into 400 and 200 UNDERLYING: 600 WANT. One coin alone fetches at most 360.
+    take = writer.fetchone("SELECT market_quote_out_raw, auction_profit_raw FROM take_pricing")
+    assert take["market_quote_out_raw"] == str(600 * ONE_USDC)
+    assert take["auction_profit_raw"] == str(150 * ONE_USDC - 600 * ONE_USDC)
+    fact = writer.fetchone("SELECT aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    detail = json.loads(fact["aggregate_response_json"])
+    assert (detail["method"], detail["pool"]) == ("withdraw_balanced", LP_POOL)
+    assert [(leg["coin"], [step["kind"] for step in leg["redemptions"]]) for leg in detail["legs"]] == [
+        (IBT, ["erc4626_redeem"]), (PT, ["pt_redeem"])]
+    assert detail["probe"]["amount_out"] == str(6 * ONE_USDC)
+
+
+@pytest.mark.parametrize(("matured", "queued", "expected"), [
+    (True, (IBT,), ("withdraw_one_coin", 180)),  # a vault that queues delivers nothing: only the PT redeems
+    (False, (), ("withdraw_one_coin", 360)),  # before maturity a PT has no redemption, and no route
+    (False, (IBT,), None),  # nothing redeems: no exit at all
+])
+def test_a_redemption_counts_for_what_it_delivers(tmp_path, matured, queued, expected):
+    writer, _ = _seed_pricing_db(tmp_path / "delivered.sqlite3")
+
+    _replay(writer, client=_no_routes(IBT, PT), chain=_spectra_chain(matured=matured, queued=queued))
+
+    fact = writer.fetchone("SELECT id, capture_state, aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    take = writer.fetchone("SELECT market_quote_out_raw FROM take_pricing")
+    if expected is None:
+        assert fact["capture_state"] == "failed"
+        error = writer.fetchone("SELECT error_code, error_message FROM pricing_quote_provider_facts WHERE quote_fact_id = ?", (fact["id"],))
+        assert error["error_code"] == "no_route" and "sold or redeemed" in error["error_message"]
+        assert take["market_quote_out_raw"] is None
+        return
+    method, want = expected
+    assert json.loads(fact["aggregate_response_json"])["method"] == method
+    assert take["market_quote_out_raw"] == str(want * ONE_USDC)
+
+
+def test_a_redeemable_lot_is_redeemed_by_the_auction_holding_it(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "held.sqlite3")
+    # The lot is a matured principal token whose redeem reverts, as a Spectra PT
+    # over a wrapper does; it redeems for the wrapper instead, which unwraps.
+    chain = RedeemChain(
+        views={(DEFAULT_FROM_TOKEN, MATURITY_SELECTOR): REPLAY_TIME - 1,
+               (DEFAULT_FROM_TOKEN, UNDERLYING_SELECTOR): UNDERLYING, (DEFAULT_FROM_TOKEN, GET_IBT_SELECTOR): WRAPPER,
+               (WRAPPER, VAULT_SHARE_SELECTOR): UNDERLYING},
+        redeems={(DEFAULT_FROM_TOKEN, REDEEM_FOR_IBT_SELECTOR): (WRAPPER, 1, 1), (WRAPPER, UNWRAP_SELECTOR): (UNDERLYING, 3, 2)},
+        balances={(DEFAULT_FROM_TOKEN, DEFAULT_AUCTION): 1000 * ETHER},
+    )
+
+    _replay(writer, client=_no_routes(WRAPPER), chain=chain)
+
+    take = writer.fetchone("SELECT market_quote_out_raw FROM take_pricing")
+    assert take["market_quote_out_raw"] == str(300 * ONE_USDC)  # 200 PT -> 200 wrapper -> 300 UNDERLYING
+    fact = writer.fetchone("SELECT aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    detail = json.loads(fact["aggregate_response_json"])
+    assert (detail["method"], detail["holder"]) == ("redeem", DEFAULT_AUCTION)
+    assert [step["kind"] for step in detail["redemptions"]] == ["pt_redeem_for_ibt", "unwrap"]
 
 
 def test_window_open_block_is_the_last_block_before_it():

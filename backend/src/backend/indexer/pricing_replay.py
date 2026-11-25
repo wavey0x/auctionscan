@@ -7,6 +7,16 @@ provider for its route today, evaluates that route with Curve Router NG's
 crvUSD's USD price aggregator at the same block. Only the route is found now;
 every amount comes from the chain as it stood when the event happened.
 
+A lot Curve cannot route may still have an exit through tokens it can. An LP
+lot is withdrawn from its pool, into one coin or into all of them in
+proportion. A token with no route of its own is redeemed: a matured principal
+token for its underlying or its yield-bearing token, a Spectra wrapper for the
+token it wraps, an ERC-4626 vault share for its asset. A redemption counts for
+what it delivers, not what a view promises: it is simulated with
+`eth_simulateV1` as the holder that has the tokens at the block (the pool,
+or the auction holding the lot), and the holder's balance is read before and
+after. A redemption that reverts, queues or delivers nothing is no exit.
+
 Replays are stored as ordinary pricing facts with capture_origin
 'block_replay' and provider 'curve'. They are 'fresh' because they describe
 the event's own block, so projections select them like a live quote, after
@@ -67,6 +77,20 @@ MINTER_SELECTOR = keccak(text="minter()")[:4]
 COINS_SELECTORS = (keccak(text="coins(uint256)")[:4], keccak(text="coins(int128)")[:4])
 WITHDRAW_SELECTORS = (keccak(text="calc_withdraw_one_coin(uint256,uint256)")[:4],
                       keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4])
+BALANCES_SELECTORS = (keccak(text="balances(uint256)")[:4], keccak(text="balances(int128)")[:4])
+TOTAL_SUPPLY_SELECTOR = keccak(text="totalSupply()")[:4]
+BALANCE_OF_SELECTOR = keccak(text="balanceOf(address)")[:4]
+# Redemptions all take (amount, receiver, owner); what each delivers is named by a view.
+REDEEM_SELECTOR = keccak(text="redeem(uint256,address,address)")[:4]
+REDEEM_FOR_IBT_SELECTOR = keccak(text="redeemForIBT(uint256,address,address)")[:4]
+UNWRAP_SELECTOR = keccak(text="unwrap(uint256,address,address)")[:4]
+MATURITY_SELECTOR = keccak(text="maturity()")[:4]
+UNDERLYING_SELECTOR = keccak(text="underlying()")[:4]
+GET_IBT_SELECTOR = keccak(text="getIBT()")[:4]
+VAULT_SHARE_SELECTOR = keccak(text="vaultShare()")[:4]
+ASSET_SELECTOR = keccak(text="asset()")[:4]
+# A matured principal token redeems into a vault share, which redeems in turn.
+MAX_REDEMPTIONS = 2
 
 
 class ReplayFailed(Exception):
@@ -81,6 +105,10 @@ class BlockReads(Protocol):
     def header(self, number: int) -> tuple[str, int]: ...
 
     def call(self, to: str, data: bytes, block_hash: str) -> bytes: ...
+
+    def simulate(self, calls: list[tuple[str, str, bytes]], block_hash: str) -> list[bytes | None]:
+        """(sender, to, data) calls in sequence on the block's state; None for a call that reverts."""
+        ...
 
 
 class Web3BlockReads:
@@ -109,6 +137,19 @@ class Web3BlockReads:
             ))
         except ContractLogicError as exc:
             raise ReplayFailed("reverted", str(exc)) from exc
+
+    def simulate(self, calls: list[tuple[str, str, bytes]], block_hash: str) -> list[bytes | None]:
+        payload = {"blockStateCalls": [{"calls": [
+            {"from": Web3.to_checksum_address(sender), "to": Web3.to_checksum_address(to), "data": Web3.to_hex(data)}
+            for sender, to, data in calls
+        ]}], "validation": False}
+        response = self._w3().provider.make_request("eth_simulateV1", [payload, {"blockHash": block_hash, "requireCanonical": True}])
+        if "error" in response:
+            raise RuntimeError(f"eth_simulateV1 failed: {response['error']}")
+        results = response["result"][0]["calls"]
+        if len(results) != len(calls):
+            raise RuntimeError("eth_simulateV1 returned a different number of calls")
+        return [bytes.fromhex(result["returnData"][2:]) if result.get("status") == "0x1" else None for result in results]
 
 
 @dataclass(frozen=True)
@@ -308,6 +349,39 @@ class LpPool:
     pool: str
     coins: tuple[str, ...]
     withdraw_selector: bytes
+    balances_selector: bytes
+
+
+@dataclass(frozen=True)
+class Redemption:
+    """One way to redeem a token: the call, and the token it delivers."""
+
+    kind: str  # "pt_redeem", "pt_redeem_for_ibt", "unwrap" or "erc4626_redeem"
+    token: str
+    delivers: str
+    selector: bytes
+
+    def call(self, amount: int, holder: str) -> tuple[str, str, bytes]:
+        return holder, self.token, self.selector + encode(["uint256", "address", "address"], [amount, holder, holder])
+
+    def describe(self) -> dict[str, str]:
+        return {"kind": self.kind, "token": self.token, "delivers": self.delivers}
+
+
+# A token's redemptions, if it has any: the call, the view naming what it delivers, the kind.
+PRINCIPAL_REDEMPTIONS = ((REDEEM_SELECTOR, UNDERLYING_SELECTOR, "pt_redeem"),
+                         (REDEEM_FOR_IBT_SELECTOR, GET_IBT_SELECTOR, "pt_redeem_for_ibt"))
+SHARE_REDEMPTIONS = ((UNWRAP_SELECTOR, VAULT_SHARE_SELECTOR, "unwrap"),
+                     (REDEEM_SELECTOR, ASSET_SELECTOR, "erc4626_redeem"))
+
+
+@dataclass(frozen=True)
+class Exit:
+    """The want a lot or coin amount fetches, and how to evaluate the same path for another amount."""
+
+    out: int
+    value_of: Callable[[int], int]
+    detail: dict[str, Any]
 
 
 def _iso_now() -> str:
@@ -328,6 +402,8 @@ class Replayer:
         self._crvusd_prices: dict[str, int] = {}
         self._coin_routes: dict[tuple[str, str], dict[str, Any] | None] = {}
         self._pools: dict[str, LpPool | None] = {}
+        self._redemption_options: dict[tuple[str, str], list[Redemption]] = {}
+        self._redeemed_amounts: dict[tuple[tuple[Redemption, ...], int, str, str], int] = {}
 
     def header(self, number: int) -> tuple[str, int]:
         with self._lock:
@@ -390,7 +466,7 @@ class Replayer:
         candidates.append(token)
         found = None
         for pool in candidates:
-            for coins_selector, withdraw_selector in zip(COINS_SELECTORS, WITHDRAW_SELECTORS):
+            for coins_selector, withdraw_selector, balances_selector in zip(COINS_SELECTORS, WITHDRAW_SELECTORS, BALANCES_SELECTORS):
                 coins = []
                 for index in range(8):
                     result = self._call(pool, coins_selector + _word(index), block_hash)
@@ -398,7 +474,8 @@ class Replayer:
                         break
                     coins.append(_address(result, what="coin"))
                 if len(coins) >= 2:
-                    found = LpPool(pool=pool, coins=tuple(coins), withdraw_selector=withdraw_selector)
+                    found = LpPool(pool=pool, coins=tuple(coins), withdraw_selector=withdraw_selector,
+                                   balances_selector=balances_selector)
                     break
             if found:
                 break
@@ -419,27 +496,101 @@ class Replayer:
             self._coin_routes[key] = route
         return route
 
-    def _coin_value(self, coin: str, want: str, amount: int, block_hash: str) -> tuple[Callable[[int], int], dict[str, Any]] | None:
-        """How much want a coin amount fetches at the block: itself, or along today's route.
+    def _redemptions(self, token: str, block_hash: str, timestamp: int) -> list[Redemption]:
+        """How a token redeems at the block: a matured principal token, a wrapper or a vault share."""
+        key = (token, block_hash)
+        with self._lock:
+            if key in self._redemption_options:
+                return self._redemption_options[key]
+        maturity = self._call(token, MATURITY_SELECTOR, block_hash)
+        if maturity is None:
+            ways = SHARE_REDEMPTIONS
+        else:
+            # Before maturity a principal token's market is its pool, not its redemption.
+            ways = PRINCIPAL_REDEMPTIONS if _uint(maturity, what="maturity") <= timestamp else ()
+        found = []
+        for selector, delivers_selector, kind in ways:
+            result = self._call(token, delivers_selector, block_hash)
+            if result is not None and (delivers := _address(result, what=kind)) not in (ZERO_ADDRESS, token):
+                found.append(Redemption(kind=kind, token=token, delivers=delivers, selector=selector))
+        with self._lock:
+            self._redemption_options[key] = found
+        return found
 
-        A vault coin's redemption value is not used: previewRedeem is book
-        value, and a vault can queue, cap or impair redemptions a taker needs.
+    def _redeemed(self, steps: tuple[Redemption, ...], amount: int, holder: str, block_hash: str) -> int:
+        """What the last of the steps delivers to the holder, each redeeming what the one before delivered.
+
+        Simulated on the block's state with the holder's balance read on either
+        side, so a redemption that queues or pays less than it reports counts
+        for what arrives.
+        """
+        key = (steps, amount, holder, block_hash)
+        with self._lock:
+            cached = self._redeemed_amounts.get(key)
+        if cached is not None:
+            return cached
+        done: list[tuple[str, str, bytes]] = []
+        value = amount
+        for step in steps:
+            balance = (holder, step.delivers, BALANCE_OF_SELECTOR + _word(holder))
+            results = self.reads.simulate([*done, balance, step.call(value, holder), balance], block_hash)
+            if any(result is None for result in results):
+                raise ReplayFailed("reverted", f"{step.kind} of {step.token} reverts at this block")
+            delivered = _uint(results[-1], what=step.delivers) - _uint(results[-3], what=step.delivers)
+            if delivered <= 0:
+                raise ReplayFailed("no_redemption", f"{step.kind} of {step.token} delivers nothing at this block")
+            done.append(step.call(value, holder))
+            value = delivered
+        with self._lock:
+            self._redeemed_amounts[key] = value
+        return value
+
+    def _coin_exit(self, coin: str, want: str, amount: int, *, holder: str, block_hash: str, timestamp: int,
+                   steps: tuple[Redemption, ...] = (), start: int | None = None) -> Exit | None:
+        """The most want a coin amount fetches: itself, along today's route, or redeemed.
+
+        `steps` are the redemptions that turned `start` of the first token into
+        `amount` of this coin; the exit's value_of takes an amount of that first token.
         """
         coin = WETH if coin == ETH else coin
+        final: Callable[[int], int] | None = None
+        detail: dict[str, Any] = {}
         if coin == want:
-            return (lambda value: value), {"coin": coin}
-        route = self._coin_route(coin, want, amount)
-        if route is None:
-            return None
-        return (lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)), {
-            "coin": coin, "route": route}
+            final = lambda value: value  # noqa: E731
+        elif (route := self._coin_route(coin, want, amount)) is not None:
+            final = lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)  # noqa: E731
+            detail["route"] = route
+        if final is None:
+            return self._redeemed_exit(coin, want, amount, holder=holder, block_hash=block_hash, timestamp=timestamp,
+                                       steps=steps, start=start)
+        if not steps:
+            return Exit(out=final(amount), value_of=final, detail=detail)
+        detail["redemptions"] = [step.describe() for step in steps]
+        return Exit(out=final(amount), detail=detail,
+                    value_of=lambda value: final(self._redeemed(steps, value, holder, block_hash)))
 
-    def _withdraw_path(self, target: ReplayTarget, *, amount: int, block_hash: str) -> tuple[Callable[[int], int], dict[str, Any]]:
-        """An LP lot withdrawn into whichever of its pool's coins fetches the most want."""
-        lp = self._lp_pool(target.from_token, block_hash)
-        if lp is None:
-            raise ReplayFailed("no_route", "not a Curve LP token")
-        best: tuple[int, Callable[[int], int], dict[str, Any]] | None = None
+    def _redeemed_exit(self, token: str, want: str, amount: int, *, holder: str, block_hash: str, timestamp: int,
+                       steps: tuple[Redemption, ...] = (), start: int | None = None) -> Exit | None:
+        """The best exit through redeeming the token, if it redeems at the block."""
+        start = amount if start is None else start
+        if len(steps) >= MAX_REDEMPTIONS:
+            return None
+        best: Exit | None = None
+        for step in self._redemptions(token, block_hash, timestamp):
+            path = (*steps, step)
+            try:
+                delivered = self._redeemed(path, start, holder, block_hash)
+                found = self._coin_exit(step.delivers, want, delivered, holder=holder, block_hash=block_hash,
+                                        timestamp=timestamp, steps=path, start=start)
+            except ReplayFailed:
+                continue
+            if found is not None and (best is None or found.out > best.out):
+                best = found
+        return best
+
+    def _withdraw_exits(self, target: ReplayTarget, lp: LpPool, *, amount: int, block_hash: str, timestamp: int) -> list[Exit]:
+        """An LP lot withdrawn into each of its pool's coins alone, and into all of them in proportion."""
+        exits = []
         for index, coin in enumerate(lp.coins):
             def withdraw(value: int, index: int = index) -> int:
                 result = self._call(lp.pool, lp.withdraw_selector + encode(["uint256", "uint256"], [value, index]), block_hash)
@@ -449,22 +600,70 @@ class Replayer:
 
             try:
                 withdrawn = withdraw(amount)
-                valued = self._coin_value(coin, target.want_token, withdrawn, block_hash) if withdrawn else None
-                if valued is None:
-                    continue
-                value_of, detail = valued
-                out = value_of(withdrawn)
+                found = self._coin_exit(coin, target.want_token, withdrawn, holder=lp.pool, block_hash=block_hash,
+                                        timestamp=timestamp) if withdrawn else None
             except ReplayFailed:
                 continue
-            if best is None or out > best[0]:
-                best = (out, lambda value, value_of=value_of, withdraw=withdraw: value_of(withdraw(value)),
-                        {"method": "withdraw_one_coin", "pool": lp.pool, "coin_index": index, **detail})
-        if best is None:
-            raise ReplayFailed("no_route", f"no coin of pool {lp.pool} reaches the want token")
-        return best[1], best[2]
+            if found is not None:
+                exits.append(Exit(
+                    out=found.out, value_of=lambda value, found=found, withdraw=withdraw: found.value_of(withdraw(value)),
+                    detail={"method": "withdraw_one_coin", "pool": lp.pool, "coin_index": index,
+                            "coin": WETH if coin == ETH else coin, **found.detail},
+                ))
+        try:
+            balanced = self._balanced_exit(target, lp, amount=amount, block_hash=block_hash, timestamp=timestamp)
+        except ReplayFailed:
+            balanced = None
+        if balanced is not None:
+            exits.append(balanced)
+        return exits
+
+    def _balanced_exit(self, target: ReplayTarget, lp: LpPool, *, amount: int, block_hash: str, timestamp: int) -> Exit | None:
+        """The lot withdrawn in proportion to the pool's balances, which costs no fee; every coin must have an exit."""
+        supply = self._call(target.from_token, TOTAL_SUPPLY_SELECTOR, block_hash)
+        if supply is None or not (supply := _uint(supply, what="LP supply")):
+            return None
+        legs = []
+        for index, coin in enumerate(lp.coins):
+            balance = self._call(lp.pool, lp.balances_selector + encode(["uint256"], [index]), block_hash)
+            if balance is None:
+                return None
+            balance = _uint(balance, what="pool balance")
+            if not (share := balance * amount // supply):
+                continue
+            found = self._coin_exit(coin, target.want_token, share, holder=lp.pool, block_hash=block_hash, timestamp=timestamp)
+            if found is None:
+                return None
+            legs.append((index, coin, balance, found))
+        if not legs:
+            return None
+        return Exit(
+            out=sum(found.out for *_, found in legs),
+            value_of=lambda value: sum(found.value_of(balance * value // supply) for _, _, balance, found in legs),
+            detail={"method": "withdraw_balanced", "pool": lp.pool, "legs": [
+                {"coin_index": index, "coin": WETH if coin == ETH else coin, **found.detail} for index, coin, _, found in legs
+            ]},
+        )
+
+    def _fallback_exit(self, target: ReplayTarget, *, amount: int, block_hash: str, timestamp: int) -> Exit:
+        """The best exit for a lot Curve cannot route: withdrawn from its pool, or redeemed by the auction holding it."""
+        exits = []
+        lp = self._lp_pool(target.from_token, block_hash)
+        if lp is not None:
+            exits += self._withdraw_exits(target, lp, amount=amount, block_hash=block_hash, timestamp=timestamp)
+        redeemed = self._redeemed_exit(target.from_token, target.want_token, amount, holder=target.auction_address,
+                                       block_hash=block_hash, timestamp=timestamp)
+        if redeemed is not None:
+            exits.append(Exit(out=redeemed.out, value_of=redeemed.value_of,
+                              detail={"method": "redeem", "holder": target.auction_address, **redeemed.detail}))
+        if not exits:
+            if lp is None:
+                raise ReplayFailed("no_route", "not a Curve LP token, and nothing redeems it")
+            raise ReplayFailed("no_route", f"no coin of pool {lp.pool} reaches the want token, sold or redeemed")
+        return max(exits, key=lambda exit: exit.out)
 
     def quote(self, target: ReplayTarget, *, block: int, block_hash: str) -> Observation:
-        """Today's route for the lot at the block; an LP lot Curve cannot route is withdrawn into one coin."""
+        """Today's route for the lot at the block; a lot Curve cannot route is withdrawn or redeemed."""
         started = time.monotonic()
         payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "block_number": block, "block_hash": block_hash,
                                    "router": self.config.curve_router}
@@ -477,15 +676,17 @@ class Replayer:
 
                 def value_of(value: int) -> int:
                     return self._get_dy(route, token_in=target.from_token, token_out=target.want_token, amount=value, block_hash=block_hash)
+
+                amount_out = value_of(amount)
             except ReplayFailed as direct:
                 if direct.code not in ("no_route", "bad_route"):
                     raise
                 try:
-                    value_of, detail = self._withdraw_path(target, amount=amount, block_hash=block_hash)
+                    best = self._fallback_exit(target, amount=amount, block_hash=block_hash, timestamp=self.header(block)[1])
                 except ReplayFailed as fallback:
                     raise ReplayFailed(direct.code, f"{direct}; {fallback}") from fallback
-                payload.update(detail)
-            amount_out = value_of(amount)
+                payload.update(best.detail)
+                value_of, amount_out = best.value_of, best.out
             probe = amount // PROBE_DIVISOR
             if probe > 0:
                 probe_out = value_of(probe)

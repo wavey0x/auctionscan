@@ -87,13 +87,21 @@ Rules for this model:
   provider `curve`, `capture_state = 'fresh'` and zero lag, so projections
   select them after any live quote. A route must absorb the lot: if the lot
   fetches under half the price of a 1% slice at the same block (a crvUSD
-  LLAMMA hop holds only what its bands hold), there is no quote. An LP lot
-  with no single route (none at all, or Curve's multi-path route, which one
-  router call cannot express) is priced as withdrawn into whichever of its
-  pool's coins fetches the most at that block (`calc_withdraw_one_coin`) and
-  that coin's route. A coin with no route of its own does not count, vault
-  tokens included: `previewRedeem` is book value, not a sale. The pool is the
-  MetaRegistry's, else the LP's `minter()`, else the LP itself. A missing
+  LLAMMA hop holds only what its bands hold), there is no quote. A lot with
+  no single route (none at all, or Curve's multi-path route, which one router
+  call cannot express) takes its best exit at that block. An LP lot is
+  withdrawn from its pool, into one coin (`calc_withdraw_one_coin`) or into
+  every coin in proportion to the pool's balances; the pool is the
+  MetaRegistry's, else the LP's `minter()`, else the LP itself. A coin, or the
+  lot itself, with no route is redeemed, at most twice in a row: a matured
+  principal token (`redeem`, else `redeemForIBT`), a Spectra wrapper
+  (`unwrap`), an ERC-4626 share (`redeem`). A principal token before maturity
+  has no redemption. A redemption counts for what it delivers, never for
+  `previewRedeem`: `eth_simulateV1` runs it as the holder at that block (the
+  pool for its coins, the auction for its lot) between two reads of the
+  holder's balance, so one that reverts, queues or delivers nothing is no
+  exit. Atomic takers' own exits (withdraw, redeem, route to crvUSD in the
+  take transaction) are what these paths reproduce. A missing
   route, an unabsorbed lot or a reverted call is recorded as a failed replay
   and not retried unless `--retry-failed` asks again, adding a new attempt
   beside the old; network and provider errors leave no fact. The contracts

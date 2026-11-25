@@ -99,7 +99,7 @@ A filter offers only what is worth isolating, and only where there is a choice t
   dust that never sells, Expired outnumbers Sold. Settled is not a filter; those rounds stay in the
   unfiltered list.
 - **Protocol** (Yearn, Curve; URL `protocol`, API `protocol=all|yearn|curve`) follows. Curve has
-  one burner per chain selling every fee token, so its rows name the auction `Curve burner (0x…)`
+  one burner per chain selling every fee token, so its rows name the auction `Curve burner`
   rather than repeat one address.
 - **Chain** appears only once more than one chain is indexed.
 - The total is the pager's summary beneath the table, not a chip.
@@ -141,13 +141,19 @@ load only, so changing a filter never collapses the counts or swaps table geomet
   `col-xl` under 1040px, `col-md` under 860px, `col-lo` under 620px. Once a column is gone its
   meaning moves into the identity cell's `sub-line`; text that only belongs on phones goes in a
   `sub-lo` span. A round's takes add one tier, `col-xs` with `sub-xs`, under 440px.
-- Rounds keep Auction and PnL at every width (inside an auction, Round and PnL). Round, progress
-  and kick time go first, then status, lot and received, which move into the sub-line on phones.
+- Rounds keep Auction and PnL at every width (inside an auction, Round and PnL). Progress and kick
+  time go first, then status, lot and received, which move into the sub-line on phones.
+- The rounds list has no Round column. A Yearn auction counts its own kicks, so its row carries the
+  round as a quiet tag after the address (`0x4DCd…43Ef R66`). Curve's burner numbers every lot it
+  has ever staged in one run, across every token, so its rows carry no number: a lot is known by
+  its token. The number is still the round's name in the drawer and inside an auction.
+- Many burner tokens share a symbol (two dozen pool tokens are all `SPT-PT/IBT-f`), so a Curve lot
+  states its token's short address after the symbol, `SPT-PT/IBT-f (0xFE8a…)`, in the quiet figure
+  a named address uses. It gives way before the symbol when the cell is tight.
 - The rounds table holds its columns still (`rounds-table`, `table-layout: fixed`). Its header sizes
   every column but Lot and Received (`rcol-*`), which split what is left and clip at their column's
-  edge, so a filter, a page turn or a refresh never moves a column. Under 1200px the auction column
-  narrows and a named auction drops its short address; on phones the identity column takes the
-  width the dropped columns leave.
+  edge, so a filter, a page turn or a refresh never moves a column. On phones the identity column
+  takes the width the dropped columns leave.
 - Long token amounts clip inside `cell-clip` with an ellipsis; the full amount is on hover.
 - Headers are sticky, uppercase and flat.
 - Hover is `hover`; the open row is `selected` with a 2px accent edge on its first cell.

@@ -13,6 +13,10 @@ interface AddressValueProps {
   width?: number;
   label?: string | null;
   labelWidth?: number;
+  /** Show a named address by its name alone, without the short address after it. */
+  bareLabel?: boolean;
+  /** A quiet note after the value and before its actions, such as an auction's round. */
+  tag?: ReactNode;
   internalTo?: string | null;
   showExplorerIcon?: boolean;
   showTitle?: boolean;
@@ -31,6 +35,8 @@ export default function AddressValue({
   width = 6,
   label,
   labelWidth = 14,
+  bareLabel = false,
+  tag,
   internalTo,
   showExplorerIcon,
   showTitle = true,
@@ -44,7 +50,7 @@ export default function AddressValue({
   const { chain } = useChainInfo(chainId);
   const href = buildExplorerUrl(chain, "address", address);
   const displayLabel = label ? formatMiddleEllipsis(label, labelWidth, 6) : formatAddress(address, width);
-  const displayAddressSuffix = label && address ? `(${formatAddress(address, 6, 0)})` : null;
+  const displayAddressSuffix = label && address && !bareLabel ? `(${formatAddress(address, 6, 0)})` : null;
   const shouldShowExplorerIcon = showExplorerIcon ?? Boolean(internalTo);
   const title = showTitle ? (label?.trim() || address || undefined) : undefined;
   const textClassName = label
@@ -104,6 +110,7 @@ export default function AddressValue({
       ) : (
         <span className={staticClassName}>{content}</span>
       )}
+      {tag ? <span className="shrink-0 font-mono text-[11px] text-tertiary">{tag}</span> : null}
       {shouldShowExplorerIcon && href && address ? (
         <a
           href={href}

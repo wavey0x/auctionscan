@@ -18,7 +18,7 @@ import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { useRoundRows } from "../../../shared/lib/openRound";
 import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
-import { auctionLabel, parseProtocol, PROTOCOL_LABELS, PROTOCOLS, type Protocol } from "../../../shared/lib/protocol";
+import { auctionLabel, parseProtocol, PROTOCOL_LABELS, PROTOCOLS, roundNumberIsMeaningful, type Protocol } from "../../../shared/lib/protocol";
 import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 import type { RoundListItem, RoundStatusCounts } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
@@ -120,7 +120,7 @@ function RoundRow({
   rowProps: ReturnType<ReturnType<typeof useRoundRows<RoundListItem>>["rowProps"]>;
   progressMode: RoundProgressMiniMode;
   kickedMode: KickedDisplayMode;
-  /** Within one auction a row is identified by its round alone. */
+  /** Within one auction a row is identified by its round alone, and the auction column is dropped. */
   scoped: boolean;
 }) {
   const kicked = renderKickedValue(round.kicked_at, kickedMode);
@@ -135,20 +135,23 @@ function RoundRow({
           </div>
         </td>
       ) : (
-        <>
-          <td>
-            <span className="flex min-w-0 items-center gap-2.5">
-              <ChainIcon chainId={round.chain_id} />
-              <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} label={auctionLabel(round.protocol)} />
-            </span>
-            <div className="sub-line pl-[26px]">
-              R{round.round_id}
-              <span className="sub-lo">{` · ${statusLabel(round.status)} · ${lotSummary(round)}`}</span>
-              {` · ${renderKickedValue(round.kicked_at, "relative")}`}
-            </div>
-          </td>
-          <td className="col-md mono pr-3 text-secondary">R{round.round_id}</td>
-        </>
+        <td>
+          <span className="flex min-w-0 items-center gap-2.5">
+            <ChainIcon chainId={round.chain_id} />
+            {/* The round rides on its auction, where its number places it; a burner's lot is known by its token. */}
+            <AuctionAddressValue
+              address={round.auction_address}
+              chainId={round.chain_id}
+              label={auctionLabel(round.protocol)}
+              bareLabel
+              tag={roundNumberIsMeaningful(round.protocol) ? `R${round.round_id}` : null}
+            />
+          </span>
+          <div className="sub-line pl-[26px]">
+            <span className="sub-lo">{`${statusLabel(round.status)} · ${lotSummary(round)} · `}</span>
+            {renderKickedValue(round.kicked_at, "relative")}
+          </div>
+        </td>
       )}
       <td className="col-lo pr-4"><StatusBadge status={round.status} /></td>
       <td className="col-md pr-4">
@@ -250,7 +253,6 @@ export default function RoundsPage() {
   // The table takes the shape of the rows it is showing, so rows kept on screen
   // while an auction loads do not lose their auction column before they leave.
   const tableScoped = roundsQuery.data ? roundsQuery.data.scopeKey !== null : scope !== null;
-  const columnCount = tableScoped ? 8 : 9;
 
   useEffect(() => {
     if (!scopeKey && !scopeInvalid) lastListSearch = searchParams.toString();
@@ -341,12 +343,7 @@ export default function RoundsPage() {
                 <thead>
                   {/* The header sizes the columns (`rcol-*`); Lot and Received take what is left. */}
                   <tr>
-                    {tableScoped ? <th className="rcol-id">Round</th> : (
-                      <>
-                        <th className="rcol-auction">Auction</th>
-                        <th className="col-md rcol-round">Round</th>
-                      </>
-                    )}
+                    {tableScoped ? <th className="rcol-id">Round</th> : <th className="rcol-auction">Auction</th>}
                     <th className="col-lo rcol-status">Status</th>
                     <th className="col-md rcol-progress">
                       <button
@@ -376,19 +373,11 @@ export default function RoundsPage() {
                 </thead>
                 <tbody className={cn(roundsQuery.isPlaceholderData && "is-stale")}>
                   {roundsQuery.isLoading ? (
-                    tableScoped ? (
-                      <SkeletonRows
-                        rows={12}
-                        widths={[36, 52, 104, 120, 120, 64, 44, null]}
-                        classNames={[undefined, "col-lo", "col-md", "col-lo", "col-lo", "num", "col-md num", "open-cell"]}
-                      />
-                    ) : (
-                      <SkeletonRows
-                        rows={12}
-                        widths={[150, 28, 52, 104, 120, 120, 64, 44, null]}
-                        classNames={[undefined, "col-md", "col-lo", "col-md", "col-lo", "col-lo", "num", "col-md num", "open-cell"]}
-                      />
-                    )
+                    <SkeletonRows
+                      rows={12}
+                      widths={[tableScoped ? 36 : 150, 52, 104, 120, 120, 64, 44, null]}
+                      classNames={[undefined, "col-lo", "col-md", "col-lo", "col-lo", "num", "col-md num", "open-cell"]}
+                    />
                   ) : rounds?.length ? (
                     rounds.map((round) => (
                       <RoundRow
@@ -402,7 +391,7 @@ export default function RoundsPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={columnCount}>
+                      <td colSpan={8}>
                         <EmptyState
                           title="No rounds found"
                           description={scope ? "Clear the status or the token filter to see all of this auction's rounds." : "Clear a status, or widen the token filter."}

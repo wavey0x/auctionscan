@@ -72,3 +72,26 @@ it("narrows by protocol and names Curve's burner in its rows", async () => {
   // An upcoming round's window opens later.
   expect(rows.getAllByText(/^in \d+/).length).toBeGreaterThan(0);
 });
+
+it("has no round column: a Yearn row carries its round on its auction, a burner's lot its token", async () => {
+  const yearn: RoundListItem = { ...upcoming, auction_address: `0x${"a".repeat(40)}`, round_id: 66, protocol: "yearn", version: "1.0.4",
+    occurrence: { ...upcoming.occurrence, log_index: 5 } };
+  vi.mocked(api.getRounds).mockResolvedValue({
+    as_of: {}, rounds: [upcoming, yearn], total: 1, status_counts: counts, page: 1, per_page: 20, has_next: false,
+  });
+  await mount();
+  const table = screen.getByRole("region", { name: "Rounds" });
+  expect(within(table).getAllByRole("columnheader").map((header) => header.textContent))
+    .toEqual(["Auction", "Status", "Progress time", "Lot", "Received", "PnL", "Kicked", "Open"]);
+
+  const [burnerRow, yearnRow] = within(table).getAllByRole("row").slice(1);
+  // The burner counts every lot it ever staged in one run, so its number places nothing.
+  expect(within(burnerRow).queryByText("R12")).toBeNull();
+  expect(within(burnerRow).getByText("Curve burner")).toBeTruthy();
+  expect(within(burnerRow).queryByText(/\(0xc014/i)).toBeNull();
+  // Many burner tokens share a symbol, so the lot says which token it is.
+  expect(within(burnerRow).getByText(/^\(0xdddd…\)$/i)).toBeTruthy();
+
+  expect(within(yearnRow).getByText("R66")).toBeTruthy();
+  expect(within(yearnRow).queryByText(/^\(0xdddd…\)$/i)).toBeNull();
+});

@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { cn } from "../lib/format";
 import AddressValue from "./AddressValue";
 import { useTableHover } from "./TableHoverContext";
@@ -10,6 +12,10 @@ interface AuctionAddressValueProps {
   showCowExplorerIcon?: boolean;
   /** A name shown before the short address, for an auction known by name. */
   label?: string | null;
+  /** Show a named auction by its name alone. */
+  bareLabel?: boolean;
+  /** A quiet note after the address, such as the round a row is about. */
+  tag?: ReactNode;
 }
 
 function buildCowExplorerUrl(address?: string | null) {
@@ -26,6 +32,8 @@ export default function AuctionAddressValue({
   width = 6,
   showCowExplorerIcon = false,
   label,
+  bareLabel,
+  tag,
 }: AuctionAddressValueProps) {
   const hover = useTableHover("auction", address);
   const internalTo =
@@ -46,6 +54,8 @@ export default function AuctionAddressValue({
       )}
       width={width}
       label={label}
+      bareLabel={bareLabel}
+      tag={tag}
       internalTo={internalTo}
       showExplorerIcon
       trailingActions={

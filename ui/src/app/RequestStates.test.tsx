@@ -99,20 +99,20 @@ it("keeps round counts and rows in place while an uncached status loads", async 
   await screen.findByText("1 matching rounds");
   expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(false);
   const initialChips = statusChips().map((chip) => chip.textContent);
-  const row = screen.getByRole("cell", { name: "R7" }).closest("tr");
+  const row = screen.getByText("R7").closest("tr");
   let resolve!: (value: typeof roundList) => void;
   vi.mocked(api.getRounds).mockImplementation(() => new Promise((done) => { resolve = done; }));
 
   fireEvent.click(statusChip(/^Live/));
   await screen.findByRole("status", { name: "Updating rounds" });
   expect(statusChips().map((chip) => chip.textContent)).toEqual(initialChips);
-  expect(screen.getByRole("cell", { name: "R7" }).closest("tr")).toBe(row);
+  expect(screen.getByText("R7").closest("tr")).toBe(row);
   expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("true");
   expect(screen.queryByText("No rounds found")).toBeNull();
   expect(screen.getByRole("button", { name: "Next page" }).hasAttribute("disabled")).toBe(true);
 
   // A row that is about to be replaced opens nothing, by keyboard or by pointer.
-  const stale = screen.getByRole("cell", { name: "R7" }).closest("tr")!;
+  const stale = screen.getByText("R7").closest("tr")!;
   expect(stale.getAttribute("aria-disabled")).toBe("true");
   expect(stale.tabIndex).toBe(-1);
   fireEvent.keyDown(stale, { key: "Enter" });
@@ -132,7 +132,7 @@ it("reports a failed status switch instead of presenting previous rows as matchi
   vi.mocked(api.getRounds).mockRejectedValue(new Error("offline"));
   fireEvent.click(statusChip(/^Live/));
   await screen.findByText("Unable to load rounds.");
-  expect(screen.queryByRole("cell", { name: "R7" })).toBeNull();
+  expect(screen.queryByText("R7")).toBeNull();
   expect(screen.queryByText("No rounds found")).toBeNull();
 
   vi.mocked(api.getRounds).mockResolvedValue({ ...roundList, rounds: [], total: 0 });

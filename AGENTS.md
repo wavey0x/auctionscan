@@ -174,9 +174,9 @@ carries their values and invalid input returns 422 rather than silently
 falling back. `status` accepts the stored round statuses only (`all`,
 `scheduled`, `live`, `sold_out`, `expired`, `settled`); there are no alias
 spellings. `protocol` (`all`, `yearn`, `curve`) is resolved to contract
-versions, not stored. The UI's status chips offer only Upcoming
-(`scheduled`), Live and Expired; the list without a status chip is all
-rounds.
+versions, not stored. The UI's status chips offer Upcoming (`scheduled`),
+Live, Sold (`sold_out`) and Expired; the list without a status chip is all
+rounds, settled ones included.
 
 Address policy:
 

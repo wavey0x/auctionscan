@@ -40,10 +40,11 @@ const PAGE_SIZE = 20;
 
 /**
  * The states worth isolating from the list: what is about to open, what is
- * open now, and what failed to clear. A sold or settled round is the normal
- * outcome, which is the list itself.
+ * open now, what cleared and what failed to. Together their counts account for
+ * the list, so no one of them reads as its total; a settled round stays in the
+ * unfiltered list.
  */
-const STATUS_CHIPS = ["scheduled", "live", "expired"] as const;
+const STATUS_CHIPS = ["scheduled", "live", "sold_out", "expired"] as const;
 type RoundStatusFilter = "all" | (typeof STATUS_CHIPS)[number];
 
 function parseRoundStatus(value: string | null): RoundStatusFilter {

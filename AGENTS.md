@@ -98,8 +98,12 @@ Rules for this model:
   pool's balances; the pool is the MetaRegistry's, else the LP's `minter()`,
   else the LP itself. A coin, or the lot itself, is also redeemed, at most
   twice in a row: a matured principal token (`redeem`, else `redeemForIBT`),
-  a Spectra wrapper (`unwrap`), an ERC-4626 share (`redeem`). A principal
-  token before maturity has no redemption. A redemption counts for what it
+  a Spectra wrapper (`unwrap`), an ERC-4626 share (`redeem`), a share of an
+  older vault (`withdraw`, for the asset its `token()` names: iearn's yTokens
+  and Yearn's v2). A principal token before maturity has no redemption. An
+  LP lot is withdrawn whatever becomes of its own route: asked to route some
+  LP tokens, Curve's API answers with an error every time, and that only
+  defers a lot that is no LP token. A redemption counts for what it
   delivers, never for `previewRedeem`: `eth_simulateV1` runs it as the holder
   at that block (the pool for its coins, the auction for its lot) between two
   reads of the holder's balance, so one that reverts, queues or delivers

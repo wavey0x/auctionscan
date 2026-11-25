@@ -25,10 +25,12 @@ from backend.indexer.pricing_replay import (
     PRICE_SELECTOR,
     REDEEM_FOR_IBT_SELECTOR,
     REDEEM_SELECTOR,
+    TOKEN_SELECTOR,
     TOTAL_SUPPLY_SELECTOR,
     UNDERLYING_SELECTOR,
     UNWRAP_SELECTOR,
     VAULT_SHARE_SELECTOR,
+    VAULT_WITHDRAW_SELECTOR,
     WITHDRAW_SELECTORS,
     ReplayCapture,
     Replayer,
@@ -307,7 +309,10 @@ class RedeemChain(FakeChain):
             if (to, selector) not in self.redeems:
                 results.append(None)
                 continue
-            amount, receiver, owner = decode(["uint256", "address", "address"], args)
+            if selector == VAULT_WITHDRAW_SELECTOR:
+                amount, receiver, owner = decode(["uint256"], args)[0], sender, sender  # an older vault pays its caller
+            else:
+                amount, receiver, owner = decode(["uint256", "address", "address"], args)
             delivers, numerator, denominator = self.redeems[(to, selector)]
             if sender != owner or balances.get((to, owner), 0) < amount:
                 results.append(None)
@@ -713,6 +718,41 @@ def test_a_coin_is_routed_for_about_its_own_size():
     for amount in (10 * ETHER, 12 * ETHER, 10_000 * ETHER, 11_000 * ETHER):
         replayer._coin_route(COIN, DEFAULT_WANT_TOKEN, amount)
     assert [request[2] for request in client.requests] == [str(10 * ETHER), str(10_000 * ETHER)]
+
+
+def test_an_older_vault_share_is_withdrawn_for_the_asset_it_names(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "ytoken.sqlite3")
+    # An iearn yToken or a Yearn v2 share: no asset() and no redeem, but token() and withdraw(shares).
+    chain = RedeemChain(
+        views={(DEFAULT_FROM_TOKEN, TOKEN_SELECTOR): UNDERLYING},
+        redeems={(DEFAULT_FROM_TOKEN, VAULT_WITHDRAW_SELECTOR): (UNDERLYING, 3, 2)},
+        balances={(DEFAULT_FROM_TOKEN, DEFAULT_AUCTION): 1000 * ETHER},
+    )
+
+    _replay(writer, client=_no_routes(), chain=chain)
+
+    assert _take_quote(writer)["market_quote_out_raw"] == str(300 * ONE_USDC)  # 200 shares -> 300 UNDERLYING
+    fact = writer.fetchone("SELECT aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take'")
+    detail = json.loads(fact["aggregate_response_json"])
+    assert (detail["method"], [step["kind"] for step in detail["redemptions"]]) == ("redeem", ["vault_withdraw"])
+
+
+@pytest.mark.parametrize(("error", "priced"), [
+    (PricesApiError("Curve provider upstream_http: Curve returned 500"), True),  # Curve cannot answer for the LP token: withdraw it
+    (PricesApiRateLimitError("prices API rate limit exceeded"), False),  # asked too fast: that is about us, so wait
+])
+def test_an_lp_lot_is_withdrawn_when_curve_cannot_answer_for_its_own_route(tmp_path, error, priced):
+    writer, _ = _seed_pricing_db(tmp_path / "lp_error.sqlite3")
+    client = FakeClient(failures={DEFAULT_FROM_TOKEN: error, VAULT: "NO_ROUTE"})
+
+    summary = _replay(writer, client=client, chain=LpChain())
+
+    assert summary["take_quote"] == {"fresh": int(priced), "failed": 0, "deferred": int(not priced)}
+    if priced:
+        assert _take_quote(writer)["market_quote_out_raw"] == str(200 * ONE_USDC)  # withdrawn into COIN, as without the error
+    # A lot that is no LP token still waits for Curve to answer.
+    writer, _ = _seed_pricing_db(tmp_path / "plain_error.sqlite3")
+    assert _replay(writer, client=client)["take_quote"] == {"fresh": 0, "failed": 0, "deferred": 1}
 
 
 def test_window_open_block_is_the_last_block_before_it():

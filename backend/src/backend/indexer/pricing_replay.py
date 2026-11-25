@@ -12,8 +12,9 @@ been: the route is one exit among others, because a thin pool can pay far less
 for a lot than its other exits do. An LP lot is also withdrawn from its pool,
 into one coin or into all of them in proportion. A token that redeems is also
 redeemed: a matured principal token for its underlying or its yield-bearing
-token, a Spectra wrapper for the token it wraps, an ERC-4626 vault share for
-its asset. A redemption counts for what it delivers, not what a view promises:
+token, a Spectra wrapper for the token it wraps, a vault share for its asset
+(ERC-4626, or the older vaults that only withdraw). A redemption counts for
+what it delivers, not what a view promises:
 it is simulated with `eth_simulateV1` as the holder that has the tokens at the
 block (the pool, or the auction holding the lot), and the holder's balance is
 read before and after. A redemption that reverts, queues or delivers nothing
@@ -67,7 +68,7 @@ logger = logging.getLogger(__name__)
 REPLAY_PROVIDER = "curve"
 # Recorded on every replayed quote. Raise it when the replay would answer the
 # same event differently, so --requote knows which answers an older method gave.
-METHOD_VERSION = 3
+METHOD_VERSION = 4
 # How nodes name a call that ran and broke instead of reverting: a bad jump (how
 # old Solidity threw), an undefined opcode, no gas left. Asking a token whether
 # it is a pool or a vault runs into these, and they are answers, not outages.
@@ -116,10 +117,13 @@ WITHDRAW_SELECTORS = (keccak(text="calc_withdraw_one_coin(uint256,uint256)")[:4]
 BALANCES_SELECTORS = (keccak(text="balances(uint256)")[:4], keccak(text="balances(int128)")[:4])
 TOTAL_SUPPLY_SELECTOR = keccak(text="totalSupply()")[:4]
 BALANCE_OF_SELECTOR = keccak(text="balanceOf(address)")[:4]
-# Redemptions all take (amount, receiver, owner); what each delivers is named by a view.
+# Redemptions take (amount, receiver, owner); what each delivers is named by a view.
 REDEEM_SELECTOR = keccak(text="redeem(uint256,address,address)")[:4]
 REDEEM_FOR_IBT_SELECTOR = keccak(text="redeemForIBT(uint256,address,address)")[:4]
 UNWRAP_SELECTOR = keccak(text="unwrap(uint256,address,address)")[:4]
+# Vaults from before ERC-4626 (iearn's yTokens, Yearn's v2) take the shares alone and pay the caller.
+VAULT_WITHDRAW_SELECTOR = keccak(text="withdraw(uint256)")[:4]
+TOKEN_SELECTOR = keccak(text="token()")[:4]
 MATURITY_SELECTOR = keccak(text="maturity()")[:4]
 UNDERLYING_SELECTOR = keccak(text="underlying()")[:4]
 GET_IBT_SELECTOR = keccak(text="getIBT()")[:4]
@@ -415,12 +419,14 @@ class LpPool:
 class Redemption:
     """One way to redeem a token: the call, and the token it delivers."""
 
-    kind: str  # "pt_redeem", "pt_redeem_for_ibt", "unwrap" or "erc4626_redeem"
+    kind: str  # "pt_redeem", "pt_redeem_for_ibt", "unwrap", "erc4626_redeem" or "vault_withdraw"
     token: str
     delivers: str
     selector: bytes
 
     def call(self, amount: int, holder: str) -> tuple[str, str, bytes]:
+        if self.selector == VAULT_WITHDRAW_SELECTOR:
+            return holder, self.token, self.selector + encode(["uint256"], [amount])
         return holder, self.token, self.selector + encode(["uint256", "address", "address"], [amount, holder, holder])
 
     def describe(self) -> dict[str, str]:
@@ -431,7 +437,8 @@ class Redemption:
 PRINCIPAL_REDEMPTIONS = ((REDEEM_SELECTOR, UNDERLYING_SELECTOR, "pt_redeem"),
                          (REDEEM_FOR_IBT_SELECTOR, GET_IBT_SELECTOR, "pt_redeem_for_ibt"))
 SHARE_REDEMPTIONS = ((UNWRAP_SELECTOR, VAULT_SHARE_SELECTOR, "unwrap"),
-                     (REDEEM_SELECTOR, ASSET_SELECTOR, "erc4626_redeem"))
+                     (REDEEM_SELECTOR, ASSET_SELECTOR, "erc4626_redeem"),
+                     (VAULT_WITHDRAW_SELECTOR, TOKEN_SELECTOR, "vault_withdraw"))
 
 
 @dataclass(frozen=True)
@@ -803,11 +810,20 @@ class Replayer:
         """
         exits = []
         unrouted: ReplayFailed | None = None
+        lp = self._lp_pool(target.from_token, block_hash)
         try:
             exits.append(self._routed_exit(target, amount=amount, block_hash=block_hash))
         except ReplayFailed as exc:
             unrouted = exc
-        lp = self._lp_pool(target.from_token, block_hash)
+        except PricesApiRateLimitError:
+            raise
+        except PricesApiError as exc:
+            # Asked to route some LP tokens, Curve answers with an error of its own, every time.
+            # An LP lot is withdrawn from its pool whatever becomes of its own route, so only a
+            # lot that is no LP token waits for Curve to answer.
+            if lp is None:
+                raise
+            unrouted = ReplayFailed("no_route", f"Curve could not say whether the LP token has a route of its own ({exc})")
         if lp is not None:
             exits += self._withdraw_exits(target, lp, amount=amount, block_hash=block_hash, timestamp=timestamp)
         redeemed = self._redeemed_exit(target.from_token, target.want_token, amount, holder=target.auction_address,

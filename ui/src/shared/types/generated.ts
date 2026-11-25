@@ -586,6 +586,8 @@ export interface components {
             canonical_price_usd?: string | null;
             /** Capture Lag Seconds */
             capture_lag_seconds: number;
+            /** Capture Origin */
+            capture_origin: string;
             /** Capture State */
             capture_state: string;
             /** Captured At */
@@ -630,6 +632,8 @@ export interface components {
             canonical_amount_out?: string | null;
             /** Capture Lag Seconds */
             capture_lag_seconds: number;
+            /** Capture Origin */
+            capture_origin: string;
             /** Capture State */
             capture_state: string;
             /** Captured At */

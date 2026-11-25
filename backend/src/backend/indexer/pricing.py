@@ -464,8 +464,11 @@ def _persist_quote_fact(
     capture_state: str,
     payload: dict[str, Any] | None,
     aggregate_error: dict[str, Any] | None,
+    capture_origin: str = "native",
+    capture_lag_seconds: int | None = None,
 ) -> int:
-    capture_lag_seconds = max(0, captured_at - job.event_timestamp)
+    if capture_lag_seconds is None:
+        capture_lag_seconds = max(0, captured_at - job.event_timestamp)
     cursor = conn.execute(
         """
         INSERT INTO pricing_quote_facts (
@@ -484,7 +487,7 @@ def _persist_quote_fact(
             job.round_id,
             job.take_seq,
             "round_kick" if job.entity_kind == "round_kick_quote" else "take",
-            "native",
+            capture_origin,
             job.source_tx_hash,
             job.source_log_index,
             job.source_event_name,
@@ -577,8 +580,11 @@ def _persist_price_fact(
     capture_state: str,
     payload: dict[str, Any] | None,
     aggregate_error: dict[str, Any] | None,
+    capture_origin: str = "native",
+    capture_lag_seconds: int | None = None,
 ) -> int:
-    capture_lag_seconds = max(0, captured_at - job.event_timestamp)
+    if capture_lag_seconds is None:
+        capture_lag_seconds = max(0, captured_at - job.event_timestamp)
     cursor = conn.execute(
         """
         INSERT INTO pricing_price_facts (
@@ -597,7 +603,7 @@ def _persist_price_fact(
             job.round_id,
             job.take_seq,
             "round_kick" if job.take_seq is None else "take",
-            "native",
+            capture_origin,
             "want_token",
             job.source_tx_hash,
             job.source_log_index,

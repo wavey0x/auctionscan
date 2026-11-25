@@ -86,6 +86,19 @@ class AuctionSeed:
 
 
 @dataclass(frozen=True)
+class ReplayPricingConfig:
+    """Contracts that price a past block for --backfill-pricing.
+
+    A Curve Router NG evaluates a route at the block; crvUSD and its USD price
+    aggregator value the result in dollars.
+    """
+
+    curve_router: str
+    crvusd: str
+    crvusd_price_aggregator: str
+
+
+@dataclass(frozen=True)
 class ChainConfig:
     name: str
     chain_id: int
@@ -99,6 +112,7 @@ class ChainConfig:
     registry: Optional[RegistryConfig] = None
     factories: tuple[FactorySeed, ...] = ()
     auctions: tuple[AuctionSeed, ...] = ()
+    replay_pricing: Optional[ReplayPricingConfig] = None
 
 
 @dataclass(frozen=True)

@@ -406,6 +406,7 @@ def _quote_fact_models(
             PricingQuoteFact(
                 id=int(fact["id"]),
                 capture_state=str(fact["capture_state"]),
+                capture_origin=str(fact["capture_origin"]),
                 context_kind=str(fact["context_kind"]),
                 captured_at=iso_utc(fact["captured_at"]) or "",
                 capture_lag_seconds=int(fact["capture_lag_seconds"]),
@@ -436,6 +437,7 @@ def _price_fact_models(price_fact_rows, price_provider_rows) -> list[PricingPric
             PricingPriceFact(
                 id=int(fact["id"]),
                 capture_state=str(fact["capture_state"]),
+                capture_origin=str(fact["capture_origin"]),
                 context_kind=str(fact["context_kind"]),
                 captured_at=iso_utc(fact["captured_at"]) or "",
                 capture_lag_seconds=int(fact["capture_lag_seconds"]),

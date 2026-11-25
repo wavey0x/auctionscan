@@ -77,6 +77,22 @@ Rules for this model:
 - pricing capture runs up to `DEFAULT_MAX_CONCURRENCY` HTTP attempts at once;
   in-flight rows are excluded from selection, and all HTTP stays outside the
   writer transaction
+- live capture quotes an event within `DEFAULT_MAX_CAPTURE_LAG_SECONDS` or
+  not at all. `--backfill-pricing` (writer maintenance) prices what it missed
+  at the event's own block: the prices service's `curve` provider supplies
+  today's route, Curve Router NG's `get_dy` evaluates it at the block before
+  the event (a staged window: the last block before it opens), and crvUSD's
+  `AggregatorStablePrice` values the want token through crvUSD at that block.
+  Results are ordinary pricing facts with `capture_origin = 'block_replay'`,
+  provider `curve`, `capture_state = 'fresh'` and zero lag, so projections
+  select them after any live quote. A route must absorb the lot: if the lot
+  fetches under half the price of a 1% slice at the same block (a crvUSD
+  LLAMMA hop holds only what its bands hold), there is no quote. Curve's
+  multi-path routes for some LP tokens cannot be expressed as one router
+  call and are not quoted either. A missing route, an unabsorbed lot or a
+  reverted call is recorded as a failed replay and not retried; network and
+  provider errors leave no fact. The contracts live in `config.yaml` under
+  `replay_pricing`
 - projections store decoded values for query/API use
 - pricing projections rebuild from stored pricing facts, not from live repricing
 - the canonical parameter decoder lives in the indexer layer
@@ -265,6 +281,9 @@ Reproject intent:
 - `request_timeout_seconds`: RPC transport timeout, defaulting to 60.
 - `auctions`: singleton auctions no factory deploys (Curve burners), each with
   its deployment block as `start_block` and a factory-less version.
+- `replay_pricing`: the Curve Router NG, crvUSD and crvUSD price aggregator
+  that `--backfill-pricing` reads at past blocks. A network without it cannot
+  backfill pricing.
 - `disabled: true` means no indexer process exists for that network. The API
   omits disabled networks from `/api/health`, and `--network` refuses them.
   Only `ethereum` is enabled; enabling a network means deploying an

@@ -35,9 +35,18 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--backfill-observations", action="store_true", help="Capture missing historical RPC facts for offline replay")
     mode.add_argument("--check-observations", action="store_true", help="Report replay input coverage without RPC calls")
     mode.add_argument(
+        "--backfill-pricing",
+        action="store_true",
+        help="Price confirmed takes and kicks that live capture missed, at their own blocks",
+    )
+    mode.add_argument(
         "--backfill-receiver-aliases",
         action="store_true",
         help="Fill missing receiver aliases from on-chain name() lookups",
+    )
+    parser.add_argument(
+        "--auction",
+        help="When backfilling pricing, only this auction's takes and kicks",
     )
     parser.add_argument(
         "--takes-only",
@@ -69,11 +78,17 @@ def main() -> int:
         raise SystemExit("--takes-only requires --reproject")
     if args.force_alias_backfill and not args.backfill_receiver_aliases:
         raise SystemExit("--force-alias-backfill requires --backfill-receiver-aliases")
+    if args.auction and not args.backfill_pricing:
+        raise SystemExit("--auction requires --backfill-pricing")
     runtime = IndexerRuntime(db_path=args.db, target_network=args.network)
     if args.backfill_observations or args.check_observations:
         result = runtime.backfill_observations(check_only=args.check_observations, max_blocks=args.max_blocks)
         print(json.dumps({args.network: result}, indent=2, sort_keys=True))
         return 0 if result["missing"] == 0 else 1
+    if args.backfill_pricing:
+        result = runtime.backfill_pricing(auction=args.auction)
+        print(json.dumps({args.network: result}, indent=2, sort_keys=True))
+        return 0
     if args.reproject:
         result = runtime.reproject(takes_only=args.takes_only)
         print(json.dumps({args.network: result}, indent=2, sort_keys=True))

@@ -15,6 +15,7 @@ from .types import (
     IndexerSettings,
     ProjectPaths,
     RegistryConfig,
+    ReplayPricingConfig,
     VersionDefinition,
     normalize_address,
 )
@@ -196,6 +197,18 @@ def _auction_seed(raw_entry: dict[str, Any]) -> AuctionSeed:
     )
 
 
+def _replay_pricing(raw: Any) -> ReplayPricingConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("replay_pricing must be a mapping")
+    fields = ("curve_router", "crvusd", "crvusd_price_aggregator")
+    missing = [name for name in fields if not raw.get(name)]
+    if missing:
+        raise ValueError(f"replay_pricing needs {', '.join(missing)}")
+    return ReplayPricingConfig(**{name: normalize_address(raw[name]) for name in fields})
+
+
 def load_settings(
     *,
     db_path: str | None = None,
@@ -253,6 +266,7 @@ def load_settings(
         registry=registry,
         factories=factories,
         auctions=tuple(_auction_seed(entry) for entry in (raw_network.get("auctions") or [])),
+        replay_pricing=_replay_pricing(raw_network.get("replay_pricing")),
     )
 
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)

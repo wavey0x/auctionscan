@@ -374,6 +374,9 @@ class PricingQuoteProvider(BaseModel):
 class PricingQuoteFact(BaseModel):
     id: int
     capture_state: str
+    # "native" live capture, "block_replay" priced at the event's block later,
+    # or "legacy_backfill" imported from the previous application
+    capture_origin: str
     context_kind: str
     captured_at: str
     capture_lag_seconds: int
@@ -402,6 +405,9 @@ class PricingPriceProvider(BaseModel):
 class PricingPriceFact(BaseModel):
     id: int
     capture_state: str
+    # "native" live capture, "block_replay" priced at the event's block later,
+    # or "legacy_backfill" imported from the previous application
+    capture_origin: str
     context_kind: str
     captured_at: str
     capture_lag_seconds: int

@@ -1,0 +1,515 @@
+"""Price what live capture missed, from the chain at the event's block.
+
+Live capture quotes an event within minutes or not at all: a later quote
+describes a different market. A replay instead asks the prices service's Curve
+provider for its route today, evaluates that route with Curve Router NG's
+`get_dy` at the block before the event, and values the want token through
+crvUSD's USD price aggregator at the same block. Only the route is found now;
+every amount comes from the chain as it stood when the event happened.
+
+Replays are stored as ordinary pricing facts with capture_origin
+'block_replay' and provider 'curve'. They are 'fresh' because they describe
+the event's own block, so projections select them like a live quote, after
+any live quote, and reproject keeps them. Network, chain and provider errors
+leave no fact, so a later run retries them; a missing route, a route that
+cannot absorb the lot or a reverted call is recorded as a failed replay and
+not retried.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, localcontext
+from typing import Any, Protocol
+
+from eth_abi import encode
+from eth_utils import keccak
+from web3 import HTTPProvider, Web3
+from web3.exceptions import ContractLogicError
+
+from .prices_api import PricesApiError, PricingApiClient, ProviderCapability
+from .pricing import (
+    DEFAULT_MAX_CAPTURE_LAG_SECONDS,
+    DEFAULT_MAX_CONCURRENCY,
+    DEFAULT_TIMEOUT_MS,
+    PricingQueueJob,
+    _persist_price_fact,
+    _persist_quote_fact,
+)
+from .pricing_projections import rebuild_pricing_projections
+from .types import ChainConfig, ReplayPricingConfig, normalize_address
+
+
+logger = logging.getLogger(__name__)
+
+REPLAY_ORIGIN = "block_replay"
+REPLAY_PROVIDER = "curve"
+CHUNK_SIZE = 32
+# A route must absorb the lot: the lot is checked against the price of a
+# 1/PROBE_DIVISOR slice, and a lot fetching under half that is not a market
+# (a crvUSD LLAMMA hop, say, holds only what its bands hold at that block).
+PROBE_DIVISOR = 100
+ZERO_ADDRESS = "0x" + "00" * 20
+GET_DY_TYPES = ["address[11]", "uint256[5][5]", "uint256", "address[5]"]
+GET_DY_SELECTOR = keccak(text=f"get_dy({','.join(GET_DY_TYPES)})")[:4]
+PRICE_SELECTOR = keccak(text="price()")[:4]
+
+
+class ReplayFailed(Exception):
+    """The chain or the router answered, and the answer is that there is no price."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class BlockReads(Protocol):
+    def header(self, number: int) -> tuple[str, int]: ...
+
+    def call(self, to: str, data: bytes, block_hash: str) -> bytes: ...
+
+
+class Web3BlockReads:
+    """Archive reads by block hash, one connection per worker thread."""
+
+    def __init__(self, config: ChainConfig) -> None:
+        self._config = config
+        self._local = threading.local()
+
+    def _w3(self) -> Web3:
+        w3 = getattr(self._local, "w3", None)
+        if w3 is None:
+            w3 = Web3(HTTPProvider(self._config.rpc_url, request_kwargs={"timeout": self._config.request_timeout_seconds}))
+            self._local.w3 = w3
+        return w3
+
+    def header(self, number: int) -> tuple[str, int]:
+        block = self._w3().eth.get_block(number)
+        return Web3.to_hex(block["hash"]), int(block["timestamp"])
+
+    def call(self, to: str, data: bytes, block_hash: str) -> bytes:
+        try:
+            return bytes(self._w3().eth.call(
+                {"to": Web3.to_checksum_address(to), "data": Web3.to_hex(data)},
+                block_identifier={"blockHash": block_hash, "requireCanonical": True},
+            ))
+        except ContractLogicError as exc:
+            raise ReplayFailed("reverted", str(exc)) from exc
+
+
+@dataclass(frozen=True)
+class ReplayTarget:
+    """One event to price, and the block whose closing state was its market."""
+
+    context_kind: str  # "take" or "round_kick"
+    auction_address: str
+    round_id: int
+    take_seq: int | None
+    from_token: str
+    want_token: str
+    want_decimals: int | None
+    amount_in_raw: str
+    event_timestamp: int
+    source_tx_hash: str
+    source_log_index: int
+    source_event_name: str
+    source_block_number: int
+    source_block_hash: str
+    market_block: int | None  # None: the last block before event_timestamp
+    needs_quote: bool
+    needs_price: bool
+
+    @property
+    def round_key(self) -> tuple[str, int]:
+        return (self.auction_address, self.round_id)
+
+
+@dataclass(frozen=True)
+class Observation:
+    state: str  # "fresh" or "failed"
+    payload: dict[str, Any]
+    error: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class ReplayOutcome:
+    target: ReplayTarget
+    quote: Observation | None  # None: not needed, or deferred to a later run
+    price: Observation | None
+
+
+def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str = "") -> set[tuple]:
+    """Sources that already have a usable observation or a recorded replay."""
+    return {
+        tuple(row)
+        for row in conn.execute(
+            f"""
+            SELECT source_block_hash, source_tx_hash, source_log_index{', amount_in_raw' if table == 'pricing_quote_facts' else ''}
+              FROM {table}
+             WHERE chain_id = ? AND context_kind = ? {extra}
+               AND (capture_state = 'fresh' OR capture_origin = ?)
+            """,
+            (chain_id, context_kind, REPLAY_ORIGIN),
+        )
+    }
+
+
+def load_replay_targets(
+    conn, *, chain_id: int, confirmed_block: int, before_timestamp: int, auction: str | None = None,
+) -> list[ReplayTarget]:
+    """Confirmed takes and kicks that live capture left without a quote or a want price.
+
+    Only events older than the live capture window: a newer one may still be
+    quoted live.
+    """
+    auction_params = (normalize_address(auction),) if auction else ()
+    take_scope = "AND t.auction_address = ?" if auction else ""
+    round_scope = "AND r.auction_address = ?" if auction else ""
+    targets: list[ReplayTarget] = []
+
+    quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="take")
+    quoted = {key[:3] for key in quoted}
+    priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="take", extra="AND price_role = 'want_token'")
+    for row in conn.execute(
+        f"""
+        SELECT t.auction_address, t.round_id, t.take_seq, t.from_token, t.want_token, t.amount_taken_raw,
+               e.timestamp, e.block_number, e.block_hash, e.tx_hash, e.log_index, wt.decimals AS want_decimals
+          FROM takes t
+          JOIN domain_events e
+            ON e.chain_id = t.chain_id AND e.tx_hash = t.tx_hash AND e.log_index = t.log_index
+           AND e.event_name = 'Take'
+          LEFT JOIN tokens wt ON wt.chain_id = t.chain_id AND wt.token_address = t.want_token
+         WHERE t.chain_id = ? AND e.block_number <= ? AND e.timestamp < ? {take_scope}
+         ORDER BY e.block_number, e.log_index
+        """,
+        (chain_id, confirmed_block, before_timestamp, *auction_params),
+    ):
+        source = (str(row["block_hash"]), str(row["tx_hash"]), int(row["log_index"]))
+        needs_quote = source not in quoted and row["amount_taken_raw"] not in (None, "0")
+        needs_price = source not in priced
+        if not (row["from_token"] and row["want_token"]) or not (needs_quote or needs_price):
+            continue
+        targets.append(ReplayTarget(
+            context_kind="take", auction_address=str(row["auction_address"]), round_id=int(row["round_id"]),
+            take_seq=int(row["take_seq"]), from_token=str(row["from_token"]), want_token=str(row["want_token"]),
+            want_decimals=row["want_decimals"], amount_in_raw=str(row["amount_taken_raw"]),
+            event_timestamp=int(row["timestamp"]), source_tx_hash=source[1], source_log_index=source[2],
+            source_event_name="Take", source_block_number=int(row["block_number"]), source_block_hash=source[0],
+            market_block=int(row["block_number"]) - 1, needs_quote=needs_quote, needs_price=needs_price,
+        ))
+
+    # A kick quote prices the lot as finally offered, linked to the round's
+    # first kick; a staged window's market is the block before it opens.
+    kick_quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="round_kick")
+    kick_priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="round_kick", extra="AND price_role = 'want_token'")
+    for row in conn.execute(
+        f"""
+        SELECT r.auction_address, r.round_id, r.kicked_at, r.from_token, r.want_token, r.initial_available_raw,
+               s.snapshot_tx_hash, s.snapshot_log_index, e.block_number, e.block_hash,
+               json_extract(e.payload_json, '$.startsAt') AS starts_at, wt.decimals AS want_decimals
+          FROM rounds r
+          JOIN round_param_snapshot s
+            ON s.chain_id = r.chain_id AND s.auction_address = r.auction_address AND s.round_id = r.round_id
+          JOIN domain_events e
+            ON e.chain_id = s.chain_id AND e.tx_hash = s.snapshot_tx_hash
+           AND e.log_index = s.snapshot_log_index AND e.event_name = 'AuctionKicked'
+          LEFT JOIN tokens wt ON wt.chain_id = r.chain_id AND wt.token_address = r.want_token
+         WHERE r.chain_id = ? AND e.block_number <= ? AND r.kicked_at < ? {round_scope}
+         ORDER BY r.kicked_at, r.auction_address, r.round_id
+        """,
+        (chain_id, confirmed_block, before_timestamp, *auction_params),
+    ):
+        lot = row["initial_available_raw"]
+        if not (row["from_token"] and row["want_token"]) or lot in (None, "0"):
+            continue
+        source = (str(row["block_hash"]), str(row["snapshot_tx_hash"]), int(row["snapshot_log_index"]))
+        needs_quote = (*source, str(lot)) not in kick_quoted
+        needs_price = source not in kick_priced
+        if not (needs_quote or needs_price):
+            continue
+        targets.append(ReplayTarget(
+            context_kind="round_kick", auction_address=str(row["auction_address"]), round_id=int(row["round_id"]),
+            take_seq=None, from_token=str(row["from_token"]), want_token=str(row["want_token"]),
+            want_decimals=row["want_decimals"], amount_in_raw=str(lot), event_timestamp=int(row["kicked_at"]),
+            source_tx_hash=source[1], source_log_index=source[2], source_event_name="AuctionKicked",
+            source_block_number=int(row["block_number"]), source_block_hash=source[0],
+            market_block=None if row["starts_at"] is not None else int(row["block_number"]) - 1,
+            needs_quote=needs_quote, needs_price=needs_price,
+        ))
+    return targets
+
+
+def last_block_before(reads: BlockReads, timestamp: int, *, low: int, high: int) -> int | None:
+    """The last block mined before `timestamp`, between low and high; None if neither brackets it."""
+    if reads.header(high)[1] < timestamp or reads.header(low)[1] >= timestamp:
+        return None  # The window had not opened by the confirmed head, or low is not before it.
+    while high - low > 1:
+        middle = (low + high) // 2
+        if reads.header(middle)[1] < timestamp:
+            low = middle
+        else:
+            high = middle
+    return low
+
+
+def _router_route(route: dict[str, Any], *, from_token: str, to_token: str) -> tuple[list[str], list[list[int]], list[str]]:
+    """The provider's route as Curve Router NG's get_dy arguments, checked end to end."""
+    coins = [[normalize_address(coin) for coin in hop] for hop in route.get("coins") or []]
+    swaps = [normalize_address(address) for address in route.get("swap_addresses") or []]
+    params = [[int(value) for value in hop] for hop in route.get("swap_params") or []]
+    pools = [normalize_address(address) for address in route.get("pool_addresses") or [ZERO_ADDRESS] * len(swaps)]
+    hops = len(swaps)
+    linked = all(coins[index][1] == coins[index + 1][0] for index in range(hops - 1)) if len(coins) == hops else False
+    if not (0 < hops <= 5 and len(params) == hops and len(pools) == hops and linked
+            and coins[0][0] == from_token and coins[-1][1] == to_token):
+        raise ReplayFailed("bad_route", "provider route does not lead from the lot to the want token")
+    path = [coins[0][0]]
+    for swap, hop in zip(swaps, coins):
+        path += [swap, hop[1]]
+    path += [ZERO_ADDRESS] * (11 - len(path))
+    params += [[0] * 5] * (5 - hops)
+    pools += [ZERO_ADDRESS] * (5 - hops)
+    return path, params, pools
+
+
+def _uint(result: bytes, *, what: str) -> int:
+    if len(result) < 32:
+        raise ReplayFailed("no_code", f"{what} returned nothing at this block")
+    return int.from_bytes(result[:32], "big")
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class Replayer:
+    """Prices targets; safe to share across worker threads."""
+
+    def __init__(self, *, chain_id: int, config: ReplayPricingConfig, client: PricingApiClient, reads: BlockReads) -> None:
+        self.chain_id = chain_id
+        self.config = config
+        self.client = client
+        self.reads = reads
+        self._lock = threading.Lock()
+        self._headers: dict[int, tuple[str, int]] = {}
+        self._usd_routes: dict[tuple[str, int], dict[str, Any]] = {}
+        self._crvusd_prices: dict[str, int] = {}
+
+    def header(self, number: int) -> tuple[str, int]:
+        with self._lock:
+            cached = self._headers.get(number)
+        if cached is None:
+            cached = self.reads.header(number)
+            with self._lock:
+                self._headers[number] = cached
+        return cached
+
+    def _route(self, *, token_in: str, token_out: str, amount_in: str) -> tuple[dict[str, Any], str | None]:
+        """Today's Curve route; ReplayFailed when Curve has none, PricesApiError to retry later."""
+        response = self.client.fetch_quote(
+            chain_id=self.chain_id, token_in=token_in, token_out=token_out, amount_in=amount_in,
+            providers=[REPLAY_PROVIDER], use_underlying=False, timeout_ms=DEFAULT_TIMEOUT_MS,
+        )
+        entry = (response.get("providers") or {}).get(REPLAY_PROVIDER) or {}
+        route = entry.get("route")
+        if not entry.get("success") or not isinstance(route, dict):
+            error = entry.get("error") if isinstance(entry.get("error"), dict) else {}
+            code = str(error.get("type") or "no_route").lower()
+            message = str(error.get("message") or "Curve has no route")
+            if code != "no_route":
+                raise PricesApiError(f"Curve provider {code}: {message}")
+            raise ReplayFailed(code, message)
+        return route, response.get("request_id")
+
+    def _get_dy(self, route: dict[str, Any], *, token_in: str, token_out: str, amount: int, block_hash: str) -> int:
+        path, params, pools = _router_route(route, from_token=token_in, to_token=token_out)
+        data = GET_DY_SELECTOR + encode(GET_DY_TYPES, [path, params, amount, pools])
+        return _uint(self.reads.call(self.config.curve_router, data, block_hash), what="Curve router")
+
+    def _crvusd_price(self, block_hash: str) -> int:
+        with self._lock:
+            cached = self._crvusd_prices.get(block_hash)
+        if cached is None:
+            cached = _uint(self.reads.call(self.config.crvusd_price_aggregator, PRICE_SELECTOR, block_hash), what="crvUSD aggregator")
+            with self._lock:
+                self._crvusd_prices[block_hash] = cached
+        return cached
+
+    def quote(self, target: ReplayTarget, *, block: int, block_hash: str) -> Observation:
+        started = time.monotonic()
+        payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "block_number": block, "block_hash": block_hash,
+                                   "router": self.config.curve_router}
+        try:
+            route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
+            payload.update(request_id=request_id, route=route)
+            amount = int(target.amount_in_raw)
+            amount_out = self._get_dy(route, token_in=target.from_token, token_out=target.want_token,
+                                      amount=amount, block_hash=block_hash)
+            probe = amount // PROBE_DIVISOR
+            if probe > 0:
+                probe_out = self._get_dy(route, token_in=target.from_token, token_out=target.want_token,
+                                         amount=probe, block_hash=block_hash)
+                payload["probe"] = {"amount_in": str(probe), "amount_out": str(probe_out)}
+                if amount_out * 2 * probe < probe_out * amount:
+                    raise ReplayFailed("route_exhausted", f"the lot fetches {amount_out}, under half the price of {probe} ({probe_out})")
+            if amount_out == 0:
+                raise ReplayFailed("route_exhausted", "the route returns nothing for the lot")
+        except ReplayFailed as exc:
+            return _failed(payload, exc, started)
+        payload["providers"] = {REPLAY_PROVIDER: {
+            "status": "ok", "success": True, "amount_in": target.amount_in_raw, "amount_out": str(amount_out),
+            "latency_ms": int((time.monotonic() - started) * 1000), "retrieved_at": _iso_now(),
+        }}
+        return Observation(state="fresh", payload=payload, error=None)
+
+    def price(self, target: ReplayTarget, *, block: int, block_hash: str) -> Observation:
+        """The want token in dollars: through crvUSD, valued by its aggregator."""
+        started = time.monotonic()
+        payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "block_number": block, "block_hash": block_hash,
+                                   "aggregator": self.config.crvusd_price_aggregator}
+        try:
+            crvusd_usd = self._crvusd_price(block_hash)
+            payload["crvusd_price_raw"] = str(crvusd_usd)
+            if target.want_token == self.config.crvusd:
+                crvusd_per_unit = 10**18
+            else:
+                if target.want_decimals is None:
+                    raise ReplayFailed("unknown_decimals", "want token decimals are unknown")
+                unit = 10 ** int(target.want_decimals)
+                key = (target.want_token, unit)
+                with self._lock:
+                    route = self._usd_routes.get(key)
+                if route is None:
+                    route, _ = self._route(token_in=target.want_token, token_out=self.config.crvusd, amount_in=str(unit))
+                    with self._lock:
+                        self._usd_routes[key] = route
+                payload["route"] = route
+                crvusd_per_unit = self._get_dy(route, token_in=target.want_token, token_out=self.config.crvusd,
+                                               amount=unit, block_hash=block_hash)
+        except ReplayFailed as exc:
+            return _failed(payload, exc, started)
+        with localcontext() as context:
+            context.prec = 60
+            price = Decimal(crvusd_per_unit) / Decimal(10**18) * Decimal(crvusd_usd) / Decimal(10**18)
+        payload["providers"] = {REPLAY_PROVIDER: {
+            "status": "ok", "success": True, "price": format(price.normalize(), "f"),
+            "latency_ms": int((time.monotonic() - started) * 1000), "retrieved_at": _iso_now(),
+        }}
+        return Observation(state="fresh", payload=payload, error=None)
+
+    def replay(self, target: ReplayTarget, *, block: int) -> ReplayOutcome:
+        """Network and chain errors defer an observation; they are never recorded."""
+        try:
+            block_hash, _ = self.header(block)
+        except Exception as exc:  # noqa: BLE001 - any read failure defers the whole target
+            logger.warning("pricing replay deferred block=%d error=%s", block, exc)
+            return ReplayOutcome(target=target, quote=None, price=None)
+        return ReplayOutcome(
+            target=target,
+            quote=_deferring(lambda: self.quote(target, block=block, block_hash=block_hash)) if target.needs_quote else None,
+            price=_deferring(lambda: self.price(target, block=block, block_hash=block_hash)) if target.needs_price else None,
+        )
+
+
+def _failed(payload: dict[str, Any], exc: ReplayFailed, started: float) -> Observation:
+    error = {"type": exc.code, "message": str(exc)[:500]}
+    payload["providers"] = {REPLAY_PROVIDER: {
+        "status": "error", "success": False, "error": error,
+        "latency_ms": int((time.monotonic() - started) * 1000), "retrieved_at": _iso_now(),
+    }}
+    return Observation(state="failed", payload=payload, error=error)
+
+
+def _deferring(observe) -> Observation | None:
+    try:
+        return observe()
+    except Exception as exc:  # noqa: BLE001 - transport, RPC and service errors are retried next run
+        logger.warning("pricing replay deferred error=%s", exc)
+        return None
+
+
+def _job(target: ReplayTarget, *, chain_id: int, entity_kind: str, now: int) -> PricingQueueJob:
+    """The job live capture would have run for this observation."""
+    is_quote = entity_kind != "want_token_price"
+    return PricingQueueJob(
+        id=0, chain_id=chain_id, auction_address=target.auction_address, round_id=target.round_id,
+        take_seq=target.take_seq, entity_kind=entity_kind, event_timestamp=target.event_timestamp,
+        from_token=target.from_token if is_quote else None, to_token=target.want_token if is_quote else None,
+        token=None if is_quote else target.want_token, amount_in_raw=target.amount_in_raw if is_quote else None,
+        source_tx_hash=target.source_tx_hash, source_log_index=target.source_log_index,
+        source_event_name=target.source_event_name, source_block_number=target.source_block_number,
+        source_block_hash=target.source_block_hash, status="replayed", attempt_count=0, next_attempt_at=None,
+        last_error=None, priority=0, created_at=now, updated_at=now,
+    )
+
+
+def persist_outcomes(conn, outcomes: list[ReplayOutcome], *, chain_id: int, now: int) -> set[tuple[str, int]]:
+    scope = [ProviderCapability(id=REPLAY_PROVIDER, supports_price=True, supports_quote=True, supported_chains=(chain_id,),
+                                requires_api_key=False, available=True, unavailable_reason=None)]
+    rounds: set[tuple[str, int]] = set()
+    for outcome in outcomes:
+        target = outcome.target
+        kick = target.context_kind == "round_kick"
+        for observation, entity_kind, persist in (
+            (outcome.quote, "round_kick_quote" if kick else "take_quote", _persist_quote_fact),
+            (outcome.price, "want_token_price", _persist_price_fact),
+        ):
+            if observation is None:
+                continue
+            persist(
+                conn, job=_job(target, chain_id=chain_id, entity_kind=entity_kind, now=now), provider_scope=scope,
+                use_underlying=False, timeout_ms=DEFAULT_TIMEOUT_MS, captured_at=now,
+                capture_state=observation.state, payload=observation.payload, aggregate_error=observation.error,
+                # The observation is the state just before the event, not a late look at it.
+                capture_origin=REPLAY_ORIGIN, capture_lag_seconds=0,
+            )
+            rounds.add(target.round_key)
+    if rounds:
+        rebuild_pricing_projections(conn, chain_id=chain_id, rounds=rounds)
+    return rounds
+
+
+def backfill_pricing(
+    writer, *, chain_id: int, replayer: Replayer, confirmed_block: int, auction: str | None = None,
+    now: int | None = None, max_workers: int = DEFAULT_MAX_CONCURRENCY,
+) -> dict[str, Any]:
+    """Replay every missing quote and want price; resumable, commits as it goes."""
+    now = int(time.time()) if now is None else now
+    targets = load_replay_targets(
+        writer.connection, chain_id=chain_id, confirmed_block=confirmed_block,
+        before_timestamp=now - DEFAULT_MAX_CAPTURE_LAG_SECONDS, auction=auction,
+    )
+    # Every staged lot sharing a window shares the block before it opens.
+    opens: dict[int, int | None] = {}
+    for target in targets:
+        if target.market_block is None and target.event_timestamp not in opens:
+            opens[target.event_timestamp] = last_block_before(
+                replayer, target.event_timestamp, low=target.source_block_number, high=confirmed_block,
+            )
+    planned = [
+        (target, target.market_block if target.market_block is not None else opens[target.event_timestamp])
+        for target in targets
+    ]
+    planned = [(target, block) for target, block in planned if block is not None]
+    logger.info("pricing replay start chain_id=%d targets=%d auction=%s", chain_id, len(planned), auction or "all")
+
+    counts = {kind: {"fresh": 0, "failed": 0, "deferred": 0} for kind in ("take_quote", "take_price", "kick_quote", "kick_price")}
+    rounds: set[tuple[str, int]] = set()
+    with ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix="pricing-replay") as pool:
+        for start in range(0, len(planned), CHUNK_SIZE):
+            chunk = planned[start:start + CHUNK_SIZE]
+            outcomes = list(pool.map(lambda item: replayer.replay(item[0], block=item[1]), chunk))
+            rounds |= writer.transaction(lambda conn: persist_outcomes(conn, outcomes, chain_id=chain_id, now=now))
+            for outcome in outcomes:
+                prefix = "kick" if outcome.target.context_kind == "round_kick" else "take"
+                for needed, observation, kind in ((outcome.target.needs_quote, outcome.quote, f"{prefix}_quote"),
+                                                  (outcome.target.needs_price, outcome.price, f"{prefix}_price")):
+                    if needed:
+                        counts[kind][observation.state if observation else "deferred"] += 1
+            logger.info("pricing replay progress %d/%d", min(start + CHUNK_SIZE, len(planned)), len(planned))
+    return {"targets": len(planned), "rounds": len(rounds), **counts}

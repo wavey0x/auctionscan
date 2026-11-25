@@ -18,6 +18,10 @@ export default function DocsPage() {
             quoted when its trading window opens, for the lot as finally staged.
           </li>
           <li>At each take, we capture a quote for the exact amount that was sold.</li>
+          <li>
+            A quote we could not capture at the time is rebuilt later from the chain: Curve&apos;s
+            route for the amount, evaluated at the block before the event.
+          </li>
           <li>Quotes are the primary benchmark because takes are sized executions, not spot marks.</li>
           <li>Token prices are secondary and mainly used to express values and deltas in USD.</li>
           <li>We compare actual auction proceeds to the market quote to estimate execution edge.</li>

@@ -13,7 +13,7 @@ from .address_aliases import (
     load_address_alias_backfill_candidates,
     resolve_address_alias_updates_multicall,
 )
-from . import collection, replay
+from . import collection, pricing_replay, replay
 from .chains import ChainState
 from .config import load_settings
 from .decode import AbiRegistry
@@ -896,6 +896,25 @@ class IndexerRuntime:
         return {"blocks": len(blocks), "complete": complete, "missing": len(blocks) - complete,
                 "captured": captured, "first_missing": first_missing if complete < len(blocks) else None}
 
+
+    def backfill_pricing(self, *, auction: str | None = None) -> dict:
+        """Price confirmed takes and kicks that live capture missed, at their own blocks."""
+        config = self.chain.config.replay_pricing
+        if config is None:
+            raise ValueError(f"network {self.network_name!r} has no replay_pricing in config.yaml")
+        state = self.writer.fetchone(
+            "SELECT last_confirmed_processed FROM sync_state WHERE chain_id = ?", (self.chain.config.chain_id,),
+        )
+        if state is None or state["last_confirmed_processed"] is None:
+            raise ValueError(f"network {self.network_name!r} has not been indexed")
+        replayer = pricing_replay.Replayer(
+            chain_id=self.chain.config.chain_id, config=config, client=self.pricing.client,
+            reads=pricing_replay.Web3BlockReads(self.chain.config),
+        )
+        return pricing_replay.backfill_pricing(
+            self.writer, chain_id=self.chain.config.chain_id, replayer=replayer,
+            confirmed_block=int(state["last_confirmed_processed"]), auction=auction,
+        )
 
     def _mark_chain_error(self, exc: Exception) -> None:
         chain = self.chain

@@ -34,6 +34,12 @@ networks:
       - address: "0xc014A92C76709D6c7f7c7841823b7164D6D2AbD4" # Curve DutchAuctionBurner
         start_block: 26385347
         version: curve-1
+    # Prices a past block for --backfill-pricing: the router evaluates a Curve
+    # route at the block, and crvUSD's aggregator values crvUSD in dollars
+    replay_pricing:
+      curve_router: "0x45312ea0eFf7E09C83CBE249fa1d7598c4C8cd4e" # CurveRouter v1.2, block 21143502
+      crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
+      crvusd_price_aggregator: "0x18672b1b0c623a30089A280Ed9256379fb0E4E62" # AggregatorStablePrice
 
   polygon:
     chain_id: 137

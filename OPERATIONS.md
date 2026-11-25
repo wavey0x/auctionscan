@@ -96,3 +96,10 @@ semantics do: run `--check-observations`, explicitly fill missing inputs if need
 and run `--reproject` before restarting indexing. Rehearse these steps on a restored
 copy first. Preserve chain logs, snapshots, RPC observations, pricing audit facts,
 and checkpoint state through projection-only repairs.
+
+`--backfill-pricing` adds pricing facts for confirmed events that live capture
+missed, for example takes indexed after an outage or a rewind. It holds the
+network's writer lock, so stop that indexer, run it, and start the indexer
+again; the API can keep serving. It needs an archive RPC and the prices
+service, commits as it goes and can be interrupted and rerun. `--auction`
+limits it to one auction.

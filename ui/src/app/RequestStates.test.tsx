@@ -17,11 +17,11 @@ const occurrence = { chain_id: 1, block_hash: `0x${"b".repeat(64)}`, tx_hash: `0
 const token = { address, symbol: "SELL", name: "Sell token", decimals: 18, chain_id: 1 };
 const roundDetails: RoundDetailResponse = {
   as_of: {},
-  round: { occurrence, chain_id: 1, auction_address: address, round_id: 7, status: "settled", is_active: false,
+  round: { occurrence, chain_id: 1, auction_address: address, round_id: 7, status: "settled", is_active: false, protocol: "yearn",
     from_token: address, want_token: address, kicked_at: "2026-09-17T12:00:00Z", activity_at: "2026-09-17T12:00:00Z",
     take_count: 1, paid_take_count: 1, paid_usd_take_count: 0, usd_priced_take_count: 0, sold_amount: "1", paid_amount: "2" },
 };
-const auction: AuctionDetails = { as_of: {}, address, chain_id: 1, from_tokens: [token], want_token: token, parameters: {},
+const auction: AuctionDetails = { as_of: {}, address, chain_id: 1, protocol: "yearn", from_tokens: [token], want_token: token, parameters: {},
   activity: { total_participants: 1, total_volume: "2", paid_take_count: 1, total_rounds: 1, total_takes: 1 } };
 const take: TakeDetail = { occurrence: { ...occurrence, log_index: 8 }, round_occurrence: occurrence, auction: address,
   chain_id: 1, round_id: 7, take_seq: 1, taker: address, amount_taken: "1", amount_paid: "2", price: "2",
@@ -30,12 +30,12 @@ const taker: TakerSummary = { taker: address, active_chains: [1], total_takes: 1
   total_volume_usd: 25, paid_usd_take_count: 1, last_take: "2026-09-17T12:00:00Z" };
 const profile: TakerDetail = { as_of: {}, taker: address, active_chains: [1], auction_breakdown: [], rank_by_takes: 1,
   total_takes: 1, unique_auctions: 1, unique_chains: 1, total_volume_usd: 25, paid_usd_take_count: 1 };
-const roundList = { as_of: {}, rounds: [roundDetails.round], total: 1, status_counts: { all: 1, live: 0, sold_out: 0, expired: 0, settled: 1 }, page: 1, per_page: 10, has_next: false };
+const roundList = { as_of: {}, rounds: [roundDetails.round], total: 1, status_counts: { all: 1, scheduled: 0, live: 0, sold_out: 0, expired: 0, settled: 1 }, page: 1, per_page: 10, has_next: false };
 const takeList = { as_of: {}, takes: [take], available_price_sources: [] };
 const searchResults = { query: "SELL", results: [{ type: "token" as const, chain_id: 1, address_or_hash: address, metadata: { symbol: "SELL", name: "Search match" } }], total: 1 };
 const roundPath = buildRoundPath(1, address, 7);
 const cases = [
-  { name: "rounds", path: "/", method: "getRounds", key: "rounds", loaded: "1 matching rounds", missing: "No rounds found", data: roundList, empty: { ...roundList, rounds: [], total: 0, status_counts: { all: 0, live: 0, sold_out: 0, expired: 0, settled: 0 } } },
+  { name: "rounds", path: "/", method: "getRounds", key: "rounds", loaded: "1 matching rounds", missing: "No rounds found", data: roundList, empty: { ...roundList, rounds: [], total: 0, status_counts: { all: 0, scheduled: 0, live: 0, sold_out: 0, expired: 0, settled: 0 } } },
   { name: "takers", path: "/takers", method: "getTakers", key: "takers", loaded: "1 results found", missing: "No takers found", data: { takers: [taker], total: 1, page: 1, per_page: 15, has_next: false, as_of: {} }, empty: { takers: [], total: 0, page: 1, per_page: 15, has_next: false, as_of: {} } },
   { name: "auction", path: `/auction/1/${address}`, method: "getAuction", key: "auction", loaded: "Recent takes", missing: "Auction not found", data: auction, empty: null },
   { name: "taker profile", path: `/taker/${address}`, method: "getTaker", key: "taker", loaded: "Taker profile", missing: "Taker not found", data: profile, empty: null },

@@ -326,7 +326,7 @@ def test_sync_chain_once_advances_cursor_and_idles_without_new_blocks(tmp_path, 
         scan_ranges.append(("factory", from_block, to_block))
         return [deployment]
 
-    def scan_auction_events(_chain, _registry, _hydrator, tracked_auctions, from_block, to_block):
+    def scan_auction_events(_chain, _registry, _hydrator, tracked_auctions, from_block, to_block, **_kwargs):
         scan_ranges.append(("auction", from_block, to_block, len(tracked_auctions)))
         return [enabled]
 
@@ -376,7 +376,7 @@ def test_sync_chain_once_rewinds_when_factory_start_moves_earlier(tmp_path, *, m
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [],
     )
 
     first = runtime.sync_chain_once()
@@ -490,7 +490,7 @@ def test_sync_chain_once_logs_inserted_entities(caplog, tmp_path, *, monkeypatch
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [enabled, kicked],
     )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
@@ -564,7 +564,7 @@ def test_confirmed_batches_enqueue_pricing_before_advancing_confirmed_cursor(tmp
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [enabled, kicked],
     )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
@@ -648,7 +648,7 @@ def test_confirmed_batch_retry_after_transaction_failure_does_not_advance_cursor
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled, kicked],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [enabled, kicked],
     )
     runtime.take_detector = SimpleNamespace(
         scan_window=lambda _chain, _conn, from_block, to_block, native_events=(): ([], [take]),
@@ -756,7 +756,7 @@ def test_sync_does_not_wait_for_receiver_alias_lookup(tmp_path, monkeypatch):
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [enabled],
     )
 
     def unexpected_lookup(*_args, **_kwargs):
@@ -806,7 +806,7 @@ def test_sync_chain_once_ignores_receiver_alias_transport_failures(tmp_path, mon
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: [enabled],
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: [enabled],
     )
 
     monkeypatch.setattr(
@@ -914,7 +914,7 @@ def test_watch_exits_after_sustained_failures(monkeypatch, tmp_path):
 
     runtime = IndexerRuntime.__new__(IndexerRuntime)
     runtime.network_name = "ethereum"
-    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0))
+    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0, auctions=()))
     runtime._factory_seeds = ()
     attempts = []
     marked = []
@@ -940,7 +940,7 @@ def test_watch_resets_failure_count_after_a_success(monkeypatch, tmp_path):
 
     runtime = IndexerRuntime.__new__(IndexerRuntime)
     runtime.network_name = "ethereum"
-    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0))
+    runtime.chain = SimpleNamespace(config=SimpleNamespace(poll_interval_seconds=0, auctions=()))
     runtime._factory_seeds = ()
     outcomes = [False, False, True, False, False]
     attempts = []

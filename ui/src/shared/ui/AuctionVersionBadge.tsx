@@ -1,4 +1,5 @@
 import { cn } from "../lib/format";
+import { versionLabel } from "../lib/protocol";
 
 interface AuctionVersionBadgeProps {
   version?: string | null;
@@ -6,11 +7,10 @@ interface AuctionVersionBadgeProps {
 }
 
 export default function AuctionVersionBadge({ version, className }: AuctionVersionBadgeProps) {
-  if (!version) {
+  const displayVersion = versionLabel(version);
+  if (!displayVersion) {
     return null;
   }
-
-  const displayVersion = version.startsWith("v") ? version : `v${version}`;
 
   return <span className={cn("version-badge font-mono", className)}>{displayVersion}</span>;
 }

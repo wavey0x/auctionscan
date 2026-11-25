@@ -7,7 +7,7 @@ from web3 import HTTPProvider, Web3
 
 from .config import load_settings
 from .decode import AbiRegistry
-from .versioning import auction_token_key
+from .versioning import auction_token_key, protocol_for_version
 
 API_RPC_TIMEOUT_SECONDS = 5
 
@@ -39,7 +39,9 @@ def read_live_round_price(
     from_token: str,
     want_token: str,
     block_hash: str,
+    from_decimals: int,
 ) -> LiveRoundPriceResult:
+    """The price of one whole `from` token, in raw want units."""
     registry, w3 = _network_runtime(network_key)
     contract = registry.auction_contract(w3, auction_address, version)
     key = auction_token_key(w3, version=version, auction_address=auction_address,
@@ -52,6 +54,9 @@ def read_live_round_price(
         ccip_read_enabled=False,
     )
     current_price = int(w3.codec.decode(["uint256"], raw)[0])
+    if protocol_for_version(version) == "curve":
+        # Curve quotes raw want units per 1e18 raw units of the lot token.
+        current_price = current_price * 10**from_decimals // 10**18
     return LiveRoundPriceResult(
         is_active=current_price > 0,
         current_price_raw=str(current_price) if current_price > 0 else None,

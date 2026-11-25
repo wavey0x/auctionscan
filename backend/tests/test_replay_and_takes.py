@@ -225,7 +225,7 @@ def test_transfer_scan_matrix_matches_exact_strategies_and_filters_broad_results
     auctions = [f"0x{10_000 + index:040x}" for index in range(101)]
     tokens = [f"0x{20_000 + index:040x}" for index in range(101)]
     rows = [
-        {"auction_address": auction, "from_token": token}
+        {"auction_address": auction, "from_token": token, "version": "1.0.4"}
         for auction, token in zip(auctions, tokens, strict=True)
     ]
     logs = [

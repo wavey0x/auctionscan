@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Mapping
+
+
+PROTOCOLS: tuple[str, ...] = ("yearn", "curve")
 
 
 @dataclass(frozen=True)
@@ -10,7 +15,12 @@ class ContractVersionMetadata:
     param_schema: str
     supported_events: tuple[str, ...]
     getter_bundle: tuple[str, ...]
-    factory_abi_filename: str
+    # None for contracts no factory deploys; they are seeded from config.yaml.
+    factory_abi_filename: str | None
+    protocol: str = "yearn"
+    # Native getter name -> the snapshot field it fills, for contracts whose
+    # getters are not named like Yearn's.
+    getter_aliases: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def normalize_version(value: str | None) -> str:
@@ -21,6 +31,7 @@ def normalize_version(value: str | None) -> str:
 
 
 VERSION_ORDER: tuple[str, ...] = (
+    "curve-1",
     "1.0.5",
     "1.0.4",
     "1.0.3cc",
@@ -185,11 +196,47 @@ VERSION_METADATA: dict[str, ContractVersionMetadata] = {
         ),
         factory_abi_filename="AuctionFactory1_0_3.json",
     ),
+    # Curve's DutchAuctionBurner: one FeeCollector burner per chain that sells
+    # every fee token in a weekly window. Its native events are translated in
+    # decode.py; its lots are priced as totals in raw want units.
+    "curve-1": ContractVersionMetadata(
+        version="curve-1",
+        capability_family="curve-1",
+        param_schema="curve_lot_bounds",
+        supported_events=("EconomicsSet", "LotStaged", "Recovered"),
+        getter_bundle=(
+            "want",
+            "owner",
+            "receiver",
+            "start_total",
+            "floor_total",
+            "step_duration",
+            "auction_length",
+        ),
+        factory_abi_filename=None,
+        protocol="curve",
+        getter_aliases=MappingProxyType({
+            "owner": "governance",
+            "start_total": "startingPrice",
+            "floor_total": "minimumPrice",
+            "step_duration": "stepDuration",
+            "auction_length": "auctionLength",
+        }),
+    ),
 }
 
 
 def version_metadata(version: str | None) -> ContractVersionMetadata | None:
     return VERSION_METADATA.get(normalize_version(version))
+
+
+def protocol_for_version(version: str | None) -> str:
+    metadata = version_metadata(version)
+    return metadata.protocol if metadata else "yearn"
+
+
+def versions_for_protocol(protocol: str) -> list[str]:
+    return [version for version, metadata in VERSION_METADATA.items() if metadata.protocol == protocol]
 
 
 def require_version_metadata(version: str | None) -> ContractVersionMetadata:

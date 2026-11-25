@@ -14,7 +14,7 @@ const occurrence = { chain_id: 1, block_hash: `0x${"b".repeat(64)}`, tx_hash: `0
 const sellToken = { address: `0x${"d".repeat(40)}`, symbol: "SELL", name: "Sell token", decimals: 18, chain_id: 1 };
 const wantToken = { ...sellToken, address: `0x${"e".repeat(40)}`, symbol: "WANT", name: "Want token" };
 const round: RoundListItem = {
-  occurrence, chain_id: 1, auction_address: auction, round_id: 7, status: "settled", is_active: false,
+  occurrence, chain_id: 1, auction_address: auction, round_id: 7, status: "settled", is_active: false, protocol: "yearn",
   from_token: sellToken.address, from_token_symbol: sellToken.symbol,
   want_token: wantToken.address, want_token_symbol: wantToken.symbol,
   kicked_at: "2026-09-17T12:00:00Z", activity_at: "2026-09-17T13:00:00Z", end_at: "2026-09-17T13:00:00Z",
@@ -30,7 +30,7 @@ const take: TakeDetail = {
   to_token: wantToken.address, to_token_symbol: wantToken.symbol,
 };
 const details: AuctionDetails = {
-  as_of: {}, address: auction, chain_id: 1, from_tokens: [sellToken], want_token: wantToken,
+  as_of: {}, address: auction, chain_id: 1, protocol: "yearn", from_tokens: [sellToken], want_token: wantToken,
   parameters: {}, activity: { total_participants: 1, total_volume: "2", paid_take_count: 1, total_rounds: 21, total_takes: 1 },
 };
 let client: QueryClient;
@@ -39,7 +39,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "getAuction").mockResolvedValue(details);
   // The pager follows the page the response says it holds, so the stub answers with the page asked for.
-  vi.spyOn(api, "getRounds").mockImplementation(async (params) => ({ as_of: {}, rounds: [round], total: 21, status_counts: { all: 21, live: 0, sold_out: 0, expired: 0, settled: 21 }, page: params.page ?? 1, per_page: 20, has_next: true }));
+  vi.spyOn(api, "getRounds").mockImplementation(async (params) => ({ as_of: {}, rounds: [round], total: 21, status_counts: { all: 21, scheduled: 0, live: 0, sold_out: 0, expired: 0, settled: 21 }, page: params.page ?? 1, per_page: 20, has_next: true }));
   vi.spyOn(api, "getAuctionTakes").mockResolvedValue({ as_of: {}, takes: [take], available_price_sources: [] });
   vi.spyOn(api, "getTake").mockResolvedValue(take);
   vi.spyOn(api, "getChains").mockResolvedValue({ chains: {}, count: 0 });
@@ -69,8 +69,8 @@ it("lists the auction's rounds under its own head, without an auction column", a
   expect(screen.getByRole("heading", { level: 1 }).textContent?.toLowerCase()).toContain("0xaaaa");
   expect(screen.getAllByRole("columnheader").map((header) => header.textContent)[0]).toBe("Round");
   expect(screen.queryByRole("columnheader", { name: "Auction" })).toBeNull();
-  // The auction fixes the chain, so it is not offered as a filter.
-  expect(screen.queryByRole("group", { name: "Chain" })).toBeNull();
+  // The auction fixes the chain and the protocol, so neither is offered as a filter.
+  expect(screen.queryByRole("group", { name: "Protocol" })).toBeNull();
   expect(screen.getByRole("group", { name: "Round status" })).toBeTruthy();
 });
 
@@ -156,4 +156,23 @@ it("opens the round from the keyboard", async () => {
   const row = roundRow();
   fireEvent.keyDown(row, { key: "Enter" });
   expect(router.state.location.pathname + router.state.location.search).toBe(buildRoundPathWithSource(1, auction, 7, "auction"));
+});
+
+it("heads a Curve burner with its name and the lot price its lots share", async () => {
+  const sellTokens = Array.from({ length: 10 }, (_, index) => ({
+    ...sellToken, address: `0x${(index + 1).toString(16).padStart(40, "0")}`, symbol: `FEE${index + 1}`,
+  }));
+  vi.mocked(api.getAuction).mockResolvedValue({
+    ...details, protocol: "curve", version: "curve-1", from_tokens: sellTokens,
+    parameters: { starting_price: "250000", floor_price: "100", decay_percent: "0.33%", update_interval: 36, auction_length: 86400 },
+  });
+  await mount();
+  const head = screen.getByRole("region", { name: "Rounds" }).querySelector("header")!;
+  await waitFor(() => expect(head.textContent).toContain("Lot price"));
+  const text = head.textContent ?? "";
+  for (const shown of ["Curve burner", "Sells · 10", "+2 more", "For", "Receiver", "Rounds", "Takes", "Volume", "250.00K → 100 WANT"]) {
+    expect(text).toContain(shown);
+  }
+  // Settings a burner does not have are left out, not shown as dashes.
+  for (const absent of ["Min price", "Decay", "Duration"]) expect(text).not.toContain(absent);
 });

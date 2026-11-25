@@ -16,6 +16,7 @@ from ..models import (
     RoundLivePrice,
     RoundStatusCounts,
     RoundStatusFilter,
+    ProtocolFilter,
     RoundsResponse,
     StatsResponse,
     TimeWindowFilter,
@@ -43,6 +44,7 @@ def get_rounds(
     tx_hash: str | None = Query(default=None),
     time_window: TimeWindowFilter = Query(default="all"),
     version: list[str] | None = Query(default=None),
+    protocol: ProtocolFilter = Query(default="all"),
     page: int = Query(default=1, ge=1, le=MAX_PAGE),
     limit: int = Query(default=15, ge=1, le=200),
     db: Database = Depends(get_database),
@@ -60,6 +62,7 @@ def get_rounds(
             tx_hash=tx_hash,
             time_window=time_window,
             versions=version,
+            protocol=protocol,
             page=page,
             limit=limit,
         )
@@ -97,12 +100,13 @@ def get_stats(
     chain_id: int | None = Query(default=None),
     time_window: TimeWindowFilter = Query(default="30d"),
     version: list[str] | None = Query(default=None),
+    protocol: ProtocolFilter = Query(default="all"),
     db: Database = Depends(get_database),
 ) -> StatsResponse:
     set_cache_policy(response, PERSISTED)
     with db.connect() as conn:
         as_of = load_as_of(conn)
-        stats = round_stats(conn, chain_id=chain_id, time_window=time_window, versions=version)
+        stats = round_stats(conn, chain_id=chain_id, time_window=time_window, versions=version, protocol=protocol)
 
     rows = stats["rows"]
     return StatsResponse(
@@ -207,8 +211,8 @@ def get_round_live_price(
         raise HTTPException(status_code=503, detail=f"Chain metadata unavailable for chain_id={chain_id}")
     if not row["version"] or not row["from_token"]:
         raise HTTPException(status_code=503, detail="Round is missing live pricing metadata")
-    if row["want_token_decimals"] is None:
-        raise HTTPException(status_code=503, detail="Round is missing want token decimals for live pricing")
+    if row["want_token_decimals"] is None or row["from_token_decimals"] is None:
+        raise HTTPException(status_code=503, detail="Round is missing token decimals for live pricing")
 
     try:
         live_price = read_live_round_price(
@@ -218,6 +222,7 @@ def get_round_live_price(
             from_token=str(row["from_token"]),
             want_token=str(row["want_token"]),
             block_hash=indexed_block_hash.lower(),
+            from_decimals=int(row["from_token_decimals"]),
         )
     except Exception as exc:  # pragma: no cover - exercised via API error handling
         raise HTTPException(status_code=503, detail="Live price unavailable") from exc

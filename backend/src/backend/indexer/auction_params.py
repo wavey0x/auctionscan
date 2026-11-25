@@ -24,6 +24,8 @@ class DecodedAuctionParams:
     step_decay_percent: str | None
     step_duration_seconds: int | None
     auction_length_seconds: int | None
+    # Lot total the price decays to and then holds until the window ends.
+    floor_price: str | None = None
 
 
 def _decimal_text(value: Decimal | None) -> str | None:
@@ -69,7 +71,42 @@ def _fixed_decay_percent_text() -> str:
     return _decimal_text(value) or "0"
 
 
-def decode_params(param_schema: str | None, raw: RawAuctionParams) -> DecodedAuctionParams:
+def _geometric_decay_percent(start_total: Decimal | None, floor_total: Decimal | None,
+                             step_seconds: int | None, length_seconds: int | None) -> str | None:
+    """Per-step drop of a curve that falls from start to floor in its last active step.
+
+    The window excludes its end, so its last active second is length - 1 and
+    the curve has (length - 1) // step decay steps.
+    """
+    if not start_total or not floor_total or not step_seconds or not length_seconds:
+        return None
+    steps = (length_seconds - 1) // step_seconds
+    if start_total <= 0 or floor_total <= 0 or floor_total > start_total or steps <= 0:
+        return None
+    with localcontext() as context:
+        context.prec = 80
+        ratio = ((floor_total / start_total).ln() / Decimal(steps)).exp()
+        return _decimal_text((Decimal(1) - ratio) * Decimal(100))
+
+
+def decode_params(
+    param_schema: str | None, raw: RawAuctionParams, *, want_decimals: int | None = None,
+) -> DecodedAuctionParams:
+    if param_schema == "curve_lot_bounds":
+        # Totals are raw want units for the whole lot; the decay is implied by
+        # the span between them, not configured.
+        step_seconds = _seconds_int(raw.step_duration_raw)
+        length_seconds = _seconds_int(raw.auction_length_raw)
+        return DecodedAuctionParams(
+            starting_price=_scaled_decimal(raw.starting_price_raw, want_decimals) if want_decimals is not None else None,
+            minimum_price=None,
+            step_decay_percent=_geometric_decay_percent(
+                _raw_decimal(raw.starting_price_raw), _raw_decimal(raw.minimum_price_raw), step_seconds, length_seconds,
+            ),
+            step_duration_seconds=step_seconds,
+            auction_length_seconds=length_seconds,
+            floor_price=_scaled_decimal(raw.minimum_price_raw, want_decimals) if want_decimals is not None else None,
+        )
     if param_schema == "v1_fixed_decay":
         return DecodedAuctionParams(
             starting_price=_scaled_decimal(raw.starting_price_raw, 0),

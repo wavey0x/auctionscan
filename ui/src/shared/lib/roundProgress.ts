@@ -1,6 +1,6 @@
 import { formatAmount, formatDuration, parseTimestamp } from "./format";
 
-export type RoundProgressStatus = "live" | "sold_out" | "expired" | "settled";
+export type RoundProgressStatus = "scheduled" | "live" | "sold_out" | "expired" | "settled";
 
 function toUnixSeconds(value: string | null | undefined): number | null {
   const parsed = parseTimestamp(value);
@@ -48,7 +48,8 @@ export function getRoundProgressMetrics({
     ? Math.max(
         0,
         Math.min(
-          (status === "live" ? nowSec : endAtSec ?? scheduledEndAtSec) - kickedAtSec,
+          // An upcoming round has not started its clock.
+          (status === "scheduled" ? kickedAtSec : status === "live" ? nowSec : endAtSec ?? scheduledEndAtSec) - kickedAtSec,
           scheduledDuration!,
         ),
       )
@@ -66,7 +67,9 @@ export function getRoundProgressMetrics({
 
   const timeDetail = !hasTimeline || scheduledDuration === null || elapsedTime === null
     ? "Schedule unavailable"
-    : status === "live"
+    : status === "scheduled"
+      ? `Opens in ${formatDuration(Math.max(0, kickedAtSec! - nowSec))} for ${formatDuration(scheduledDuration)}`
+      : status === "live"
       ? `${formatDuration(elapsedTime)} of ${formatDuration(scheduledDuration)}`
       : closedEarly
         ? `Closed after ${formatDuration(elapsedTime)}`

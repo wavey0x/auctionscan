@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from backend.indexer.types import normalize_address
-from backend.indexer.versioning import normalize_version_filters, version_sort_index
+from backend.indexer.versioning import normalize_version_filters, version_sort_index, versions_for_protocol
 
 _CONFIRMED_CASE = """CASE
                    WHEN ss.last_confirmed_processed IS NOT NULL
@@ -98,6 +98,7 @@ def _round_select_clause() -> str:
                ra.alias_text AS receiver_name,
                r.minimum_price,
                r.starting_price,
+               r.floor_price,
                r.step_decay_percent,
                r.step_duration_seconds,
                r.auction_length_seconds,
@@ -155,7 +156,7 @@ _TIME_WINDOW_SECONDS: dict[str, int] = {
 }
 
 
-ROUND_STATUSES: tuple[str, ...] = ("live", "sold_out", "expired", "settled")
+ROUND_STATUSES: tuple[str, ...] = ("scheduled", "live", "sold_out", "expired", "settled")
 
 
 def _time_window_cutoff(time_window: str | None) -> int | None:
@@ -180,6 +181,15 @@ def _version_clause(column: str, versions: list[str] | tuple[str, ...] | None) -
     return f" AND LOWER({column}) IN ({placeholders})", normalized
 
 
+def _protocol_clause(column: str, protocol: str | None) -> tuple[str, list[Any]]:
+    if not protocol or protocol == "all":
+        return "", []
+    versions = versions_for_protocol("curve")
+    placeholders = ", ".join("?" for _ in versions)
+    operator = "IN" if protocol == "curve" else "NOT IN"
+    return f" AND LOWER({column}) {operator} ({placeholders})", versions
+
+
 def build_round_filters(
     *,
     chain_id: int | None,
@@ -190,6 +200,7 @@ def build_round_filters(
     tx_hash: str | None,
     time_window: str | None,
     versions: list[str] | tuple[str, ...] | None,
+    protocol: str | None = None,
 ) -> tuple[str, list[Any]]:
     clauses = [" WHERE 1 = 1"]
     params: list[Any] = []
@@ -229,6 +240,9 @@ def build_round_filters(
     version_sql, version_params = _version_clause("a.version", versions)
     clauses.append(version_sql)
     params.extend(version_params)
+    protocol_sql, protocol_params = _protocol_clause("a.version", protocol)
+    clauses.append(protocol_sql)
+    params.extend(protocol_params)
     if pair:
         parts = [item.strip() for item in pair.split("/") if item.strip()]
         if len(parts) >= 2:
@@ -269,6 +283,7 @@ def list_rounds(
     versions: list[str] | tuple[str, ...] | None,
     page: int,
     limit: int,
+    protocol: str | None = None,
 ) -> tuple[int, dict[str, int], list[sqlite3.Row]]:
     """Return the matching total, counts by status under the other filters, and one page of rows."""
     filters = {
@@ -279,6 +294,7 @@ def list_rounds(
         "tx_hash": tx_hash,
         "time_window": time_window,
         "versions": versions,
+        "protocol": protocol,
     }
     unfiltered_sql, unfiltered_params = build_round_filters(status=None, **filters)
     counts = dict.fromkeys(ROUND_STATUSES, 0)
@@ -300,9 +316,11 @@ def round_stats(
     chain_id: int | None,
     time_window: str | None,
     versions: list[str] | tuple[str, ...] | None,
+    protocol: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate the rounds a rounds-list query with the same filters would return."""
     where_sql, params = build_round_filters(
+        protocol=protocol,
         chain_id=chain_id,
         auction_address=None,
         round_id=None,
@@ -376,6 +394,7 @@ def get_auction(conn: sqlite3.Connection, *, chain_id: int, auction_address: str
                ac.receiver AS current_receiver,
                ac.minimum_price,
                ac.starting_price,
+               ac.floor_price,
                ac.step_decay_percent,
                ac.step_duration_seconds,
                ac.auction_length_seconds,

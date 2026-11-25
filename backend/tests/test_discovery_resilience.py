@@ -20,7 +20,7 @@ def prepare(runtime, chain, *, configured, registry, monkeypatch):
     runtime.discovery_chain = chain
     runtime.discoverer = FactoryDiscoverer(_FakeAbiRegistry(registry))
     monkeypatch.setattr(collection_module, "scan_factory_events", lambda *args: [])
-    monkeypatch.setattr(collection_module, "scan_auction_events", lambda *args: [])
+    monkeypatch.setattr(collection_module, "scan_auction_events", lambda *args, **_kwargs: [])
 
 
 def test_registry_outage_after_restart_keeps_factories_indexing_and_old_findings(tmp_path, monkeypatch):

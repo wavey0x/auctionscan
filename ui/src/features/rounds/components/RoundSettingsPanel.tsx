@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn, formatDuration, formatPrice } from "../../../shared/lib/format";
+import { versionLabel } from "../../../shared/lib/protocol";
 import type { RoundListItem } from "../../../shared/types/api";
 import AddressValue from "../../../shared/ui/AddressValue";
 
@@ -23,6 +24,7 @@ export default function RoundSettingsPanel({
   chainId,
   startingPricePerUnit,
   minimumPrice,
+  floorPrice,
   duration,
   stepDuration,
   decay,
@@ -32,6 +34,7 @@ export default function RoundSettingsPanel({
   chainId: number;
   startingPricePerUnit?: string | null;
   minimumPrice?: string | null;
+  floorPrice?: string | null;
   duration?: number | null;
   stepDuration?: number | null;
   decay?: string | null;
@@ -64,6 +67,12 @@ export default function RoundSettingsPanel({
         ) : null}
       </Row>
 
+      {floorPrice ? (
+        <Row label="Floor" title="The price falls to this floor and holds there until the window ends">
+          {formatPrice(floorPrice, 8)}
+        </Row>
+      ) : null}
+
       <Row label="Cutoff">
         <span className={cn(!showMinimumPrice && !showDuration && "text-faint")}>
           {showMinimumPrice ? `below ${formatPrice(minimumPrice, 8)}` : null}
@@ -82,7 +91,7 @@ export default function RoundSettingsPanel({
 
       {version ? (
         <Row label="Version" title="Auction contract version">
-          {version.startsWith("v") ? version : `v${version}`}
+          {versionLabel(version)}
         </Row>
       ) : null}
     </div>

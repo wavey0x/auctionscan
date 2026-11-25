@@ -11,7 +11,7 @@ const auction = `0x${"a".repeat(40)}`;
 const occurrence = { chain_id: 1, block_hash: `0x${"b".repeat(64)}`, tx_hash: `0x${"c".repeat(64)}`, log_index: 4 };
 function details(block: number): RoundDetailResponse {
   return {
-    round: { occurrence, chain_id: 1, auction_address: auction, round_id: 1, status: "live", is_active: true,
+    round: { occurrence, chain_id: 1, auction_address: auction, round_id: 1, status: "live", is_active: true, protocol: "yearn",
       from_token: `0x${"d".repeat(40)}`, want_token: `0x${"e".repeat(40)}`, want_token_decimals: 6,
       kicked_at: "2026-09-17T12:00:00Z", activity_at: "2026-09-17T12:00:00Z", take_count: 0, paid_take_count: 0, paid_usd_take_count: 0,
       usd_priced_take_count: 0, sold_amount: "0", paid_amount: null },
@@ -191,6 +191,51 @@ it.each([
   expect(text).not.toContain("Time left");
   // A round that ended without a take has no result to report beyond its lot.
   expect(text.includes("Received")).toBe(sales.take_count > 0);
+});
+
+
+it("leads an upcoming Curve lot with its window and names the burner", async () => {
+  vi.setSystemTime(new Date("2026-09-17T06:00:00Z"));
+  const { container } = mountRound({
+    status: "scheduled", is_active: false, protocol: "curve", version: "curve-1",
+    kicked_at: "2026-09-17T12:00:00Z", scheduled_end_at: "2026-09-18T12:00:00Z", end_at: "2026-09-18T12:00:00Z",
+    initial_available: "1500", available_amount: "1500", auction_length: 86400, update_interval: 36,
+    decay_percent: "0.33%", starting_price_per_unit: "166.666", floor_price_per_unit: "0.0666",
+  });
+  await settle();
+  const text = container.textContent ?? "";
+  for (const label of ["Upcoming", "Curve burner", "Lot", "1.50K", "Starts at", "floor 0.0666", "Opens in", "5h 59m", "for 1d 0h", "none yet"]) {
+    expect(text).toContain(label);
+  }
+  // Nothing is open to price or report yet: one row of figures, not a second Lot under the chart.
+  for (const absent of ["Remaining", "Price now", "Received", "Kicked"]) expect(text).not.toContain(absent);
+  expect(container.querySelectorAll("dl.outcome")).toHaveLength(1);
+  expect(container.querySelectorAll("dl.outcome dt")).toHaveLength(3);
+});
+
+const finished = {
+  status: "sold_out", is_active: false, protocol: "curve", version: "curve-1",
+  scheduled_end_at: "2026-09-18T12:00:00Z", end_at: "2026-09-17T18:00:00Z",
+  initial_available: "1500", available_amount: "0", sold_amount: "1500", paid_amount: "1499",
+  take_count: 1, paid_take_count: 1, paid_usd_take_count: 1, usd_priced_take_count: 1, priced_take_count: 1,
+  total_actual_paid_usd: "1499.5", total_market_quote_usd: "1510", total_auction_profit_usd: "-10.5", total_auction_profit_bps: -0.7,
+} as const;
+const takeTx = `0x${"f".repeat(64)}`;
+const curveTake = {
+  occurrence: { ...occurrence, tx_hash: takeTx, log_index: 9 }, round_occurrence: occurrence, auction, chain_id: 1, round_id: 1,
+  take_seq: 1, taker: `0x${"9".repeat(40)}`, amount_taken: "1500", amount_paid: "1499", amount_paid_usd: "1499.5",
+  price: "0.9993", timestamp: "2026-09-17T18:00:00Z", tx_hash: takeTx, block_number: 101, confirmed: true,
+  market_quote_out_usd: "1510", price_differential_usd: "-10.5", price_differential_percent: -0.7,
+};
+
+it("gives a figure with no dollar value a dash in dollars", async () => {
+  window.localStorage.setItem("round_figures_denomination", "usd");
+  vi.spyOn(api, "getAuctionTakes").mockResolvedValue({ as_of: {}, takes: [{ ...curveTake, amount_paid_usd: null }], available_price_sources: [] } as unknown as Awaited<ReturnType<typeof api.getAuctionTakes>>);
+  const { container } = mountRound({ ...finished, total_actual_paid_usd: null });
+  await settle();
+  const received = [...container.querySelectorAll("dl.outcome .outcome-cell")].find((cell) => cell.querySelector("dt")?.textContent === "Received");
+  expect(received?.querySelector(".outcome-figure")?.textContent).toBe("—");
+  window.localStorage.clear();
 });
 
 const sold = {

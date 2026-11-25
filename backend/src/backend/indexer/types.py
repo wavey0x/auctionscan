@@ -76,6 +76,16 @@ class FactorySeed:
 
 
 @dataclass(frozen=True)
+class AuctionSeed:
+    """A singleton auction no factory deploys, tracked from config.yaml."""
+
+    address: str
+    version: str
+    capability_family: str
+    start_block: int
+
+
+@dataclass(frozen=True)
 class ChainConfig:
     name: str
     chain_id: int
@@ -88,6 +98,7 @@ class ChainConfig:
     poa: bool = False
     registry: Optional[RegistryConfig] = None
     factories: tuple[FactorySeed, ...] = ()
+    auctions: tuple[AuctionSeed, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -95,7 +106,7 @@ class VersionDefinition:
     version: str
     capability_family: str
     auction_abi_path: Path
-    factory_abi_path: Path
+    factory_abi_path: Optional[Path]
     supported_events: tuple[str, ...]
     getter_bundle: tuple[str, ...]
 

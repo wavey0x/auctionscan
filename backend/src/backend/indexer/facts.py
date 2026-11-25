@@ -80,7 +80,10 @@ def _insert_domain_event(conn, prepared: PreparedEvent) -> bool:
 
 
 
-def _persist_deploy_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> None:
+AUCTION_SNAPSHOT_KINDS = {"DeployedNewAuction": "deploy", "EconomicsSet": "economics"}
+
+
+def _persist_auction_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> None:
     param_schema = param_schema_for_version(event.version)
     conn.execute(
         """
@@ -89,11 +92,12 @@ def _persist_deploy_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> Non
             block_number, tx_hash, log_index, block_hash, want_token, governance, receiver,
             minimum_price_raw, starting_price_raw, step_decay_rate_raw, step_duration_raw,
             auction_length_raw, extra_params_json, created_at
-        ) VALUES (?, ?, 'deploy', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.chain_id,
             event.auction_address,
+            AUCTION_SNAPSHOT_KINDS[event.event_name],
             event.version,
             param_schema,
             event.block_number,
@@ -113,6 +117,74 @@ def _persist_deploy_snapshot_fact(conn, event, snapshot: AuctionSnapshot) -> Non
         ),
     )
 
+
+
+def kick_round(conn, event) -> tuple[int, bool]:
+    """Return the round a kick belongs to and whether the kick opens it.
+
+    A kick that names its trading window (``startsAt``) can be repeated for
+    the same window: each repeat re-snapshots the lot before trading starts.
+    The first kick for a token and window opens the round and is its snapshot
+    source; later ones join it. Other kicks always open a round.
+    """
+    if event.payload.get("startsAt") is None:
+        return _deterministic_round_id(conn, event), True
+    opener = _window_opener(conn, event)
+    if opener is not None:
+        opens = (opener["snapshot_tx_hash"], int(opener["snapshot_log_index"])) == (event.tx_hash, event.log_index)
+        return int(opener["round_id"]), opens
+    # Kicks are persisted in chain order, so the next round follows the last one.
+    return _latest_round_id(conn, event.chain_id, event.auction_address) + 1, True
+
+
+def repeated_window_kicks(conn, events) -> set[tuple[str, int]]:
+    """Kicks among `events` (chain order) that repeat a window already staged.
+
+    Returns their (tx_hash, log_index). A repeat only re-snapshots its
+    round's lot, so collection reads no snapshot for it. Round numbers are
+    assigned by kick_round alone, when kicks are persisted.
+    """
+    repeated: set[tuple[str, int]] = set()
+    seen: set[tuple[int, str, str, int]] = set()
+    for event in events:
+        starts_at = event.payload.get("startsAt")
+        if event.event_name != "AuctionKicked" or starts_at is None:
+            continue
+        identity = (event.tx_hash, event.log_index)
+        window = (event.chain_id, event.auction_address, event.payload["from"], int(starts_at))
+        if window not in seen:
+            seen.add(window)
+            opener = _window_opener(conn, event)
+            if opener is None or (opener["snapshot_tx_hash"], int(opener["snapshot_log_index"])) == identity:
+                continue
+        repeated.add(identity)
+    return repeated
+
+
+def _window_opener(conn, event):
+    return conn.execute(
+        """
+        SELECT s.round_id, s.snapshot_tx_hash, s.snapshot_log_index
+          FROM round_param_snapshot s
+          JOIN domain_events e
+            ON e.chain_id = s.chain_id
+           AND e.tx_hash = s.snapshot_tx_hash
+           AND e.log_index = s.snapshot_log_index
+         WHERE s.chain_id = ?
+           AND s.auction_address = ?
+           AND s.from_token = ?
+           AND json_extract(e.payload_json, '$.startsAt') = ?
+        """,
+        (event.chain_id, event.auction_address, event.payload["from"], int(event.payload["startsAt"])),
+    ).fetchone()
+
+
+def _latest_round_id(conn, chain_id: int, auction_address: str) -> int:
+    latest = conn.execute(
+        "SELECT MAX(round_id) FROM round_param_snapshot WHERE chain_id = ? AND auction_address = ?",
+        (chain_id, auction_address),
+    ).fetchone()[0]
+    return int(latest or 0)
 
 
 def _deterministic_round_id(conn, event) -> int:
@@ -350,12 +422,12 @@ def persist_snapshot_facts(conn, prepared_events: list[PreparedEvent]) -> None:
         event, snapshot = prepared.domain_event, prepared.snapshot
         if snapshot is None:
             continue
-        if event.event_name == "DeployedNewAuction":
-            _persist_deploy_snapshot_fact(conn, event, snapshot)
+        if event.event_name in AUCTION_SNAPSHOT_KINDS:
+            _persist_auction_snapshot_fact(conn, event, snapshot)
         elif event.event_name == "AuctionKicked":
-            _persist_kick_snapshot_fact(
-                conn, event, snapshot, _deterministic_round_id(conn, event), _resolve_event_from_token(conn, event),
-            )
+            round_id, opens = kick_round(conn, event)
+            if opens:
+                _persist_kick_snapshot_fact(conn, event, snapshot, round_id, _resolve_event_from_token(conn, event))
 
 
 def delete_derived_take_events(conn, chain_id: int) -> None:

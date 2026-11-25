@@ -58,11 +58,13 @@ export default function AddressValue({
     event.stopPropagation();
   };
 
+  // A named address keeps its name when space runs out: the short address
+  // after it gives way first.
   const content = label ? (
     <span className="inline-flex min-w-0 max-w-full items-baseline gap-1 overflow-hidden whitespace-nowrap">
       <span className="min-w-0 truncate text-primary">{displayLabel}</span>
       {displayAddressSuffix ? (
-        <span className="shrink-0 font-mono text-[10px] text-tertiary">
+        <span className="address-suffix min-w-0 shrink-[100] truncate font-mono text-[10px] text-tertiary">
           {displayAddressSuffix}
         </span>
       ) : null}

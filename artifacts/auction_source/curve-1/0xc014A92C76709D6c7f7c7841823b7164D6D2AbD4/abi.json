@@ -1,0 +1,982 @@
+[
+  {
+    "name": "ReceiverSet",
+    "inputs": [
+      {
+        "name": "receiver",
+        "type": "address",
+        "indexed": true
+      }
+    ],
+    "anonymous": false,
+    "type": "event"
+  },
+  {
+    "name": "EconomicsSet",
+    "inputs": [
+      {
+        "name": "want",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "start_total",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "floor_total",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "step_duration",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false,
+    "type": "event"
+  },
+  {
+    "name": "Taken",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "indexed": false
+      },
+      {
+        "name": "amount_out",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "payment",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "remaining_balance",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false,
+    "type": "event"
+  },
+  {
+    "name": "LotStaged",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "initial_amount",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "start_total",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "floor_total",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "start",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "end",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false,
+    "type": "event"
+  },
+  {
+    "name": "Recovered",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false,
+    "type": "event"
+  },
+  {
+    "name": "BadFeeCollector",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadTarget",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadExchangeFrame",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "OnlyFeeCollector",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "TargetChanged",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "NotSleepEpoch",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadRoleSource",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadReceiver",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "StartTotalTooLarge",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "FloorAboveStart",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "ZeroFloor",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadWant",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadStartTotal",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadFloor",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "ZeroStep",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "StepExceedsAuction",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadAuctionLength",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadRegistry",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "DivisionByZero",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "AmountExceedsAvailable",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "ZeroReceiver",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "NothingAvailable",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "Deadline",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "InsufficientAmount",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "ExcessivePayment",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadBuyToken",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "LotInactive",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadSellAmount",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadValidTo",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "BadBuyAmount",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "WantNotSellable",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "name": "OnlyOwner",
+    "inputs": [],
+    "type": "error"
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "auction_length",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "want",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "receiver",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "start_total",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "floor_total",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "step_duration",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "lots",
+    "inputs": [
+      {
+        "name": "arg0",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "staged_at",
+            "type": "uint256"
+          },
+          {
+            "name": "initial_amount",
+            "type": "uint256"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "window",
+    "inputs": [
+      {
+        "name": "_token",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "window",
+    "inputs": [
+      {
+        "name": "_token",
+        "type": "address"
+      },
+      {
+        "name": "_timestamp",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "available",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "price",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "price",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "_ts",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "getAmountNeeded",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "getAmountNeeded",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "amountToTake",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "getAmountNeeded",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "amountToTake",
+        "type": "uint256"
+      },
+      {
+        "name": "_ts",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "take",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "take",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "maxAmount",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "take",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "maxAmount",
+        "type": "uint256"
+      },
+      {
+        "name": "takerReceiver",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "take",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "maxAmount",
+        "type": "uint256"
+      },
+      {
+        "name": "takerReceiver",
+        "type": "address"
+      },
+      {
+        "name": "data",
+        "type": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "take_with_limits",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "_max_amount",
+        "type": "uint256"
+      },
+      {
+        "name": "_min_amount",
+        "type": "uint256"
+      },
+      {
+        "name": "_max_payment",
+        "type": "uint256"
+      },
+      {
+        "name": "_receiver",
+        "type": "address"
+      },
+      {
+        "name": "_deadline",
+        "type": "uint256"
+      },
+      {
+        "name": "_data",
+        "type": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "check_order",
+    "inputs": [
+      {
+        "name": "_sell_token",
+        "type": "address"
+      },
+      {
+        "name": "_buy_token",
+        "type": "address"
+      },
+      {
+        "name": "_receiver",
+        "type": "address"
+      },
+      {
+        "name": "_sell_amount",
+        "type": "uint256"
+      },
+      {
+        "name": "_min_buy_amount",
+        "type": "uint256"
+      },
+      {
+        "name": "_valid_to",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "isActive",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "auctionLength",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "auctions",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "kicked",
+            "type": "uint64"
+          },
+          {
+            "name": "scaler",
+            "type": "uint64"
+          },
+          {
+            "name": "initialAvailable",
+            "type": "uint128"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "registry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "sync_executor_approvals",
+    "inputs": [
+      {
+        "name": "_executor",
+        "type": "address"
+      },
+      {
+        "name": "_tokens",
+        "type": "address[]"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "isValidSignature",
+    "inputs": [
+      {
+        "name": "_hash",
+        "type": "bytes32"
+      },
+      {
+        "name": "_signature",
+        "type": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "burn",
+    "inputs": [
+      {
+        "name": "_coins",
+        "type": "address[]"
+      },
+      {
+        "name": "_receiver",
+        "type": "address"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "resync_target",
+    "inputs": [
+      {
+        "name": "_expected_target",
+        "type": "address"
+      },
+      {
+        "name": "_start_total",
+        "type": "uint256"
+      },
+      {
+        "name": "_floor_total",
+        "type": "uint256"
+      },
+      {
+        "name": "_step_duration",
+        "type": "uint256"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "push_target",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "function",
+    "name": "recover",
+    "inputs": [
+      {
+        "name": "_coins",
+        "type": "address[]"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "_interface_id",
+        "type": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "VERSION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string"
+      }
+    ]
+  },
+  {
+    "stateMutability": "view",
+    "type": "function",
+    "name": "fee_collector",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "stateMutability": "nonpayable",
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "_fee_collector",
+        "type": "address"
+      },
+      {
+        "name": "_start_total",
+        "type": "uint256"
+      },
+      {
+        "name": "_floor_total",
+        "type": "uint256"
+      },
+      {
+        "name": "_step_duration",
+        "type": "uint256"
+      },
+      {
+        "name": "_registry",
+        "type": "address"
+      }
+    ],
+    "outputs": []
+  }
+]

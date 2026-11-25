@@ -64,7 +64,7 @@ def test_expiry_advances_with_empty_live_blocks_during_finality_stall(tmp_path, 
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _auctions, from_block, to_block: [
+        lambda _chain, _registry, _hydrator, _auctions, from_block, to_block, **_kwargs: [
             item
             for item in [events["enabled"], kicked]
             if from_block <= item.domain_event.block_number <= to_block

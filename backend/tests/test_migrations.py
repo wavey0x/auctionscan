@@ -1444,3 +1444,45 @@ def test_api_returns_503_when_schema_migrations_are_pending(tmp_path):
     assert response.status_code == 503
     assert "schema is outdated" in response.json()["detail"]
     assert str(db_path) not in response.text
+
+
+def test_seeded_auction_migration_relaxes_factory_columns_and_keeps_rows(tmp_path):
+    db_path = tmp_path / "auctionscan.sqlite3"
+    apply_pending_migrations(db_path)
+    with sqlite3.connect(db_path) as conn:
+        # Restore the pre-0019 shape: factory columns required, no lot floor.
+        for table, columns in {"tracked_auctions": ("factory_address", "discovered_tx_hash"), "auctions": ("factory_address",)}.items():
+            sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0]
+            indexes = [row[0] for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL", (table,))]
+            for column in columns:
+                sql = sql.replace(f"{column} TEXT,", f"{column} TEXT NOT NULL,")
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(sql)
+            for index_sql in indexes:
+                conn.execute(index_sql)
+        conn.execute("INSERT INTO auctions (chain_id, auction_address, factory_address, version, capability_family, "
+                     "deployment_block, latest_lifecycle_block, created_at, updated_at) "
+                     "VALUES (1, '0xa', '0xf', '1.0.4', '1.0.4', 1, 1, 0, 0)")
+        for table in ("rounds", "auction_current_params"):
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN floor_price")
+        conn.execute("DROP INDEX idx_round_param_snapshot_token")
+        conn.execute("DELETE FROM _yoyo_migration WHERE migration_id = '0019_seeded_auctions'")
+    assert has_pending_migrations(db_path) is True
+
+    apply_pending_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        def not_null(table: str, column: str) -> int:
+            return next(row[3] for row in conn.execute(f"PRAGMA table_info({table})") if row[1] == column)
+
+        assert not_null("tracked_auctions", "factory_address") == 0
+        assert not_null("tracked_auctions", "discovered_tx_hash") == 0
+        assert not_null("auctions", "factory_address") == 0
+        assert conn.execute("SELECT factory_address FROM auctions").fetchall() == [("0xf",)]
+        assert {row[1] for row in conn.execute("PRAGMA index_list(tracked_auctions)")} >= {"idx_tracked_auctions_factory"}
+        assert {row[1] for row in conn.execute("PRAGMA index_list(auctions)")} >= {"idx_auctions_address_search"}
+        for table in ("rounds", "auction_current_params"):
+            assert "floor_price" in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        assert "idx_round_param_snapshot_token" in {row[1] for row in conn.execute("PRAGMA index_list(round_param_snapshot)")}
+    assert has_pending_migrations(db_path) is False

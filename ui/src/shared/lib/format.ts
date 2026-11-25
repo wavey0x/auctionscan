@@ -228,7 +228,10 @@ export function renderKickedValue(value: string, mode: KickedDisplayMode): strin
     return formatCompactDateTime(value);
   }
   const relative = formatCompactRelativeTime(value);
-  return relative === "now" ? relative : `${relative} ago`;
+  if (relative === "now" || relative === "—") return relative;
+  // A scheduled round's window opens later.
+  const date = parseTimestamp(value);
+  return date && date.getTime() > Date.now() ? `in ${relative}` : `${relative} ago`;
 }
 
 export function formatUnsignedPercent(value: number | null | undefined): string {

@@ -88,6 +88,7 @@ Rules for this model:
   - `1.0.3`, `1.0.3cc` -> `v1_bps_decay`
   - `1.0.4` -> `v1_wad_bps`
   - `1.0.5` -> `v1_wad_start_wad_bps`
+  - `curve-1` -> `curve_lot_bounds`
 - `v1_fixed_decay` is special:
   - `starting_price` stays unscaled
   - `minimum_price` is absent
@@ -95,9 +96,56 @@ Rules for this model:
   - `step_duration_seconds` remains `NULL`
 - `v1_wad_start_wad_bps` is like `v1_wad_bps`, except `starting_price_raw`
   is also WAD-scaled and must be decoded by dividing by `1e18`
+- `curve_lot_bounds` (Curve's DutchAuctionBurner) stores `start_total` in
+  `starting_price_raw` and `floor_total` in `minimum_price_raw`, both lot totals
+  in raw want units. The decoder scales them by the want token's decimals into
+  `starting_price` and `floor_price`; `minimum_price` is absent, because the
+  price holds at the floor until the window ends instead of cutting off.
+  `step_decay_percent` is derived: the curve reaches the floor in its last of
+  `(auction_length - 1) // step_duration` steps
 - duration fields are still part of the decoded layer even when they are
   identity transforms today; that keeps units explicit and the projection
   schema stable
+
+## Curve Burners
+
+Curve's `DutchAuctionBurner` (version `curve-1`) is indexed through the same
+round model as Yearn auctions; the decoder translates its events so rounds,
+takes and pricing need few per-protocol branches.
+
+- It is a singleton per chain with no factory, seeded from `auctions:` in
+  `config.yaml`. Seeded `tracked_auctions` rows have no factory and survive
+  projection rebuilds; a new seed rewinds the indexer to its `start_block`.
+- `EconomicsSet` creates the auction row and its settings snapshot
+  (`auction_snapshot_facts` kind `economics`); later ones retune the curve.
+- `LotStaged` becomes `AuctionKicked` with the lot's window in `startsAt` and
+  `endsAt`. One token and window is one round. Round numbers are assigned in
+  one place, `facts.kick_round`, when kicks are persisted: the first stage
+  opens the round, keeps its `round_param_snapshot` row and is the round's
+  stable link; later stages for the same window re-snapshot the lot. The
+  latest stage is authoritative before the window opens, so it also undoes a
+  recovery. Collection reads no snapshot for a repeated stage.
+- The round is `scheduled` until its window opens, with `kicked_at` at the
+  window start. Windows exclude their end: a Curve round expires at
+  `endsAt`, a Yearn round only after its last second. A round with nothing
+  sold is never `sold_out`.
+- `Recovered` becomes `AuctionSwept`; only the recovered transfer is excluded
+  from takes.
+- Takes stay transfer-derived: one address-less `Transfer` scan by sender
+  covers native takes and settlement adapters. A take names its window, and
+  the projection resolves its round. A native take reads its `Taken` log: the
+  caller is the taker, and payment and the lot's remaining balance come from
+  it. A CoW fill reads the burner-owned `Trade` for its payment and is
+  credited to the transaction sender (the settling solver), not the
+  settlement contract; its remaining balance is an `available(token)` read
+  kept as an observation. Remaining inventory comes from these observations,
+  not from the stage minus sales: rebasing lots (stETH) can sell more than
+  their stage. Each receipt log pays for one fill at most.
+- The kick quote is queued when indexed time crosses `startsAt`, whatever the
+  round's status, for the lot as finally staged and linked to the first
+  stage. A kick quote for another amount does not price the round. One fresh
+  want-token price answers every queued request for the same token and
+  moment.
 
 If you are changing data logic, decide which layer owns the change before
 editing code:
@@ -123,8 +171,12 @@ The API is read-only against SQLite. The indexer owns writes.
 
 Filter parameters are declared as `Literal` unions so the OpenAPI schema
 carries their values and invalid input returns 422 rather than silently
-falling back. `status` accepts the stored round statuses only (`all`, `live`,
-`sold_out`, `expired`, `settled`); there are no alias spellings.
+falling back. `status` accepts the stored round statuses only (`all`,
+`scheduled`, `live`, `sold_out`, `expired`, `settled`); there are no alias
+spellings. `protocol` (`all`, `yearn`, `curve`) is resolved to contract
+versions, not stored. The UI's status chips offer only Upcoming
+(`scheduled`), Live and Expired; the list without a status chip is all
+rounds.
 
 Address policy:
 
@@ -208,6 +260,8 @@ Reproject intent:
   live head. Ethereum is `finalized`; everything else is `confirmations`.
 - `finality_depth`: confirmation depth, defaulting to 64.
 - `request_timeout_seconds`: RPC transport timeout, defaulting to 60.
+- `auctions`: singleton auctions no factory deploys (Curve burners), each with
+  its deployment block as `start_block` and a factory-less version.
 - `disabled: true` means no indexer process exists for that network. The API
   omits disabled networks from `/api/health`, and `--network` refuses them.
   Only `ethereum` is enabled; enabling a network means deploying an
@@ -272,7 +326,8 @@ Release cautions that matter when changing code:
   invalidates the lock on the deployment host.
 - Changing a file in `deploy/systemd/` means the units must be reinstalled and
   `systemctl daemon-reload` run before the restart.
-- When a new registry factory is first supported, the indexer may rewind to the
-  factory deploy block. Temporary API block lag is expected until it catches up.
+- When a new registry factory or `auctions:` seed is first supported, the
+  indexer may rewind to its deploy block. Temporary API block lag is expected
+  until it catches up.
 - Do not run `--reproject` as part of a normal deploy unless the change
   specifically requires rebuilding projections from stored facts.

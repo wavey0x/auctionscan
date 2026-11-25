@@ -254,6 +254,17 @@ def rebuild_pricing_projections(
 def _load_pricing_observations(conn, *, chain_id: int, rounds) -> _PricingObservations:
     take_sources = _load_surviving_take_sources(conn, chain_id=chain_id, rounds=rounds)
     kick_sources = _load_surviving_kick_sources(conn, chain_id=chain_id, rounds=rounds)
+    # A kick quote prices the lot as offered. A Curve lot can be restaged
+    # after it was quoted (a reorg can replace its last stage), so a quote for
+    # another amount does not price this round.
+    lot_scope, lot_params = _round_filter("r", rounds)
+    lots = {
+        (str(row["auction_address"]), int(row["round_id"])): str(row["initial_available_raw"])
+        for row in conn.execute(
+            f"SELECT r.auction_address, r.round_id, r.initial_available_raw FROM rounds r WHERE r.chain_id = ? {lot_scope}",
+            (chain_id, *lot_params),
+        )
+    }
     # Match canonical source occurrences, not fact-time round IDs (which replay can change).
     source_cte = ""
     source_join = ""
@@ -333,12 +344,13 @@ def _load_pricing_observations(conn, *, chain_id: int, rounds) -> _PricingObserv
 
     return _select_pricing_observations(
         quote_facts, quote_provider_rows, price_facts, price_provider_rows,
-        take_sources=take_sources, kick_sources=kick_sources,
+        take_sources=take_sources, kick_sources=kick_sources, lots=lots,
     )
 
 
 def _select_pricing_observations(
     quote_facts, quote_provider_rows, price_facts, price_provider_rows, *, take_sources, kick_sources,
+    lots: dict[tuple[str, int], str],
 ) -> _PricingObservations:
     quote_providers_by_fact: dict[int, list[Any]] = {}
     for row in quote_provider_rows:
@@ -366,6 +378,8 @@ def _select_pricing_observations(
             if selection is not None and key not in take_quote_selection:
                 take_quote_selection[key] = selection
         elif context_kind == "round_kick":
+            if row["amount_in_raw"] is not None and str(row["amount_in_raw"]) != lots.get(key):
+                continue
             selection = summarize_quote(row, quote_providers_by_fact.get(int(row["id"]), [])) if row["capture_state"] == "fresh" else None
             if selection is not None and key not in round_quote_selection:
                 round_quote_selection[key] = selection

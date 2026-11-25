@@ -50,6 +50,7 @@ interface Model {
   decay: number;
   start: number;
   minimum: number | null;
+  floor: number | null;
   quote: number | null;
   low: number;
   high: number;
@@ -68,6 +69,8 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
   if (scheduledEnd === null || scheduledEnd <= kick) return null;
   const nowSec = Math.floor(Date.now() / 1000);
   const minimum = positive(round.minimum_price);
+  // A Curve lot decays to its floor and holds there; a Yearn lot ends below its minimum.
+  const floor = positive(round.floor_price_per_unit);
   const quote = positive(round.expected_price_per_unit);
   const takePoints = takes
     .map((take) => ({ t: seconds(take.timestamp), price: positive(take.price), key: `${take.tx_hash}:${take.take_seq}` }))
@@ -82,13 +85,22 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
     end = Math.min(scheduledEnd, Math.max(activeUntil + (activeUntil - kick) * 0.15, kick + step * 8));
   }
 
+  // The stated decay is rounded for reading. A floored curve is drawn exactly
+  // instead: it falls geometrically to the floor in the last of its
+  // (length - 1) / step steps, the window excluding its end.
+  const floorSteps = floor !== null && floor < start ? Math.floor((scheduledEnd - kick - 1) / step) : 0;
+  const stepPrice = (steps: number) => {
+    if (floor !== null && floorSteps > 0) return steps >= floorSteps ? floor : start * (floor / start) ** (steps / floorSteps);
+    const price = start * (1 - decay) ** steps;
+    return floor !== null ? Math.max(price, floor) : price;
+  };
   const priceAt = (t: number) => {
     if (t < kick) return null;
-    const price = start * (1 - decay) ** Math.floor((t - kick) / step);
-    return minimum !== null && price < minimum ? null : price;
+    const price = stepPrice(Math.floor((t - kick) / step));
+    return floor === null && minimum !== null && price < minimum ? null : price;
   };
 
-  const endPrice = start * (1 - decay) ** Math.floor((end - kick) / step);
+  const endPrice = stepPrice(Math.floor((end - kick) / step));
   const candidates = [endPrice, ...takePoints.map((point) => point.price)];
   if (quote !== null) candidates.push(quote);
   if (minimum !== null && minimum > endPrice * 0.5) candidates.push(minimum);
@@ -103,6 +115,7 @@ function buildModel(round: RoundListItem, takes: TakeListItem[]): Model | null {
     decay,
     start,
     minimum,
+    floor,
     quote,
     low,
     high,

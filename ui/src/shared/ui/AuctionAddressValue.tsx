@@ -8,6 +8,8 @@ interface AuctionAddressValueProps {
   className?: string;
   width?: number;
   showCowExplorerIcon?: boolean;
+  /** A name shown before the short address, for an auction known by name. */
+  label?: string | null;
 }
 
 function buildCowExplorerUrl(address?: string | null) {
@@ -23,6 +25,7 @@ export default function AuctionAddressValue({
   className,
   width = 6,
   showCowExplorerIcon = false,
+  label,
 }: AuctionAddressValueProps) {
   const hover = useTableHover("auction", address);
   const internalTo =
@@ -42,6 +45,7 @@ export default function AuctionAddressValue({
         hover.isHovered ? "hover-match-active" : null,
       )}
       width={width}
+      label={label}
       internalTo={internalTo}
       showExplorerIcon
       trailingActions={

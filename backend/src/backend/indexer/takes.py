@@ -9,12 +9,19 @@ from .decode import AbiRegistry
 from .hydration import Hydrator
 from .polling import chunked, fetch_logs, sort_logs
 from .types import DomainEventRecord, PreparedEvent, RawLogRecord, TokenMetadata, normalize_address, normalize_hex
-from .versioning import auction_token_key, uses_legacy_auction_id
+from .versioning import auction_token_key, protocol_for_version, uses_legacy_auction_id
 
 
 logger = logging.getLogger(__name__)
 
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+# Curve burner: Taken(token indexed, caller indexed, receiver, amount_out, payment, remaining_balance)
+CURVE_TAKEN_TOPIC = "0xb3ec1b9819bd7acdc5dced75778ce2510829c094f1ab60da8dc13f1780371d09"
+# Curve burner: Recovered(token indexed, amount)
+CURVE_RECOVERED_TOPIC = "0x8c1256b8896378cd5044f80c202f9772b9d77dc85c8a6eb51967210b09bfaa28"
+# CoW Protocol's GPv2Settlement, at this address on every chain it serves.
+COW_SETTLEMENT = "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
+COW_TRADE_TOPIC = "0xa07a543ab8a018198e99ca0184c93fe9050a79400a0a723441f84de1d972cc17"
 ADDRESS_CHUNK = 100
 TOPIC_CHUNK = 100
 SWEEP_SELECTOR = "0x01681a62"
@@ -127,6 +134,79 @@ def find_want_transfer_to_receiver(
     return best["amount"], best
 
 
+def _log_words(raw) -> list[int]:
+    data = _to_hex(raw.get("data")) or "0x"
+    return [int(data[2 + offset:66 + offset], 16) for offset in range(0, len(data) - 2, 64)]
+
+
+def _unclaimed_logs(logs: list[Any], *, address: str, topic0: str, claimed: set[int]):
+    """Logs one contract emitted with this signature, in receipt order, that no fill has claimed."""
+    address = normalize_address(address)
+    for raw in logs:
+        topics = [_to_hex(topic) for topic in raw.get("topics", [])]
+        log_index = raw.get("logIndex")
+        if (normalize_address(raw["address"]) == address and topics and topics[0] == topic0
+                and isinstance(log_index, int) and log_index not in claimed):
+            yield raw, topics, log_index
+
+
+def find_curve_taken(
+    logs: list[Any], *, auction: str, token: str, amount_taken: int, transfer_log_index: int, claimed: set[int],
+) -> Optional[dict[str, Any]]:
+    """The burner's Taken log for a native take of this transfer.
+
+    A native take transfers the lot, then logs Taken(token, caller, receiver,
+    amount_out, payment, remaining_balance): the caller paid, and what remains
+    is the lot's own availability after the fill.
+    """
+    token_topic = _pad_topic_address(token)
+    for raw, topics, log_index in _unclaimed_logs(logs, address=auction, topic0=CURVE_TAKEN_TOPIC, claimed=claimed):
+        words = _log_words(raw)
+        if log_index > transfer_log_index and len(topics) >= 3 and topics[1] == token_topic \
+                and len(words) >= 4 and words[1] == amount_taken:
+            return {"log_index": log_index, "caller": _topic_address(topics[2]), "payment": words[2], "remaining": words[3]}
+    return None
+
+
+def find_cow_trade(
+    logs: list[Any], *, owner: str, sell_token: str, buy_token: str | None, sell_amount: int, claimed: set[int],
+) -> Optional[dict[str, Any]]:
+    """The CoW settlement's Trade for an order the auction owns, selling this transfer.
+
+    Trade(owner indexed, sellToken, buyToken, sellAmount, buyAmount, feeAmount, orderUid):
+    buyAmount is what the order's receiver was paid.
+    """
+    owner_topic = _pad_topic_address(owner)
+    for raw, topics, log_index in _unclaimed_logs(logs, address=COW_SETTLEMENT, topic0=COW_TRADE_TOPIC, claimed=claimed):
+        words = _log_words(raw)
+        if len(topics) < 2 or topics[1] != owner_topic or len(words) < 4:
+            continue
+        if normalize_address(f"0x{words[0]:040x}") != normalize_address(sell_token) or words[2] != sell_amount:
+            continue
+        if buy_token is not None and normalize_address(f"0x{words[1]:040x}") != normalize_address(buy_token):
+            continue
+        return {"log_index": log_index, "payment": words[3]}
+    return None
+
+
+def is_curve_recovery(logs: list[Any], *, auction: str, token: str, amount: int) -> bool:
+    """Whether the owner's recovery, not a fill, moved this amount of the lot out."""
+    token_topic = _pad_topic_address(token)
+    return any(
+        len(topics) >= 2 and topics[1] == token_topic and _log_words(raw)[:1] == [amount]
+        for raw, topics, _index in _unclaimed_logs(logs, address=auction, topic0=CURVE_RECOVERED_TOPIC, claimed=set())
+    )
+
+
+@dataclass(frozen=True)
+class _LotWindow:
+    starts_at: int
+    version: str
+    capability_family: str
+    want_token: str | None
+    receiver: str | None
+
+
 @dataclass(frozen=True)
 class _TakeContext:
     auction_address: str
@@ -143,6 +223,36 @@ class TakeDetector:
         self.abi_registry = abi_registry
         self.hydrator = hydrator
         self._token_metadata_cache: dict[tuple[int, str, int | None], TokenMetadata] = {}
+        self._auction_versions: dict[tuple[int, str], str | None] = {}
+        # Receipt logs each fill has claimed as its payment, so two cannot share one.
+        self._claimed_logs: dict[str, set[int]] = {}
+
+    def _reset_caches(self) -> None:
+        self._token_metadata_cache.clear()
+        self._auction_versions.clear()
+        self._claimed_logs.clear()
+
+    def _auction_version(self, conn, chain_id: int, auction_address: str, native_events=()) -> str | None:
+        key = (chain_id, auction_address)
+        if key not in self._auction_versions:
+            version = next((item.domain_event.version for item in native_events
+                            if item.domain_event.auction_address == auction_address), None)
+            if version is None:
+                row = conn.execute(
+                    """
+                    SELECT version FROM round_param_snapshot WHERE chain_id = ? AND auction_address = ?
+                    UNION ALL
+                    SELECT version FROM tracked_auctions WHERE chain_id = ? AND auction_address = ?
+                    LIMIT 1
+                    """,
+                    (chain_id, auction_address, chain_id, auction_address),
+                ).fetchone()
+                version = row["version"] if row is not None else None
+            self._auction_versions[key] = version
+        return self._auction_versions[key]
+
+    def _is_curve(self, conn, chain_id: int, auction_address: str, native_events=()) -> bool:
+        return protocol_for_version(self._auction_version(conn, chain_id, auction_address, native_events)) == "curve"
 
     def scan_window(
         self,
@@ -155,12 +265,14 @@ class TakeDetector:
     ) -> tuple[list[RawLogRecord], list[PreparedEvent]]:
         effective_rows = conn.execute(
             """
-            SELECT auction_address, from_token
-              FROM auction_tokens
-             WHERE chain_id = ?
-               AND enabled_at_block <= ?
-               AND (disabled_at_block IS NULL OR disabled_at_block >= ?)
-             ORDER BY auction_address ASC, from_token ASC
+            SELECT at.auction_address, at.from_token, ta.version
+              FROM auction_tokens at
+              LEFT JOIN tracked_auctions ta
+                ON ta.chain_id = at.chain_id AND ta.auction_address = at.auction_address
+             WHERE at.chain_id = ?
+               AND at.enabled_at_block <= ?
+               AND (at.disabled_at_block IS NULL OR at.disabled_at_block >= ?)
+             ORDER BY at.auction_address ASC, at.from_token ASC
             """,
             (chain.config.chain_id, to_block, from_block),
         ).fetchall()
@@ -171,26 +283,45 @@ class TakeDetector:
             )
             for row in effective_rows
         }
-        effective_pairs.update(
-            (item.domain_event.auction_address, normalize_address(item.domain_event.payload["from"]))
-            for item in native_events
-            if item.domain_event.event_name in {"AuctionEnabled", "AuctionKicked"}
-            and item.domain_event.payload.get("from")
-        )
+        versions = {normalize_address(row["auction_address"]): row["version"] for row in effective_rows}
+        for item in native_events:
+            event = item.domain_event
+            versions[event.auction_address] = event.version
+            if event.event_name in {"AuctionEnabled", "AuctionKicked"} and event.payload.get("from"):
+                effective_pairs.add((event.auction_address, normalize_address(event.payload["from"])))
         if not effective_pairs:
             return [], []
-        self._token_metadata_cache.clear()
+        self._reset_caches()
+        # A Curve burner sells any fee token, so its token list is long and
+        # grows weekly: scan its outgoing transfers by sender alone.
+        curve_auctions = sorted({
+            auction for auction, _token in effective_pairs if protocol_for_version(versions.get(auction)) == "curve"
+        })
         auction_to_tokens: dict[str, list[str]] = {}
         token_to_auctions: dict[str, list[str]] = {}
         for auction_address, from_token in sorted(effective_pairs):
+            if auction_address in curve_auctions:
+                continue
             auction_to_tokens.setdefault(auction_address, []).append(from_token)
             token_to_auctions.setdefault(from_token, []).append(auction_address)
 
-        strategy, _planned_calls = self._transfer_scan_plan(
-            auction_to_tokens,
-            token_to_auctions,
-        )
         fetched_logs: list[dict[str, Any]] = []
+        for auction_chunk in chunked(curve_auctions, TOPIC_CHUNK):
+            fetched_logs.extend(
+                fetch_logs(
+                    chain.w3,
+                    block_hashes=getattr(getattr(chain, "reader", None), "log_hashes", None),
+                    from_block=from_block,
+                    to_block=to_block,
+                    topics=[TRANSFER_TOPIC, [_pad_topic_address(auction) for auction in auction_chunk]],
+                )
+            )
+        strategy = None
+        if auction_to_tokens:
+            strategy, _planned_calls = self._transfer_scan_plan(
+                auction_to_tokens,
+                token_to_auctions,
+            )
         if strategy == "matrix":
             for token_chunk in chunked(sorted(token_to_auctions), ADDRESS_CHUNK):
                 for auction_chunk in chunked(sorted(auction_to_tokens), TOPIC_CHUNK):
@@ -220,7 +351,7 @@ class TakeDetector:
                             topics=[TRANSFER_TOPIC, topics1],
                         )
                     )
-        else:
+        elif strategy == "auction":
             for auction_address, tokens in auction_to_tokens.items():
                 for token_chunk in chunked(tokens, ADDRESS_CHUNK):
                     fetched_logs.extend(
@@ -255,7 +386,7 @@ class TakeDetector:
         return raw_logs, self._derive_take_events(chain, conn, raw_logs, native_events=native_events)
 
     def replay_chain(self, chain: ChainState, conn) -> list[PreparedEvent]:
-        self._token_metadata_cache.clear()
+        self._reset_caches()
         rows = conn.execute(
             """
             SELECT *
@@ -342,6 +473,9 @@ class TakeDetector:
     ) -> list[PreparedEvent]:
         prepared: list[PreparedEvent] = []
         total = len(raw_logs)
+        # Versions and claims depend on this call's native events and receipts.
+        self._auction_versions.clear()
+        self._claimed_logs.clear()
         for index, raw_log in enumerate(raw_logs, start=1):
             event = self._derive_take_event(chain, conn, raw_log, native_events=native_events)
             if event is not None:
@@ -383,6 +517,12 @@ class TakeDetector:
         amount_taken_raw = int(raw_log.data, 16)
         if amount_taken_raw <= 0:
             return None
+
+        if self._is_curve(conn, chain.config.chain_id, auction_address, native_events):
+            return self._derive_curve_take(
+                chain, conn, raw_log, auction_address=auction_address, amount_taken_raw=amount_taken_raw,
+                transaction=transaction, receipt=receipt, native_events=native_events,
+            )
 
         if any(item.domain_event.tx_hash == raw_log.tx_hash and item.domain_event.event_name == "AuctionSwept"
                for item in native_events) or self._tx_has_native_event(
@@ -492,6 +632,144 @@ class TakeDetector:
             ),
             token_metadata=tuple(token_metadata),
         )
+
+    def _derive_curve_take(
+        self, chain: ChainState, conn, raw_log: RawLogRecord, *, auction_address: str, amount_taken_raw: int,
+        transaction, receipt, native_events: list[PreparedEvent],
+    ) -> Optional[PreparedEvent]:
+        """A Curve lot transfer, read from what the receipt states about it.
+
+        The payload names the lot's window rather than a round number: the
+        projection resolves the round once its kicks are projected, so round
+        numbers are assigned in one place.
+        """
+        logs = list(receipt["logs"])
+        if is_curve_recovery(logs, auction=auction_address, token=raw_log.address, amount=amount_taken_raw):
+            return None
+        window = self._lot_window(
+            conn, chain_id=chain.config.chain_id, auction_address=auction_address,
+            token=raw_log.address, timestamp=raw_log.timestamp, native_events=native_events,
+        )
+        if window is None:
+            return None
+        claimed = self._claimed_logs.setdefault(raw_log.tx_hash, set())
+        taken = find_curve_taken(
+            logs, auction=auction_address, token=raw_log.address, amount_taken=amount_taken_raw,
+            transfer_log_index=raw_log.log_index, claimed=claimed,
+        )
+        if taken is not None:
+            # A native take: its Taken log states who paid, how much, and what remains.
+            matching_method, payment_log_index = "taken_event", taken["log_index"]
+            amount_paid_raw, taker, remaining = taken["payment"], taken["caller"], taken["remaining"]
+        else:
+            # A settlement adapter filled a signed order. The transfer's
+            # recipient is the protocol's settlement, so the fill is credited to
+            # the account that submitted it. What remains is read from the lot.
+            trade = find_cow_trade(
+                logs, owner=auction_address, sell_token=raw_log.address, buy_token=window.want_token,
+                sell_amount=amount_taken_raw, claimed=claimed,
+            )
+            matching_method = "cow_trade" if trade else "unmatched"
+            payment_log_index = trade["log_index"] if trade else None
+            amount_paid_raw = trade["payment"] if trade else None
+            taker = normalize_address(transaction["from"])
+            remaining = self._read_curve_available(chain, window, auction_address, raw_log)
+        if payment_log_index is not None:
+            claimed.add(payment_log_index)
+
+        from_metadata = self._read_token_metadata(chain, conn, raw_log.address, block_number=raw_log.block_number)
+        token_metadata = [from_metadata]
+        want_metadata = None
+        if window.want_token:
+            want_metadata = self._read_token_metadata(chain, conn, window.want_token, block_number=raw_log.block_number)
+            token_metadata.append(want_metadata)
+        payload = {
+            "source": "erc20_transfer",
+            "auction": auction_address,
+            "window": window.starts_at,
+            "taker": taker,
+            "receiver": window.receiver,
+            "from": raw_log.address,
+            "to": window.want_token,
+            "amountTaken": amount_taken_raw,
+            "amountPaid": amount_paid_raw,
+            "expectedAmountPaid": None,
+            "paymentLogIndex": payment_log_index,
+            "matchingMethod": matching_method,
+            "priceE18": _price_e18(
+                amount_paid_raw, amount_taken_raw, from_metadata.decimals or 0,
+                (want_metadata.decimals if want_metadata else 0) or 0,
+            ),
+            "remainingAvailable": remaining,
+        }
+        return PreparedEvent(
+            raw_log=raw_log,
+            domain_event=DomainEventRecord(
+                chain_id=chain.config.chain_id,
+                block_number=raw_log.block_number,
+                block_hash=raw_log.block_hash,
+                tx_hash=raw_log.tx_hash,
+                tx_index=raw_log.tx_index,
+                log_index=raw_log.log_index,
+                event_name="Take",
+                address=raw_log.address,
+                auction_address=auction_address,
+                version=window.version,
+                capability_family=window.capability_family,
+                payload=payload,
+                timestamp=raw_log.timestamp,
+            ),
+            token_metadata=tuple(token_metadata),
+        )
+
+    def _read_curve_available(self, chain: ChainState, window: _LotWindow, auction_address: str, raw_log: RawLogRecord):
+        """The lot's availability after the fill's block, kept as an observation for replay."""
+        contract = self.abi_registry.auction_contract(chain.w3, auction_address, window.version)
+        value = chain.reader.call(
+            contract.functions.available(chain.w3.to_checksum_address(raw_log.address)),
+            raw_log.block_number, optional=True,
+        )
+        return int(value) if value is not None else None
+
+    def _lot_window(
+        self, conn, *, chain_id: int, auction_address: str, token: str, timestamp: int,
+        native_events: list[PreparedEvent] = (),
+    ) -> Optional[_LotWindow]:
+        """The staged window [startsAt, endsAt) of this token that holds the timestamp."""
+        row = conn.execute(
+            """
+            SELECT json_extract(e.payload_json, '$.startsAt') AS starts_at,
+                   s.want_token, s.receiver, s.version, e.capability_family
+              FROM round_param_snapshot s
+              JOIN domain_events e
+                ON e.chain_id = s.chain_id AND e.tx_hash = s.snapshot_tx_hash
+               AND e.log_index = s.snapshot_log_index AND e.event_name = 'AuctionKicked'
+             WHERE s.chain_id = ? AND s.auction_address = ? AND s.from_token = ?
+               AND json_extract(e.payload_json, '$.startsAt') <= ?
+               AND json_extract(e.payload_json, '$.endsAt') > ?
+             ORDER BY s.round_id DESC
+             LIMIT 1
+            """,
+            (chain_id, auction_address, token, timestamp, timestamp),
+        ).fetchone()
+        if row is not None:
+            return _LotWindow(
+                starts_at=int(row["starts_at"]), version=row["version"], capability_family=row["capability_family"],
+                want_token=row["want_token"], receiver=row["receiver"],
+            )
+        # A window first staged in this batch: its first stage carries the snapshot.
+        for prepared in native_events:
+            event = prepared.domain_event
+            starts_at = event.payload.get("startsAt")
+            if (event.event_name == "AuctionKicked" and event.auction_address == auction_address
+                    and prepared.snapshot is not None and starts_at is not None
+                    and normalize_address(event.payload["from"]) == token
+                    and int(starts_at) <= timestamp < int(event.payload["endsAt"])):
+                return _LotWindow(
+                    starts_at=int(starts_at), version=event.version, capability_family=event.capability_family,
+                    want_token=prepared.snapshot.want_token, receiver=prepared.snapshot.receiver,
+                )
+        return None
 
     def _resolve_round_context(
         self, conn, *, chain_id: int, auction_address: str, from_token: str,

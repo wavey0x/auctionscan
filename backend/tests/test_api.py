@@ -827,7 +827,7 @@ def test_api_round_live_price_route_reads_active_round_price(tmp_path, monkeypat
     client = TestClient(create_app(db_path=str(db_path)))
     captured: dict[str, str] = {}
 
-    def _fake_read_live_round_price(*, network_key: str, version: str, auction_address: str, from_token: str, want_token: str, block_hash: str):
+    def _fake_read_live_round_price(*, network_key: str, version: str, auction_address: str, from_token: str, want_token: str, block_hash: str, from_decimals: int):
         captured.update(
             network_key=network_key,
             version=version,
@@ -835,6 +835,7 @@ def test_api_round_live_price_route_reads_active_round_price(tmp_path, monkeypat
             from_token=from_token,
             want_token=want_token,
             block_hash=block_hash,
+            from_decimals=from_decimals,
         )
         return LiveRoundPriceResult(
             is_active=True,
@@ -865,6 +866,7 @@ def test_api_round_live_price_route_reads_active_round_price(tmp_path, monkeypat
         "from_token": DEFAULT_FROM_TOKEN,
         "want_token": DEFAULT_WANT_TOKEN,
         "block_hash": _tx_hash(103),
+        "from_decimals": 18,
     }
 
 
@@ -1333,7 +1335,8 @@ def test_openapi_publishes_the_filter_vocabularies(tmp_path):
         )
         return parameter["schema"]["enum"]
 
-    assert enum_for("/api/rounds", "status") == ["all", "live", "sold_out", "expired", "settled"]
+    assert enum_for("/api/rounds", "status") == ["all", "scheduled", "live", "sold_out", "expired", "settled"]
+    assert enum_for("/api/rounds", "protocol") == ["all", "yearn", "curve"]
     assert enum_for("/api/rounds", "time_window") == ["all", "24h", "7d", "30d", "90d"]
     assert enum_for("/api/takers", "sort_by") == [
         "volume", "taker", "chains", "auctions", "takes", "recent",
@@ -1378,7 +1381,7 @@ def test_rounds_report_counts_by_status_under_the_other_filters(tmp_path):
 
     everything = client.get("/api/rounds", params={"chain_id": 1}).json()
     assert everything["total"] == 2
-    assert everything["status_counts"] == {"all": 2, "live": 1, "sold_out": 1, "expired": 0, "settled": 0}
+    assert everything["status_counts"] == {"all": 2, "scheduled": 0, "live": 1, "sold_out": 1, "expired": 0, "settled": 0}
 
     live = client.get("/api/rounds", params={"chain_id": 1, "status": "live"}).json()
     assert live["total"] == 1
@@ -1386,7 +1389,7 @@ def test_rounds_report_counts_by_status_under_the_other_filters(tmp_path):
     assert live["status_counts"] == everything["status_counts"]
 
     other_chain = client.get("/api/rounds", params={"chain_id": 10}).json()
-    assert other_chain["status_counts"] == {"all": 0, "live": 0, "sold_out": 0, "expired": 0, "settled": 0}
+    assert other_chain["status_counts"] == {"all": 0, "scheduled": 0, "live": 0, "sold_out": 0, "expired": 0, "settled": 0}
 
 
 def test_stats_total_the_rounds_active_in_the_window(tmp_path):

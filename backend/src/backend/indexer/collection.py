@@ -7,7 +7,8 @@ from typing import Any
 
 from .chains import ChainState
 from .decode import AbiRegistry, normalize_raw_log
-from .hydration import Hydrator
+from .facts import repeated_window_kicks
+from .hydration import SNAPSHOT_EVENTS, Hydrator
 from .polling import chunked, fetch_logs, sort_logs
 from .types import PreparedEvent, normalize_address, normalize_hex
 
@@ -66,7 +67,15 @@ def scan_auction_events(
     tracked_auctions: list[Any],
     from_block: int,
     to_block: int,
+    *,
+    conn=None,
 ) -> list[PreparedEvent]:
+    """Decode and hydrate auction events.
+
+    With the indexed facts (`conn`), a repeated kick for a window that already
+    has a round is not hydrated: it only re-snapshots that round's lot, and a
+    Curve burner repeats them by the thousand each week.
+    """
     if not tracked_auctions:
         return []
 
@@ -100,7 +109,7 @@ def scan_auction_events(
             )
         )
 
-    prepared: list[PreparedEvent] = []
+    decoded: list[PreparedEvent] = []
     for log in sort_logs(logs):
         normalized_address = normalize_address(log["address"])
         version = address_to_version.get(normalized_address)
@@ -121,16 +130,19 @@ def scan_auction_events(
             chain_id=chain.config.chain_id,
             timestamp=timestamp,
         )
-        prepared.append(
-            hydrate_native_event(chain, hydrator, PreparedEvent(raw_log=raw_log, domain_event=domain_event))
-        )
-    return prepared
+        decoded.append(PreparedEvent(raw_log=raw_log, domain_event=domain_event))
+    repeated = repeated_window_kicks(conn, [item.domain_event for item in decoded]) if conn is not None else set()
+    return [
+        item if (item.domain_event.tx_hash, item.domain_event.log_index) in repeated
+        else hydrate_native_event(chain, hydrator, item)
+        for item in decoded
+    ]
 
 
 def hydrate_native_event(chain: ChainState, hydrator: Hydrator, base: PreparedEvent) -> PreparedEvent:
     event = base.domain_event
     snapshot = None
-    if event.event_name in {"DeployedNewAuction", "AuctionKicked"}:
+    if event.event_name in SNAPSHOT_EVENTS:
         snapshot = hydrator.read_auction_snapshot(
             chain,
             event.version,

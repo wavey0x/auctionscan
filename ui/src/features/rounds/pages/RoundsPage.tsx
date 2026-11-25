@@ -18,6 +18,7 @@ import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { useRoundRows } from "../../../shared/lib/openRound";
 import { roundPnlCoverageTitle } from "../../../shared/lib/pricingSource";
 import { occurrenceKey } from "../../../shared/lib/routes";
+import { auctionLabel, parseProtocol, PROTOCOL_LABELS, PROTOCOLS, type Protocol } from "../../../shared/lib/protocol";
 import { LIVE_REFETCH_INTERVAL_MS } from "../../../shared/lib/polling";
 import type { RoundListItem, RoundStatusCounts } from "../../../shared/types/api";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
@@ -38,11 +39,11 @@ import { ChipCount, ChipGroup, FilterField } from "../../../shared/ui/Toolbar";
 const PAGE_SIZE = 20;
 
 /**
- * The states worth isolating from the list: what is open now, and what failed
- * to clear. A sold or settled round is the normal outcome, which is the list
- * itself.
+ * The states worth isolating from the list: what is about to open, what is
+ * open now, and what failed to clear. A sold or settled round is the normal
+ * outcome, which is the list itself.
  */
-const STATUS_CHIPS = ["live", "expired"] as const;
+const STATUS_CHIPS = ["scheduled", "live", "expired"] as const;
 type RoundStatusFilter = "all" | (typeof STATUS_CHIPS)[number];
 
 function parseRoundStatus(value: string | null): RoundStatusFilter {
@@ -53,18 +54,20 @@ function parseRoundStatus(value: string | null): RoundStatusFilter {
 
 type Filters = {
   status: RoundStatusFilter;
+  protocol?: Protocol;
   chainId?: number;
   query: string;
   page: number;
 };
 
-const FILTER_KEYS = ["status", "chain", "filter", "pair", "page"];
+const FILTER_KEYS = ["status", "protocol", "chain", "filter", "pair", "page"];
 
 function readFilters(searchParams: URLSearchParams): Filters {
   const page = Number(searchParams.get("page") || "1");
   const chainId = searchParams.get("chain") ? Number(searchParams.get("chain")) : undefined;
   return {
     status: parseRoundStatus(searchParams.get("status")),
+    protocol: parseProtocol(searchParams.get("protocol")),
     chainId: Number.isFinite(chainId) ? chainId : undefined,
     query: searchParams.get("filter") || searchParams.get("pair") || "",
     page: Number.isFinite(page) && page > 0 ? page : 1,
@@ -76,6 +79,7 @@ function withFilters(current: URLSearchParams, filters: Filters) {
   const next = new URLSearchParams(current);
   FILTER_KEYS.forEach((key) => next.delete(key));
   if (filters.status !== "all") next.set("status", filters.status);
+  if (filters.protocol) next.set("protocol", filters.protocol);
   if (filters.chainId) next.set("chain", String(filters.chainId));
   if (filters.query) next.set("filter", filters.query);
   if (filters.page > 1) next.set("page", String(filters.page));
@@ -134,7 +138,7 @@ function RoundRow({
           <td className="max-w-[15rem]">
             <span className="flex min-w-0 items-center gap-2.5">
               <ChainIcon chainId={round.chain_id} />
-              <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} />
+              <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} label={auctionLabel(round.protocol)} />
             </span>
             <div className="sub-line pl-[26px]">
               R{round.round_id}
@@ -219,6 +223,7 @@ export default function RoundsPage() {
     queryFn: async ({ signal }) => ({
       ...(await api.getRounds({
         status: filters.status,
+        protocol: scope ? "all" : filters.protocol ?? "all",
         chain_id: scope ? scope.chainId : filters.chainId,
         auction_address: scope ? scope.address : isAuctionAddressQuery ? normalizedQuery : undefined,
         tx_hash: isTxHashQuery ? normalizedQuery : undefined,
@@ -288,6 +293,15 @@ export default function RoundsPage() {
               selected={filters.status === "all" ? [] : [filters.status]}
               onChange={(next) => updateFilters({ status: next[0] ?? "all", page: 1 })}
             />
+            {scope ? null : (
+              <ChipGroup
+                label="Protocol"
+                single
+                options={PROTOCOLS.map((protocol) => ({ value: protocol, label: PROTOCOL_LABELS[protocol] }))}
+                selected={filters.protocol ? [filters.protocol] : []}
+                onChange={(next) => updateFilters({ protocol: next[0], page: 1 })}
+              />
+            )}
             {/* A choice between chains exists only once there is more than one. */}
             {scope || chainOptions.length < 2 ? null : (
               <ChipGroup

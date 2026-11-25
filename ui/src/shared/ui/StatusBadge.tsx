@@ -9,6 +9,7 @@ export type StatusKind =
   | "kickable"
   | "idle"
   | "degraded"
+  | "scheduled"
   | "live"
   | "sold_out"
   | "expired"
@@ -27,6 +28,7 @@ const labelMap: Record<StatusKind, string> = {
   kickable: "Kickable",
   idle: "Waiting",
   degraded: "Alert",
+  scheduled: "Upcoming",
   live: "Live",
   sold_out: "Sold",
   expired: "Expired",
@@ -34,12 +36,14 @@ const labelMap: Record<StatusKind, string> = {
 };
 
 /**
- * Each ending has its own shape as well as its tone: a live round is the one
- * mark that moves, a sold round carries a small muted check, an expired lot is
- * the one that warns, and a settled round is a hollow ring.
+ * Each state has its own shape as well as its tone: an upcoming round is a
+ * live-green ring that has not filled yet, a live round is the one mark that
+ * moves, a sold round carries a small muted check, an expired lot is the one
+ * that warns, and a settled round is a hollow faint ring.
  */
 const toneMap: Record<StatusKind, { tone: string; ring?: boolean; live?: boolean; check?: boolean }> = {
   active: { tone: "var(--color-active-mark)", live: true },
+  scheduled: { tone: "var(--color-active-mark)", ring: true },
   live: { tone: "var(--color-active-mark)", live: true },
   completed: { tone: "var(--color-primary)" },
   sold_out: { tone: "var(--color-sold-mark)", check: true },

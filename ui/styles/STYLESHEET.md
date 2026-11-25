@@ -51,9 +51,10 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 
 - Active navigation uses a primary underline, not the accent.
 - Status colour never fills a row. Never colour alone: a dot has its word, a PnL figure its sign.
-- Round status has a shape as well as a tone: Live is a pulsing green dot, Sold a muted green circled
-  check, Expired an amber dot, Settled a hollow ring. Every mark sits in the same 13px slot so the
-  words align down a column.
+- Round status has a shape as well as a tone: Upcoming (API status `scheduled`, a lot staged for a
+  window that has not opened) is a hollow ring in the live green, Live is a pulsing green dot, Sold a
+  muted green circled check, Expired an amber dot, Settled a hollow faint ring. Every mark sits in
+  the same 13px slot so the words align down a column.
 
 ## Shell and layout
 
@@ -82,7 +83,7 @@ Dark is the default theme; the toggle stores `ui_next_color_mode`.
 | Layer | Job |
 | --- | --- |
 | Strip | Optional entity totals on detail pages; the rounds list starts directly with its filters |
-| Filters | One line of chip groups (round status with its counts, then chain) and a search field on the right. Version belongs in auction details, not list filters |
+| Filters | One line of chip groups (round status with its counts, then protocol, then chain) and a search field on the right. Version belongs in auction details, not list filters |
 | Auction head | An auction opened on the list: its identity and facts, heading the table's card |
 | Table | One card; see Tables |
 | Drawer | One round's execution workspace |
@@ -92,9 +93,12 @@ its rows is a chip group on one line: there are no tabs.
 
 A filter offers only what is worth isolating, and only where there is a choice to make:
 
-- **Status** has two keys, each carrying its count: Live and Expired. They are what is open now
-  and what failed to clear. Sold and Settled are the normal outcome, which is the list itself, so
-  they are not filters.
+- **Status** has three keys, each carrying its count: Upcoming, Live and Expired. They are what is
+  about to open, what is open now and what failed to clear. Sold and Settled are the normal
+  outcome, which is the list itself, so they are not filters.
+- **Protocol** (Yearn, Curve; URL `protocol`, API `protocol=all|yearn|curve`) follows. Curve has
+  one burner per chain selling every fee token, so its rows name the auction `Curve burner (0x…)`
+  rather than repeat one address.
 - **Chain** appears only once more than one chain is indexed.
 - The total is the pager's summary beneath the table, not a chip.
 
@@ -105,14 +109,17 @@ rendered by the same component, so opening an auction from a row, the drawer or 
 top bar, the filter line, the card and the table where they were. What changes:
 
 - The card gains a head. Its first line opens with the way back, `← All rounds`, where a reader
-  looks first, then the auction as it read on the row that opened it (chain mark, address,
+  looks first, then the auction as it read on the row that opened it (chain mark, address or name,
   version). On a phone the way back has a line to itself. Its second line is one row of
-  small labelled facts: the pair (or what it sells and for what), receiver, rounds, takes, volume,
-  decay, duration and minimum price.
+  small labelled facts: the pair (or what it sells and for what, the first eight tokens then
+  `+N more`), receiver, rounds, takes, volume, decay, duration and minimum price. A Curve burner
+  reads `Curve burner (0x…)` and states its lot price (start → floor) instead of decay, duration
+  and minimum price: every lot shares one curve over a fixed window, so those facts are left out
+  rather than shown as dashes.
 - The table drops its Auction column: within one auction a row is its round. Every other column
   stays, and rows kept on screen while the auction loads keep their old shape until they leave.
-- Status keeps its counts, now for this auction. The chain is fixed by the auction and is not
-  offered. The search field narrows by token or transaction.
+- Status keeps its counts, now for this auction. Protocol and chain are fixed by the auction and are
+  not offered. The search field narrows by token or transaction.
 - The auction's recent takes sit beneath the pager.
 - `← All rounds` returns to the whole list with the filters and page it was left on; Back does
   the same. An auction the index does not hold shows "Auction not found" and nothing else.
@@ -150,7 +157,8 @@ keep their row's tone: live green, expired amber, everything else neutral. An ea
 
 Every row of a meter column carries the meter, whatever its status. Where an indicator already
 says something, no text is added to narrate it: an expired round is a full amber time bar, and what
-its lot did is read from the sold view, the Received and PnL columns, or the drawer.
+its lot did is read from the sold view, the Received and PnL columns, or the drawer. An upcoming
+round's time meter is empty.
 
 ## Round drawer
 
@@ -161,7 +169,7 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
 - It reads top to bottom as a receipt, and says nothing twice. A finished round:
   1. **Head**, two lines that share one left edge. First the pair, each token with its logo; it has
      the line to itself, so names are not cut, and on a sheet too narrow for both it breaks after
-     the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address; the address reveals
+     the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address (named, for Curve's burner; on a phone sheet the name drops its short address and copy control to stay whole); the address reveals
      its utilities when pointed at. The version is a Details row, and the chain gets a mark only
      once there is more than one chain to tell apart.
   2. **Result**, one row: Sold, Received, PnL. Each is a label and one bare 15px figure, so the row
@@ -178,7 +186,7 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
      Opening a row shows the rest. An empty list is `none` beside the heading.
   5. **Price**: the price path as a bare shape.
   6. **Details**, collapsed by default: the start price, kick quote and average take on consecutive
-     rows, then decay, cutoff, receiver and the contract version. Its head is the
+     rows, then decay, floor (Curve), cutoff, receiver and the contract version. Its head is the
      control: the `›` of a row that opens in place sits beside the word and turns when open, and the
      head fills like a row when pointed at.
 - A live round has different priorities, so it leads with what is still open:
@@ -188,6 +196,9 @@ its lot did is read from the sold view, the Received and PnL columns, or the dra
   2. **Price** moves up to sit directly under it and marks the present moment on the curve, which
      is why the row above carries no meter.
   3. **Result** appears beneath the chart once the first take lands, then **Takes** and **Details**.
+- An upcoming round leads with its window, in the live row's shape: Lot, Starts at over the floor,
+  and Opens in over the window's length. The chart follows, then Takes reading `none yet`. A Curve
+  lot's path holds at its floor instead of cutting off.
 - **Each figure is given once, in tokens or in dollars.** Sold, Received and PnL in the result row
   and in every take show token amounts and percent, or their dollar values and the dollar
   difference, never both. Clicking a result figure, or the Sold, Received or PnL header of the
@@ -232,5 +243,7 @@ off.
   figure, and in the round drawer one or the other is shown.
 - A figure computed from incomplete pricing carries a small `partial` note with the coverage on hover.
 - Dense tables show relative ages (`4h ago`) or `MMM d HH:mm`; the full timestamp is in the title.
-- Version badges are small bordered marks with a `v` prefix.
+  An upcoming round's Kicked cell reads forward (`in 6h`).
+- Version badges are small bordered marks with a `v` prefix; Curve's burner shows its version id, `curve-1`,
+  because its name is already beside it.
 - Token logos are backend-driven; unknown tokens use the shared fallback logo.

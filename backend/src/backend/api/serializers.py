@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from web3 import Web3
 
 from backend.indexer.pricing_summary import summarize_quote, summarize_price
+from backend.indexer.versioning import protocol_for_version
 
 from .queries import occurrence_from_row
 from .models import (
@@ -144,18 +145,19 @@ def bps_to_percent_value(raw_value: str | int | None) -> float | None:
         return None
 
 
-def starting_price_per_unit_value(
+def lot_price_per_unit_value(
     *,
-    starting_price: str | None,
+    lot_price: str | None,
     initial_available_raw: str | None,
     from_decimals: int | None,
 ) -> str | None:
-    if starting_price is None or initial_available_raw is None:
+    """A price for the whole lot, per whole `from` token."""
+    if lot_price is None or initial_available_raw is None:
         return None
     try:
         with localcontext() as context:
             context.prec = 80
-            starting = Decimal(str(starting_price))
+            starting = Decimal(str(lot_price))
             initial_available = Decimal(str(initial_available_raw))
             if initial_available <= 0:
                 return None
@@ -205,6 +207,7 @@ def auction_list_item_from_row(row) -> AuctionListItem:
         receiver=checksum_address(row["receiver"]) if row["receiver"] else None,
         receiver_name=row["receiver_name"],
         version=row["version"],
+        protocol=protocol_for_version(row["version"]),
         want_token=want_token,
         total_rounds=int(row["total_rounds"] or 0),
         total_takes=int(row["total_takes"] or 0),
@@ -222,6 +225,7 @@ def round_list_item_from_row(row, *, pricing_by_source: dict | None = None) -> R
         round_id=int(row["round_id"]),
         status=str(row["status"]),
         is_active=str(row["status"]) == "live",
+        protocol=protocol_for_version(row["version"]),
         from_token=checksum_address(row["from_token"]) if row["from_token"] else None,
         from_token_symbol=row["from_token_symbol"],
         from_token_name=row["from_token_name"],
@@ -257,12 +261,17 @@ def round_list_item_from_row(row, *, pricing_by_source: dict | None = None) -> R
         decay_percent=percent_text_value(row["step_decay_percent"]),
         auction_length=int(row["auction_length_seconds"]) if row["auction_length_seconds"] is not None else None,
         starting_price=decimal_text_value(row["starting_price"]),
-        starting_price_per_unit=starting_price_per_unit_value(
-            starting_price=row["starting_price"],
+        starting_price_per_unit=lot_price_per_unit_value(
+            lot_price=row["starting_price"],
             initial_available_raw=row["initial_available_raw"],
             from_decimals=from_decimals,
         ),
         minimum_price=decimal_text_value(row["minimum_price"]),
+        floor_price_per_unit=lot_price_per_unit_value(
+            lot_price=row["floor_price"],
+            initial_available_raw=row["initial_available_raw"],
+            from_decimals=from_decimals,
+        ),
         expected_price_per_unit=quote_price(
             paid_raw=row["kick_market_quote_out_raw"],
             sold_raw=row["initial_available_raw"],

@@ -1203,6 +1203,10 @@ html.dark {
   .search-menu { position: fixed; top: 44px; left: 8px; right: 8px; width: auto !important; }
   tbody .copy-trigger,
   tbody .icon-link-trigger { display: none !important; }
+  /* The sheet's meta line keeps a named auction's name whole: its short address and copy control
+     give way, as they do in rows; the explorer link still leads to the address. */
+  .drawer-meta .copy-trigger,
+  .drawer-meta .address-suffix { display: none !important; }
   .strip { --n: 2 !important; }
   .strip > .stat:nth-child(odd) { border-left: 0; }
   .strip > .stat:nth-child(n + 3) { border-top: 1px solid var(--color-divider-subtle); }

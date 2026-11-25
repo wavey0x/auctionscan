@@ -4,10 +4,18 @@ import json
 import logging
 import time
 
-from .facts import _deterministic_round_id, _resolve_event_from_token, persist_prepared_events, persist_snapshot_facts
+from .facts import _resolve_event_from_token, kick_round, persist_prepared_events, persist_snapshot_facts
 from .auction_params import RawAuctionParams, decode_params
-from .versioning import param_schema_for_version
-from .types import AuctionSnapshot, ChainConfig, FactorySeed, IndexedBlockRecord, PreparedEvent, decimal_text
+from .versioning import param_schema_for_version, versions_for_protocol
+from .types import (
+    AuctionSeed,
+    AuctionSnapshot,
+    ChainConfig,
+    FactorySeed,
+    IndexedBlockRecord,
+    PreparedEvent,
+    decimal_text,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -23,9 +31,43 @@ def _json_dumps(payload) -> str:
 
 def chain_start_block(chain: ChainConfig, factories: list[FactorySeed]) -> int:
     starts = [factory.start_block for factory in factories if factory.enabled]
+    starts.extend(auction.start_block for auction in chain.auctions)
     if chain.registry is not None:
         starts.append(chain.registry.start_block)
     return min(starts) if starts else 0
+
+
+def upsert_tracked_auction_seeds(conn, chain_id: int, seeds: tuple[AuctionSeed, ...]) -> list[AuctionSeed]:
+    """Track config-seeded auctions; return those whose history has not been scanned yet.
+
+    Seeded rows have no factory. They are configuration, not projections of
+    deployment events, so projection rebuilds keep them.
+    """
+    unscanned: list[AuctionSeed] = []
+    now = _now()
+    for seed in seeds:
+        row = conn.execute(
+            "SELECT discovered_block FROM tracked_auctions WHERE chain_id = ? AND auction_address = ?",
+            (chain_id, seed.address),
+        ).fetchone()
+        if row is None or int(row["discovered_block"]) > seed.start_block:
+            unscanned.append(seed)
+        conn.execute(
+            """
+            INSERT INTO tracked_auctions (
+                chain_id, auction_address, factory_address, version, capability_family,
+                discovered_block, discovered_tx_hash, active_flag, created_at, updated_at
+            ) VALUES (?, ?, NULL, ?, ?, ?, NULL, 1, ?, ?)
+            ON CONFLICT(chain_id, auction_address) DO UPDATE SET
+                version = excluded.version,
+                capability_family = excluded.capability_family,
+                discovered_block = MIN(tracked_auctions.discovered_block, excluded.discovered_block),
+                active_flag = 1,
+                updated_at = excluded.updated_at
+            """,
+            (chain_id, seed.address, seed.version, seed.capability_family, seed.start_block, now, now),
+        )
+    return unscanned
 
 
 def ensure_sync_state(conn, chain: ChainConfig, start_block: int) -> None:
@@ -165,6 +207,22 @@ def rebuild_token_metadata(conn, chain_id: int, events: list[PreparedEvent]) -> 
         _upsert_token_metadata(conn, prepared)
 
 
+def _token_decimals(conn, chain_id: int, token: str | None) -> int | None:
+    if not token:
+        return None
+    row = conn.execute(
+        "SELECT decimals FROM tokens WHERE chain_id = ? AND token_address = ?", (chain_id, token),
+    ).fetchone()
+    return int(row["decimals"]) if row is not None and row["decimals"] is not None else None
+
+
+def _auction_want_token(conn, chain_id: int, auction_address: str) -> str | None:
+    row = conn.execute(
+        "SELECT want_token FROM auctions WHERE chain_id = ? AND auction_address = ?", (chain_id, auction_address),
+    ).fetchone()
+    return row["want_token"] if row is not None else None
+
+
 def _merge_extra_params(existing_json: str | None, new_payload: dict) -> str:
     payload = {}
     if existing_json:
@@ -209,16 +267,18 @@ def _persist_current_params(
     extra_params_json: str,
     block_number: int,
     updated_at: int,
+    want_token: str | None = None,
 ) -> None:
-    decoded = decode_params(param_schema, raw_params)
+    want_token = want_token or _auction_want_token(conn, chain_id, auction_address)
+    decoded = decode_params(param_schema, raw_params, want_decimals=_token_decimals(conn, chain_id, want_token))
     conn.execute(
         """
         INSERT INTO auction_current_params (
             chain_id, auction_address, param_schema, receiver, minimum_price_raw, starting_price_raw,
             step_decay_rate_raw, step_duration_raw, auction_length_raw, minimum_price, starting_price,
-            step_decay_percent, step_duration_seconds, auction_length_seconds, extra_params_json,
+            step_decay_percent, step_duration_seconds, auction_length_seconds, floor_price, extra_params_json,
             last_updated_block, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chain_id, auction_address) DO UPDATE SET
             param_schema = excluded.param_schema,
             receiver = excluded.receiver,
@@ -232,6 +292,7 @@ def _persist_current_params(
             step_decay_percent = excluded.step_decay_percent,
             step_duration_seconds = excluded.step_duration_seconds,
             auction_length_seconds = excluded.auction_length_seconds,
+            floor_price = excluded.floor_price,
             extra_params_json = excluded.extra_params_json,
             last_updated_block = excluded.last_updated_block,
             updated_at = excluded.updated_at
@@ -251,6 +312,7 @@ def _persist_current_params(
             decoded.step_decay_percent,
             decoded.step_duration_seconds,
             decoded.auction_length_seconds,
+            decoded.floor_price,
             extra_params_json,
             block_number,
             updated_at,
@@ -319,6 +381,7 @@ def _upsert_current_params(conn, event, snapshot: AuctionSnapshot | None, *, blo
         extra_params_json=extra_params_json,
         block_number=block_number,
         updated_at=_now(),
+        want_token=snapshot.want_token if snapshot else None,
     )
 
 
@@ -409,10 +472,52 @@ def _project_governance_transferred(conn, prepared: PreparedEvent) -> None:
     )
 
 
-def _project_auction_enabled(conn, prepared: PreparedEvent) -> None:
+def _project_economics_set(conn, prepared: PreparedEvent) -> None:
+    """A Curve burner's settings, first set when it is deployed.
+
+    The burner is not deployed by a factory, so its first settings event
+    creates the auction row. Later ones retune the curve or move the payment
+    token, and apply to lots staged after them.
+    """
     event = prepared.domain_event
-    from_token = event.payload["from"]
-    want_token = event.payload.get("to")
+    snapshot = prepared.snapshot
+    if snapshot is None:
+        raise ValueError("EconomicsSet projection requires a hydrated snapshot")
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO auctions (
+            chain_id, auction_address, factory_address, version, capability_family,
+            governance, receiver, want_token, deployment_block,
+            latest_lifecycle_block, created_at, updated_at
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chain_id, auction_address) DO UPDATE SET
+            version = excluded.version,
+            capability_family = excluded.capability_family,
+            governance = COALESCE(excluded.governance, auctions.governance),
+            receiver = COALESCE(excluded.receiver, auctions.receiver),
+            want_token = COALESCE(excluded.want_token, auctions.want_token),
+            latest_lifecycle_block = MAX(auctions.latest_lifecycle_block, excluded.latest_lifecycle_block),
+            updated_at = excluded.updated_at
+        """,
+        (
+            event.chain_id,
+            event.auction_address,
+            event.version,
+            event.capability_family,
+            snapshot.governance,
+            snapshot.receiver,
+            snapshot.want_token or event.payload.get("want"),
+            event.block_number,
+            event.block_number,
+            now,
+            now,
+        ),
+    )
+    _upsert_current_params(conn, event, snapshot, block_number=event.block_number)
+
+
+def _enable_auction_token(conn, event, *, from_token: str, want_token: str | None) -> None:
     conn.execute(
         """
         INSERT INTO auction_tokens (
@@ -450,6 +555,11 @@ def _project_auction_enabled(conn, prepared: PreparedEvent) -> None:
     )
 
 
+def _project_auction_enabled(conn, prepared: PreparedEvent) -> None:
+    event = prepared.domain_event
+    _enable_auction_token(conn, event, from_token=event.payload["from"], want_token=event.payload.get("to"))
+
+
 def _project_auction_disabled(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     from_token = event.payload["from"]
@@ -482,21 +592,70 @@ def _project_auction_disabled(conn, prepared: PreparedEvent) -> None:
     )
 
 
+def _restage_lot(conn, event, round_id: int, initial_available_raw: str) -> None:
+    """A repeated kick re-snapshots the round's lot; the latest stage is authoritative.
+
+    Stages precede their window, so this undoes whatever happened to the lot
+    since the last stage, such as the owner recovering it: the round waits
+    for its window again with the new lot.
+    """
+    row = conn.execute(
+        "SELECT sold_amount_raw FROM rounds WHERE chain_id = ? AND auction_address = ? AND round_id = ?",
+        (event.chain_id, event.auction_address, round_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Restaged lot requires round {event.chain_id}:{event.auction_address}:{round_id}")
+    remaining_raw = str(max(0, int(initial_available_raw) - int(row["sold_amount_raw"])))
+    conn.execute(
+        """
+        UPDATE rounds
+           SET initial_available_raw = ?,
+               remaining_available_raw = ?,
+               status = 'scheduled',
+               settled_at = NULL,
+               end_at = scheduled_end_at,
+               updated_at = ?
+         WHERE chain_id = ? AND auction_address = ? AND round_id = ?
+        """,
+        (initial_available_raw, remaining_raw, _now(), event.chain_id, event.auction_address, round_id),
+    )
+    conn.execute(
+        "UPDATE auctions SET latest_lifecycle_block = ?, updated_at = ? WHERE chain_id = ? AND auction_address = ?",
+        (event.block_number, _now(), event.chain_id, event.auction_address),
+    )
+
+
 def _project_kick(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     snapshot = prepared.snapshot
+    round_id, opens = kick_round(conn, event)
+    event.payload.setdefault("roundId", round_id)
+    initial_available_raw = decimal_text(event.payload.get("available")) or "0"
+    if not opens:
+        _restage_lot(conn, event, round_id, initial_available_raw)
+        return
     if snapshot is None:
         raise ValueError("AuctionKicked projection requires a hydrated snapshot")
     from_token = _resolve_event_from_token(conn, event)
-    round_id = _deterministic_round_id(conn, event)
-    event.payload.setdefault("roundId", round_id)
-    initial_available_raw = decimal_text(event.payload.get("available")) or "0"
     param_schema = param_schema_for_version(event.version)
 
     snapshot_params = _raw_params_from_snapshot(snapshot)
-    decoded = decode_params(param_schema, snapshot_params)
-    auction_length = decoded.auction_length_seconds
-    end_at = event.timestamp + auction_length if auction_length is not None else None
+    decoded = decode_params(
+        param_schema, snapshot_params, want_decimals=_token_decimals(conn, event.chain_id, snapshot.want_token),
+    )
+    starts_at = event.payload.get("startsAt")
+    if starts_at is None:
+        # The round starts trading when it is kicked.
+        status = "live"
+        kicked_at = event.timestamp
+        auction_length = decoded.auction_length_seconds
+        end_at = event.timestamp + auction_length if auction_length is not None else None
+    else:
+        # The round trades in a window that opens later; reconciliation opens it.
+        status = "scheduled"
+        kicked_at = int(starts_at)
+        end_at = int(event.payload["endsAt"])
+        _enable_auction_token(conn, event, from_token=from_token, want_token=snapshot.want_token)
     conn.execute(
         """
         INSERT INTO rounds (
@@ -504,8 +663,8 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
             scheduled_end_at, end_at, settled_at, initial_available_raw, remaining_available_raw, sold_amount_raw,
             paid_amount_raw, take_count, last_take_at, last_take_price_raw, receiver,
             minimum_price, starting_price, step_decay_percent,
-            step_duration_seconds, auction_length_seconds, snapshot_block, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'live', ?, ?, ?, NULL, ?, ?, '0', NULL, 0, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            step_duration_seconds, auction_length_seconds, floor_price, snapshot_block, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, '0', NULL, 0, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chain_id, auction_address, round_id) DO NOTHING
         """,
         (
@@ -514,7 +673,8 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
             round_id,
             from_token,
             snapshot.want_token,
-            event.timestamp,
+            status,
+            kicked_at,
             end_at,
             end_at,
             initial_available_raw,
@@ -525,6 +685,7 @@ def _project_kick(conn, prepared: PreparedEvent) -> None:
             decoded.step_decay_percent,
             decoded.step_duration_seconds,
             decoded.auction_length_seconds,
+            decoded.floor_price,
             event.block_number,
             _now(),
             _now(),
@@ -826,9 +987,27 @@ def _take_sequence(conn, event) -> int:
     return int(row["count"]) + 1
 
 
+def _window_round_id(conn, event) -> int:
+    """The round a fill in a staged window belongs to: the round opened for that window."""
+    row = conn.execute(
+        """
+        SELECT round_id FROM rounds
+         WHERE chain_id = ? AND auction_address = ? AND from_token = ? AND kicked_at = ?
+        """,
+        (event.chain_id, event.auction_address, event.payload["from"], int(event.payload["window"])),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"Take projection requires a round for {event.payload['from']} in window {event.payload['window']}"
+        )
+    return int(row["round_id"])
+
+
 def _project_take(conn, prepared: PreparedEvent) -> None:
     event = prepared.domain_event
     payload = event.payload
+    if payload.get("window") is not None:
+        payload.setdefault("roundId", _window_round_id(conn, event))
     round_id = int(payload["roundId"])
     take_seq = _take_sequence(conn, event)
     amount_taken_raw = decimal_text(payload.get("amountTaken")) or "0"
@@ -882,9 +1061,14 @@ def _project_take(conn, prepared: PreparedEvent) -> None:
     if amount_paid_raw is not None:
         paid_amount_total = str(int(paid_amount_total or 0) + int(amount_paid_raw))
         paid_sold_amount_raw = str(int(paid_sold_amount_raw) + int(amount_taken_raw))
-    remaining_available_raw = str(
-        max(0, int(round_row["initial_available_raw"]) - int(sold_amount_raw))
-    )
+    if payload.get("remainingAvailable") is not None:
+        # The auction's own count after the fill. A rebasing lot can hold more
+        # than its stage minus what has sold.
+        remaining_available_raw = decimal_text(payload["remainingAvailable"])
+    else:
+        remaining_available_raw = str(
+            max(0, int(round_row["initial_available_raw"]) - int(sold_amount_raw))
+        )
     round_status = str(round_row["status"])
     round_end_at = int(round_row["end_at"]) if round_row["end_at"] is not None else None
     if remaining_available_raw == "0":
@@ -951,6 +1135,8 @@ def apply_native_event_projections(conn, prepared_events: list[PreparedEvent]) -
         event_name = prepared.domain_event.event_name
         if event_name == "DeployedNewAuction":
             _project_deployment(conn, prepared)
+        elif event_name == "EconomicsSet":
+            _project_economics_set(conn, prepared)
         elif event_name == "GovernanceTransferred":
             _project_governance_transferred(conn, prepared)
         elif event_name == "AuctionEnabled":
@@ -1029,14 +1215,38 @@ def clear_take_state(conn, chain_id: int) -> None:
 def clear_projection_state(conn, chain_id: int) -> None:
     _clear_take_projections(conn, chain_id)
     conn.execute("DELETE FROM tokens WHERE chain_id = ?", (chain_id,))
-    conn.execute("DELETE FROM tracked_auctions WHERE chain_id = ?", (chain_id,))
+    # Config-seeded auctions have no factory and are not projected from events.
+    conn.execute("DELETE FROM tracked_auctions WHERE chain_id = ? AND factory_address IS NOT NULL", (chain_id,))
     conn.execute("DELETE FROM auction_current_params WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auction_tokens WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM rounds WHERE chain_id = ?", (chain_id,))
     conn.execute("DELETE FROM auctions WHERE chain_id = ?", (chain_id,))
 
 
+def _ended_clause() -> tuple[str, list[str]]:
+    """Whether a round's trading has ended at a timestamp (the `?` parameters, twice).
+
+    A Yearn auction still trades at its last second; a Curve window
+    [startsAt, endsAt) excludes its end.
+    """
+    versions = versions_for_protocol("curve")
+    placeholders = ", ".join("?" for _ in versions)
+    return (
+        "(end_at < ? OR (end_at = ? AND auction_address IN (SELECT a.auction_address FROM auctions a "
+        f"WHERE a.chain_id = rounds.chain_id AND LOWER(a.version) IN ({placeholders}))))",
+        versions,
+    )
+
+
 def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> None:
+    """Apply time-driven status changes at an indexed timestamp."""
+    ended, ended_versions = _ended_clause()
+    ended_params = (confirmed_timestamp, confirmed_timestamp, *ended_versions)
+    # Open windows first, so a window that has already passed expires below.
+    opened = conn.execute(
+        "UPDATE rounds SET status = 'live', updated_at = ? WHERE chain_id = ? AND status = 'scheduled' AND kicked_at <= ?",
+        (_now(), chain_id, confirmed_timestamp),
+    ).rowcount
     expired_rows = list(
         conn.execute(
             """
@@ -1045,11 +1255,11 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
              WHERE chain_id = ?
                AND status = 'live'
                AND settled_at IS NULL
-               AND remaining_available_raw <> '0'
+               AND (remaining_available_raw <> '0' OR last_take_at IS NULL)
                AND end_at IS NOT NULL
-               AND end_at < ?
-            """,
-            (chain_id, confirmed_timestamp),
+               AND {ended}
+            """.format(ended=ended),
+            (chain_id, *ended_params),
         ).fetchall()
     )
     conn.execute(
@@ -1092,6 +1302,7 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
                updated_at = ?
          WHERE chain_id = ?
            AND remaining_available_raw = '0'
+           AND last_take_at IS NOT NULL
            AND status <> 'sold_out'
         """,
         (_now(), chain_id),
@@ -1105,11 +1316,11 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
          WHERE chain_id = ?
            AND status = 'live'
            AND settled_at IS NULL
-           AND remaining_available_raw <> '0'
+           AND (remaining_available_raw <> '0' OR last_take_at IS NULL)
            AND end_at IS NOT NULL
-           AND end_at < ?
-        """,
-        (_now(), chain_id, confirmed_timestamp),
+           AND {ended}
+        """.format(ended=ended),
+        (_now(), chain_id, *ended_params),
     )
     # A reorg can move indexed time back across the deadline. Event closures
     # and sold-out inventory remain terminal regardless of that timestamp.
@@ -1120,9 +1331,14 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
          WHERE chain_id = ?
            AND status = 'expired'
            AND settled_at IS NULL
-           AND remaining_available_raw <> '0'
-           AND end_at >= ?
-        """,
+           AND (remaining_available_raw <> '0' OR last_take_at IS NULL)
+           AND NOT {ended}
+        """.format(ended=ended),
+        (_now(), chain_id, *ended_params),
+    )
+    # Likewise a window that has not opened at this time is scheduled again.
+    conn.execute(
+        "UPDATE rounds SET status = 'scheduled', updated_at = ? WHERE chain_id = ? AND status = 'live' AND kicked_at > ?",
         (_now(), chain_id, confirmed_timestamp),
     )
     for row in expired_rows:
@@ -1134,6 +1350,8 @@ def reconcile_round_statuses(conn, chain_id: int, confirmed_timestamp: int) -> N
             int(row["end_at"]),
             confirmed_timestamp,
         )
+    if opened:
+        logger.info("rounds opened chain_id=%d count=%d confirmed_timestamp=%d", chain_id, opened, confirmed_timestamp)
 
 
 def update_sync_state(

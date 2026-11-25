@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from backend.indexer.types import normalize_address
+from backend.indexer.versioning import protocol_for_version
 
 from ..cache_policy import PERSISTED, REFERENCE, set_cache_policy
 from ..db import Database
@@ -147,6 +148,7 @@ def get_auction_detail(
         receiver=checksum_address(row["current_receiver"] or row["receiver"]),
         receiver_name=row["receiver_name"],
         version=row["version"],
+        protocol=protocol_for_version(row["version"]),
         from_tokens=[item for item in from_tokens if item is not None],
         want_token=want_token,
         parameters=AuctionParameters(
@@ -155,6 +157,7 @@ def get_auction_detail(
             auction_length=int(row["auction_length_seconds"]) if row["auction_length_seconds"] is not None else None,
             starting_price=decimal_text_value(row["starting_price"]),
             minimum_price=decimal_text_value(row["minimum_price"]),
+            floor_price=decimal_text_value(row["floor_price"]),
         ),
         activity=AuctionActivity(
             total_participants=activity["total_participants"],

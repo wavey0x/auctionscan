@@ -320,6 +320,11 @@ export interface components {
             /** From Tokens */
             from_tokens: components["schemas"]["TokenModel"][];
             parameters: components["schemas"]["AuctionParameters"];
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "yearn" | "curve";
             /** Receiver */
             receiver?: string | null;
             /** Receiver Name */
@@ -336,6 +341,11 @@ export interface components {
             chain_id: number;
             /** Latest Activity At */
             latest_activity_at?: string | null;
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "yearn" | "curve";
             /** Receiver */
             receiver?: string | null;
             /** Receiver Name */
@@ -354,6 +364,8 @@ export interface components {
             auction_length?: number | null;
             /** Decay Percent */
             decay_percent?: string | null;
+            /** Floor Price */
+            floor_price?: string | null;
             /** Minimum Price */
             minimum_price?: string | null;
             /** Starting Price */
@@ -702,6 +714,8 @@ export interface components {
             end_at?: string | null;
             /** Expected Price Per Unit */
             expected_price_per_unit?: string | null;
+            /** Floor Price Per Unit */
+            floor_price_per_unit?: string | null;
             /** From Token */
             from_token?: string | null;
             /** From Token Decimals */
@@ -746,6 +760,11 @@ export interface components {
             pricing_by_source?: {
                 [key: string]: components["schemas"]["RoundPricingBySource"];
             } | null;
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "yearn" | "curve";
             /** Receiver */
             receiver?: string | null;
             /** Receiver Name */
@@ -764,7 +783,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "live" | "sold_out" | "expired" | "settled";
+            status: "scheduled" | "live" | "sold_out" | "expired" | "settled";
             /** Take Count */
             take_count: number;
             /** Total Actual Paid Usd */
@@ -850,6 +869,8 @@ export interface components {
             expired: number;
             /** Live */
             live: number;
+            /** Scheduled */
+            scheduled: number;
             /** Settled */
             settled: number;
             /** Sold Out */
@@ -1546,11 +1567,12 @@ export interface operations {
                 chain_id?: number | null;
                 auction_address?: string | null;
                 round_id?: number | null;
-                status?: "all" | "live" | "sold_out" | "expired" | "settled";
+                status?: "all" | "scheduled" | "live" | "sold_out" | "expired" | "settled";
                 pair?: string | null;
                 tx_hash?: string | null;
                 time_window?: "all" | "24h" | "7d" | "30d" | "90d";
                 version?: string[] | null;
+                protocol?: "all" | "yearn" | "curve";
                 page?: number;
                 limit?: number;
             };
@@ -1689,6 +1711,7 @@ export interface operations {
                 chain_id?: number | null;
                 time_window?: "all" | "24h" | "7d" | "30d" | "90d";
                 version?: string[] | null;
+                protocol?: "all" | "yearn" | "curve";
             };
             header?: never;
             path?: never;

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from .types import (
+    AuctionSeed,
     ChainConfig,
     FactorySeed,
     IndexerSettings,
@@ -106,21 +107,22 @@ def _artifact_factory_metadata(paths: ProjectPaths) -> tuple[dict[str, dict[str,
     by_factory: dict[str, dict[str, Any]] = {}
     by_version: dict[str, Path] = {}
     for row in rows:
-        factory_address = normalize_address(row["factory_address"])
         version = str(row["version"])
         metadata = require_version_metadata(version)
-        by_factory[factory_address] = {
-            "version": version,
-            "capability_family": row.get("capability_family") or metadata.capability_family,
-            "factory_source": row.get("factory_source") or "registry",
-        }
+        if row.get("factory_address"):
+            by_factory[normalize_address(row["factory_address"])] = {
+                "version": version,
+                "capability_family": row.get("capability_family") or metadata.capability_family,
+                "factory_source": row.get("factory_source") or "registry",
+            }
         abi_path = _resolve_artifact_abi_path(paths, version, str(row["auction_address"]))
         by_version[version] = abi_path
     return by_factory, by_version
 
 
-def _factory_abi_path(paths: ProjectPaths, version: str) -> Path:
-    return paths.repo_root / "backend" / "abis" / require_version_metadata(version).factory_abi_filename
+def _factory_abi_path(paths: ProjectPaths, version: str) -> Path | None:
+    filename = require_version_metadata(version).factory_abi_filename
+    return paths.repo_root / "backend" / "abis" / filename if filename else None
 
 
 def _build_versions(paths: ProjectPaths) -> dict[str, VersionDefinition]:
@@ -174,6 +176,23 @@ def _canonicalize_factory(
         deploy_block_source=deploy_block_source,
         discovery_source=str(raw_entry.get("discovery_source") or default_source),
         enabled=bool(raw_entry.get("enabled", True)),
+    )
+
+
+def _auction_seed(raw_entry: dict[str, Any]) -> AuctionSeed:
+    address = normalize_address(raw_entry["address"])
+    version = str(raw_entry.get("version") or "").strip()
+    metadata = VERSION_METADATA.get(version)
+    if metadata is None or metadata.factory_abi_filename is not None:
+        raise ValueError(f"auction {address} needs a factory-less version, not {version!r}")
+    start_block = int(raw_entry.get("start_block") or 0)
+    if start_block <= 0:
+        raise ValueError(f"auction {address} needs its deployment block as start_block")
+    return AuctionSeed(
+        address=address,
+        version=version,
+        capability_family=metadata.capability_family,
+        start_block=start_block,
     )
 
 
@@ -233,6 +252,7 @@ def load_settings(
         poa=bool(raw_network.get("poa", False)),
         registry=registry,
         factories=factories,
+        auctions=tuple(_auction_seed(entry) for entry in (raw_network.get("auctions") or [])),
     )
 
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)

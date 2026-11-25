@@ -56,7 +56,7 @@ def test_empty_hash_bound_scan_rechecks_canonical_tip_before_committing(tmp_path
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda chain, _registry, _hydrator, _auctions, start, end: fetch_logs(
+        lambda chain, _registry, _hydrator, _auctions, start, end, **_kwargs: fetch_logs(
             chain.w3, from_block=start, to_block=end, block_hashes=chain.reader.log_hashes
         ),
     )

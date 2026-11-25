@@ -14,7 +14,7 @@ def test_live_call_keeps_canonical_hash_and_uses_the_deployed_abi(monkeypatch, v
     live_price._network_runtime.cache_clear()
     _, w3 = live_price._network_runtime("ethereum")
     block_hash = "0x" + "ab" * 32
-    result = live_price.read_live_round_price(network_key="ethereum", version=version, auction_address=DEFAULT_AUCTION, from_token=DEFAULT_FROM_TOKEN, want_token=DEFAULT_WANT_TOKEN, block_hash=block_hash)
+    result = live_price.read_live_round_price(network_key="ethereum", version=version, auction_address=DEFAULT_AUCTION, from_token=DEFAULT_FROM_TOKEN, want_token=DEFAULT_WANT_TOKEN, block_hash=block_hash, from_decimals=18)
     assert result.current_price_raw == "18"
     assert len(provider.calls) == 1
     method, params = provider.calls[0]
@@ -29,7 +29,7 @@ def test_live_call_keeps_canonical_hash_and_uses_the_deployed_abi(monkeypatch, v
         assert w3.codec.decode(["address"], argument)[0] == DEFAULT_FROM_TOKEN
     provider.failure = {"code": -32000, "message": "block is not canonical"}
     with pytest.raises(Exception, match="canonical"):
-        live_price.read_live_round_price(network_key="ethereum", version=version, auction_address=DEFAULT_AUCTION, from_token=DEFAULT_FROM_TOKEN, want_token=DEFAULT_WANT_TOKEN, block_hash=block_hash)
+        live_price.read_live_round_price(network_key="ethereum", version=version, auction_address=DEFAULT_AUCTION, from_token=DEFAULT_FROM_TOKEN, want_token=DEFAULT_WANT_TOKEN, block_hash=block_hash, from_decimals=18)
     assert len(provider.calls) == 2  # No retry at another hash or height.
     live_price._network_runtime.cache_clear()
 

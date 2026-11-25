@@ -6,10 +6,13 @@ from typing import Any, Optional
 from .chains import ChainState
 from .decode import AbiRegistry
 from .types import AuctionSnapshot, PreparedEvent, TokenMetadata, decimal_text, normalize_address
-from .versioning import uses_legacy_auction_id
+from .versioning import uses_legacy_auction_id, version_metadata
 
 
 logger = logging.getLogger(__name__)
+
+# Events whose block is read as an auction-settings snapshot fact.
+SNAPSHOT_EVENTS = frozenset({"DeployedNewAuction", "AuctionKicked", "EconomicsSet"})
 
 
 def _snapshot_call(chain, contract, function_name: str, *, block_number: int) -> Any:
@@ -69,6 +72,9 @@ class Hydrator:
             getter: _snapshot_call(chain, contract, getter, block_number=block_number)
             for getter in definition.getter_bundle
         }
+        metadata = version_metadata(version)
+        for getter, field_name in (metadata.getter_aliases if metadata else {}).items():
+            values[field_name] = values.pop(getter, None)
         if uses_legacy_auction_id(version) and event_payload and event_payload.get("auctionId"):
             values.update(
                 _read_legacy_auction_state(
@@ -132,8 +138,12 @@ class Hydrator:
 
     def read_event_token_metadata(self, chain: ChainState, prepared: PreparedEvent):
         event, snapshot = prepared.domain_event, prepared.snapshot
+        if event.event_name == "AuctionKicked" and event.payload.get("startsAt") is not None and snapshot is None:
+            # A repeated kick for a window joins its round; the round's first
+            # kick already read its tokens.
+            return ()
         tokens = set()
-        if event.event_name in {"DeployedNewAuction", "AuctionKicked"} and snapshot and snapshot.want_token:
+        if event.event_name in SNAPSHOT_EVENTS and snapshot and snapshot.want_token:
             tokens.add(snapshot.want_token)
         if event.event_name in {"AuctionEnabled", "AuctionKicked", "Take"}:
             tokens.update(event.payload[key] for key in ("from", "to") if event.payload.get(key))

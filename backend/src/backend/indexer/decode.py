@@ -52,6 +52,35 @@ def _build_payload(event_abi: dict[str, Any], arguments: dict[str, Any]) -> dict
     return payload
 
 
+# Native events that mean what a Yearn event means are stored under the Yearn
+# name, so rounds, takes and pricing need no per-protocol branches. A Curve lot
+# trades in a fixed window rather than from the staging block; startsAt and
+# endsAt carry that window.
+EVENT_TRANSLATIONS = {
+    ("curve-1", "LotStaged"): (
+        "AuctionKicked",
+        lambda payload: {
+            "from": payload["token"],
+            "available": payload["initial_amount"],
+            "startsAt": payload["start"],
+            "endsAt": payload["end"],
+        },
+    ),
+    ("curve-1", "Recovered"): (
+        "AuctionSwept",
+        lambda payload: {"token": payload["token"], "amount": payload["amount"]},
+    ),
+}
+
+
+def translate_event(version: str, event_name: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    translation = EVENT_TRANSLATIONS.get((version, event_name))
+    if translation is None:
+        return event_name, payload
+    name, mapper = translation
+    return name, mapper(payload)
+
+
 class AbiRegistry:
     def __init__(self, settings: IndexerSettings) -> None:
         self.settings = settings
@@ -66,7 +95,7 @@ class AbiRegistry:
     def _initialize_versions(self) -> None:
         for version, definition in self.settings.versions.items():
             auction_abi = _load_abi(definition.auction_abi_path)
-            factory_abi = _load_abi(definition.factory_abi_path)
+            factory_abi = _load_abi(definition.factory_abi_path) if definition.factory_abi_path else []
             self._auction_contract_abis[version] = auction_abi
 
             auction_events = {
@@ -153,10 +182,10 @@ class AbiRegistry:
         timestamp: int,
     ) -> DomainEventRecord:
         topic0 = normalize_hex(log["topics"][0])
-        event_name = self._auction_topics[version][topic0]
-        event_abi = self._auction_event_abis[version][event_name]
+        native_name = self._auction_topics[version][topic0]
+        event_abi = self._auction_event_abis[version][native_name]
         decoded = get_event_data(w3.codec, event_abi, log)
-        payload = _build_payload(event_abi, dict(decoded["args"]))
+        event_name, payload = translate_event(version, native_name, _build_payload(event_abi, dict(decoded["args"])))
         return DomainEventRecord(
             chain_id=chain_id,
             block_number=int(log["blockNumber"]),

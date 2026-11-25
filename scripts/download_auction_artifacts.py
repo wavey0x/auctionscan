@@ -269,7 +269,16 @@ def main() -> int:
             )
         )
 
-    write_json(args.output_dir / "index.json", written)
+    # Contracts with no verified Etherscan source are vendored by hand from
+    # their repository; keep those entries rather than dropping them.
+    index_path = args.output_dir / "index.json"
+    fetched = {str(row["auction_address"]).lower() for row in written}
+    if index_path.exists():
+        written.extend(
+            row for row in json.loads(index_path.read_text(encoding="utf-8"))
+            if row.get("source_repository") and str(row["auction_address"]).lower() not in fetched
+        )
+    write_json(index_path, written)
     print(f"Wrote {len(written)} auction artifact bundles to {args.output_dir}")
     return 0
 

@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { Link, type To } from "react-router-dom";
 
 import { formatAmount, formatCount, formatDuration, formatPrice } from "../../../shared/lib/format";
+import { auctionLabel } from "../../../shared/lib/protocol";
 import type { AuctionDetails } from "../../../shared/types/api";
 import AddressValue from "../../../shared/ui/AddressValue";
 import AuctionAddressValue from "../../../shared/ui/AuctionAddressValue";
@@ -71,14 +72,26 @@ function Facts({ auction }: { auction: AuctionDetails }) {
         {activity.total_volume && auction.want_token.symbol ? <span className="ml-1.5 text-tertiary">{auction.want_token.symbol}</span> : null}
         {partialVolume ? <span className="stat-note">partial</span> : null}
       </Fact>
-      <Fact label="Decay">
-        <span className="font-mono">{parameters.decay_percent ?? "—"}</span>
-        {parameters.decay_percent && parameters.update_interval ? (
-          <span className="ml-1.5 text-tertiary">{`/ ${formatDuration(parameters.update_interval)}`}</span>
-        ) : null}
-      </Fact>
-      <Fact label="Duration"><span className="font-mono">{formatDuration(parameters.auction_length)}</span></Fact>
-      <Fact label="Min price"><span className="font-mono">{formatPrice(parameters.minimum_price)}</span></Fact>
+      {auction.protocol === "curve" ? (
+        // A burner's lots share one curve, from a start to a floor over a fixed
+        // window, so its price range is the one setting worth stating here.
+        <Fact label="Lot price" title="Every lot's price falls from the first figure to the floor over its window">
+          <span className="font-mono">
+            {formatAmount(parameters.starting_price)} → {formatAmount(parameters.floor_price)} {auction.want_token.symbol}
+          </span>
+        </Fact>
+      ) : (
+        <>
+          <Fact label="Decay">
+            <span className="font-mono">{parameters.decay_percent ?? "—"}</span>
+            {parameters.decay_percent && parameters.update_interval ? (
+              <span className="ml-1.5 text-tertiary">{`/ ${formatDuration(parameters.update_interval)}`}</span>
+            ) : null}
+          </Fact>
+          <Fact label="Duration"><span className="font-mono">{formatDuration(parameters.auction_length)}</span></Fact>
+          <Fact label="Min price"><span className="font-mono">{formatPrice(parameters.minimum_price)}</span></Fact>
+        </>
+      )}
     </dl>
   );
 }
@@ -117,6 +130,7 @@ export default function AuctionScopeHead({
           <AuctionAddressValue
             address={auction?.address ?? address}
             chainId={chainId}
+            label={auctionLabel(auction?.protocol)}
             showCowExplorerIcon
           />
         </h1>

@@ -46,11 +46,11 @@ CREATE TABLE IF NOT EXISTS tracked_factories (
 CREATE TABLE IF NOT EXISTS tracked_auctions (
     chain_id INTEGER NOT NULL,
     auction_address TEXT NOT NULL,
-    factory_address TEXT NOT NULL,
+    factory_address TEXT,
     version TEXT NOT NULL,
     capability_family TEXT NOT NULL,
     discovered_block INTEGER NOT NULL,
-    discovered_tx_hash TEXT NOT NULL,
+    discovered_tx_hash TEXT,
     active_flag INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS address_aliases (
 CREATE TABLE IF NOT EXISTS auctions (
     chain_id INTEGER NOT NULL,
     auction_address TEXT NOT NULL,
-    factory_address TEXT NOT NULL,
+    factory_address TEXT,
     version TEXT NOT NULL,
     capability_family TEXT NOT NULL,
     governance TEXT,
@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS auction_current_params (
     step_decay_percent TEXT,
     step_duration_seconds INTEGER,
     auction_length_seconds INTEGER,
+    floor_price TEXT,
     extra_params_json TEXT,
     last_updated_block INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -196,6 +197,7 @@ CREATE TABLE IF NOT EXISTS rounds (
     step_decay_percent TEXT,
     step_duration_seconds INTEGER,
     auction_length_seconds INTEGER,
+    floor_price TEXT,
     snapshot_block INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -522,6 +524,7 @@ CREATE INDEX IF NOT EXISTS idx_taker_summary_address_search
 CREATE INDEX IF NOT EXISTS idx_tokens_address_search
     ON tokens (token_address COLLATE NOCASE, chain_id);
 CREATE INDEX IF NOT EXISTS idx_round_param_snapshot_tx_hash ON round_param_snapshot (chain_id, snapshot_tx_hash);
+CREATE INDEX IF NOT EXISTS idx_round_param_snapshot_token ON round_param_snapshot (chain_id, auction_address, from_token);
 CREATE INDEX IF NOT EXISTS idx_round_snapshot_tx_hash_search
     ON round_param_snapshot (snapshot_tx_hash COLLATE NOCASE, snapshot_block DESC);
 CREATE INDEX IF NOT EXISTS idx_auction_snapshot_facts_lookup ON auction_snapshot_facts (chain_id, auction_address, snapshot_kind, block_number);

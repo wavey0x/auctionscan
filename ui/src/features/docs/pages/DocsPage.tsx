@@ -13,7 +13,10 @@ export default function DocsPage() {
       <section className="card card-clip">
         <div className="card-title"><span>Method</span></div>
         <ul className="prose-text m-0 list-disc space-y-1.5 py-4 pl-9 pr-5 text-body text-secondary">
-          <li>At round kick, we capture a baseline quote for the full lot.</li>
+          <li>
+            At round kick, we capture a baseline quote for the full lot. A Curve burner lot is
+            quoted when its trading window opens, for the lot as finally staged.
+          </li>
           <li>At each take, we capture a quote for the exact amount that was sold.</li>
           <li>Quotes are the primary benchmark because takes are sized executions, not spot marks.</li>
           <li>Token prices are secondary and mainly used to express values and deltas in USD.</li>

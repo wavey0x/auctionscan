@@ -5,7 +5,10 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-RoundStatusFilter = Literal["all", "live", "sold_out", "expired", "settled"]
+RoundStatus = Literal["scheduled", "live", "sold_out", "expired", "settled"]
+RoundStatusFilter = Literal["all", "scheduled", "live", "sold_out", "expired", "settled"]
+Protocol = Literal["yearn", "curve"]
+ProtocolFilter = Literal["all", "yearn", "curve"]
 TimeWindowFilter = Literal["all", "24h", "7d", "30d", "90d"]
 TakerSortKey = Literal["volume", "taker", "chains", "auctions", "takes", "recent"]
 MAX_PAGE = 1000
@@ -142,8 +145,9 @@ class RoundListItem(BaseModel):
     chain_id: int
     auction_address: str
     round_id: int
-    status: Literal["live", "sold_out", "expired", "settled"]
+    status: RoundStatus
     is_active: bool
+    protocol: Protocol
     from_token: str | None = None
     from_token_symbol: str | None = None
     from_token_name: str | None = None
@@ -176,6 +180,8 @@ class RoundListItem(BaseModel):
     starting_price: str | None = None
     starting_price_per_unit: str | None = None
     minimum_price: str | None = None
+    # Per-unit price a Curve lot decays to and holds until its window ends.
+    floor_price_per_unit: str | None = None
     expected_price_per_unit: str | None = None
     kick_market_quote: str | None = None
     kick_market_quote_usd: str | None = None
@@ -195,6 +201,7 @@ class RoundStatusCounts(BaseModel):
     """Rounds matching every list filter except status, by stored status."""
 
     all: int
+    scheduled: int
     live: int
     sold_out: int
     expired: int
@@ -248,6 +255,8 @@ class AuctionParameters(BaseModel):
     auction_length: int | None = None
     starting_price: str | None = None
     minimum_price: str | None = None
+    # Lot total a Curve burner's price decays to.
+    floor_price: str | None = None
 
 
 class AuctionActivity(BaseModel):
@@ -264,6 +273,7 @@ class AuctionDetails(IndexedResponse):
     receiver: str | None = None
     receiver_name: str | None = None
     version: str | None = None
+    protocol: Protocol
     from_tokens: list[TokenModel]
     want_token: TokenModel
     parameters: AuctionParameters
@@ -276,6 +286,7 @@ class AuctionListItem(BaseModel):
     receiver: str | None = None
     receiver_name: str | None = None
     version: str | None = None
+    protocol: Protocol
     want_token: TokenModel | None = None
     total_rounds: int
     total_takes: int

@@ -7,7 +7,8 @@ import logging
 from dataclasses import replace
 
 from .chains import ChainState
-from .hydration import Hydrator
+from .facts import AUCTION_SNAPSHOT_KINDS, kick_round
+from .hydration import SNAPSHOT_EVENTS, Hydrator
 from .observations import MissingObservation
 from .types import (
     AuctionSnapshot,
@@ -92,7 +93,7 @@ def _snapshot_from_fact_row(row) -> AuctionSnapshot | None:
     )
 
 
-def _load_persisted_deploy_snapshot(conn, domain_event: DomainEventRecord) -> AuctionSnapshot | None:
+def _load_persisted_auction_snapshot(conn, domain_event: DomainEventRecord) -> AuctionSnapshot | None:
     row = conn.execute(
         """
         SELECT chain_id, auction_address, block_number, want_token, governance, receiver,
@@ -102,9 +103,15 @@ def _load_persisted_deploy_snapshot(conn, domain_event: DomainEventRecord) -> Au
          WHERE chain_id = ?
            AND tx_hash = ?
            AND log_index = ?
-           AND snapshot_kind = 'deploy' AND block_hash = ?
+           AND snapshot_kind = ? AND block_hash = ?
         """,
-        (domain_event.chain_id, domain_event.tx_hash, domain_event.log_index, domain_event.block_hash),
+        (
+            domain_event.chain_id,
+            domain_event.tx_hash,
+            domain_event.log_index,
+            AUCTION_SNAPSHOT_KINDS[domain_event.event_name],
+            domain_event.block_hash,
+        ),
     ).fetchone()
     return _snapshot_from_fact_row(row)
 
@@ -130,12 +137,20 @@ def prepared_from_domain_event_row(conn, chain: ChainState, hydrator: Hydrator, 
     event = base.domain_event
     chain.reader.header(event.block_number, expected_hash=event.block_hash)
     snapshot = None
-    if event.event_name in {"DeployedNewAuction", "AuctionKicked"}:
-        if event.event_name == "DeployedNewAuction":
-            snapshot = _load_persisted_deploy_snapshot(conn, event)
+    if event.event_name in SNAPSHOT_EVENTS:
+        if event.event_name in AUCTION_SNAPSHOT_KINDS:
+            snapshot = _load_persisted_auction_snapshot(conn, event)
         else:
             snapshot = _load_persisted_round_snapshot(conn, event)
-        if snapshot is None:
+        # A repeated kick for a scheduled window joins its round; only the
+        # round's first kick keeps a snapshot.
+        restaged = (
+            snapshot is None
+            and event.event_name == "AuctionKicked"
+            and event.payload.get("startsAt") is not None
+            and not kick_round(conn, event)[1]
+        )
+        if snapshot is None and not restaged:
             raise MissingObservation(
                 f"Missing {event.event_name} snapshot for {event.tx_hash}:{event.log_index}; run observation backfill"
             )

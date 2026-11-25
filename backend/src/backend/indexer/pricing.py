@@ -5,7 +5,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .prices_api import (
@@ -187,71 +187,109 @@ def _lookup_kick_pricing_context(
     return int(row["round_id"]), row["want_token"]
 
 
+def _kick_queue_rows(
+    *,
+    chain_id: int,
+    auction_address: str,
+    round_id: int,
+    timestamp: int,
+    from_token: str,
+    want_token: str,
+    amount_in_raw: str,
+    tx_hash: str,
+    log_index: int,
+    block_number: int,
+    block_hash: str,
+    now: int,
+) -> list[tuple[Any, ...]]:
+    """The kick-time market quote for a round's lot and the want token's price."""
+    source = (tx_hash, log_index, "AuctionKicked", block_number, block_hash)
+    return [
+        (chain_id, auction_address, round_id, None, "round_kick_quote", timestamp,
+         from_token, want_token, None, amount_in_raw, *source, "pending", 0, now, None, 100, now, now),
+        (chain_id, auction_address, round_id, None, "want_token_price", timestamp,
+         None, None, want_token, None, *source, "pending", 0, now, None, 90, now, now),
+    ]
+
+
+def _insert_queue_rows(conn, rows: list[tuple[Any, ...]]) -> int:
+    if not rows:
+        return 0
+    before_total_changes = conn.total_changes
+    conn.executemany(
+        """
+        INSERT INTO pricing_capture_queue (
+            chain_id, auction_address, round_id, take_seq, entity_kind, event_timestamp,
+            from_token, to_token, token, amount_in_raw,
+            source_tx_hash, source_log_index, source_event_name, source_block_number, source_block_hash,
+            status, attempt_count,
+            next_attempt_at, last_error, priority, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chain_id, source_block_hash, source_tx_hash, source_log_index, entity_kind) DO NOTHING
+        """,
+        rows,
+    )
+    return int(conn.total_changes - before_total_changes)
+
+
+def enqueue_opened_round_pricing(conn, *, chain_id: int, after_timestamp: int, until_timestamp: int) -> int:
+    """Quote rounds whose staged window opened in (after_timestamp, until_timestamp].
+
+    Selected by the window's own start, whatever the round's status, so a lot
+    that sells out in the batch that opens it is still quoted. The amount is
+    the lot as finally staged; the source is the round's first kick, which is
+    what kick quotes link to.
+    """
+    now = _now()
+    rows: list[tuple[Any, ...]] = []
+    for row in conn.execute(
+        """
+        SELECT r.auction_address, r.round_id, r.kicked_at, r.from_token, r.want_token, r.initial_available_raw,
+               s.snapshot_tx_hash, s.snapshot_log_index, e.block_number, e.block_hash
+          FROM rounds r
+          JOIN round_param_snapshot s
+            ON s.chain_id = r.chain_id AND s.auction_address = r.auction_address AND s.round_id = r.round_id
+          JOIN domain_events e
+            ON e.chain_id = s.chain_id AND e.tx_hash = s.snapshot_tx_hash
+           AND e.log_index = s.snapshot_log_index AND e.event_name = 'AuctionKicked'
+         WHERE r.chain_id = ? AND r.kicked_at > ? AND r.kicked_at <= ?
+           AND json_extract(e.payload_json, '$.startsAt') IS NOT NULL
+        """,
+        (chain_id, after_timestamp, until_timestamp),
+    ).fetchall():
+        if not row["want_token"] or row["initial_available_raw"] in (None, "0"):
+            continue
+        rows.extend(_kick_queue_rows(
+            chain_id=chain_id, auction_address=row["auction_address"], round_id=int(row["round_id"]),
+            timestamp=int(row["kicked_at"]), from_token=row["from_token"], want_token=row["want_token"],
+            amount_in_raw=row["initial_available_raw"], tx_hash=row["snapshot_tx_hash"],
+            log_index=int(row["snapshot_log_index"]), block_number=int(row["block_number"]),
+            block_hash=row["block_hash"], now=now,
+        ))
+    return _insert_queue_rows(conn, rows)
+
+
 def enqueue_pricing_work(conn, prepared_events: list[PreparedEvent]) -> int:
     rows: list[tuple[Any, ...]] = []
     now = _now()
     for prepared in prepared_events:
         event = prepared.domain_event
         if event.event_name == "AuctionKicked":
+            if event.payload.get("startsAt") is not None:
+                # Quoted when its window opens; see enqueue_opened_round_pricing.
+                continue
             round_id, looked_up_want_token = _lookup_kick_pricing_context(conn, prepared)
             from_token = event.payload.get("from")
             want_token = prepared.snapshot.want_token if prepared.snapshot else looked_up_want_token
             amount_in_raw = decimal_text(event.payload.get("available"))
             if round_id is None or not from_token or not want_token or not amount_in_raw:
                 continue
-            rows.append(
-                (
-                    event.chain_id,
-                    event.auction_address,
-                    round_id,
-                    None,
-                    "round_kick_quote",
-                    event.timestamp,
-                    from_token,
-                    want_token,
-                    None,
-                    amount_in_raw,
-                    event.tx_hash,
-                    event.log_index,
-                    event.event_name,
-                    event.block_number,
-                    event.block_hash,
-                    "pending",
-                    0,
-                    now,
-                    None,
-                    100,
-                    now,
-                    now,
-                )
-            )
-            if want_token:
-                rows.append(
-                    (
-                        event.chain_id,
-                        event.auction_address,
-                        round_id,
-                        None,
-                        "want_token_price",
-                        event.timestamp,
-                        None,
-                        None,
-                        want_token,
-                        None,
-                        event.tx_hash,
-                        event.log_index,
-                        event.event_name,
-                        event.block_number,
-                        event.block_hash,
-                        "pending",
-                        0,
-                        now,
-                        None,
-                        90,
-                        now,
-                        now,
-                    )
-                )
+            rows.extend(_kick_queue_rows(
+                chain_id=event.chain_id, auction_address=event.auction_address, round_id=round_id,
+                timestamp=event.timestamp, from_token=from_token, want_token=want_token,
+                amount_in_raw=amount_in_raw, tx_hash=event.tx_hash, log_index=event.log_index,
+                block_number=event.block_number, block_hash=event.block_hash, now=now,
+            ))
         elif event.event_name == "Take":
             identity = _lookup_take_identity(conn, prepared)
             if identity is None:
@@ -313,23 +351,7 @@ def enqueue_pricing_work(conn, prepared_events: list[PreparedEvent]) -> int:
                         now,
                     )
                 )
-    if not rows:
-        return 0
-    before_total_changes = conn.total_changes
-    conn.executemany(
-        """
-        INSERT INTO pricing_capture_queue (
-            chain_id, auction_address, round_id, take_seq, entity_kind, event_timestamp,
-            from_token, to_token, token, amount_in_raw,
-            source_tx_hash, source_log_index, source_event_name, source_block_number, source_block_hash,
-            status, attempt_count,
-            next_attempt_at, last_error, priority, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(chain_id, source_block_hash, source_tx_hash, source_log_index, entity_kind) DO NOTHING
-        """,
-        rows,
-    )
-    return int(conn.total_changes - before_total_changes)
+    return _insert_queue_rows(conn, rows)
 
 
 def _queue_job_round(conn, job: PricingQueueJob) -> tuple[str, int] | None:
@@ -945,6 +967,33 @@ class PricingCaptureRuntime:
             next_attempt_at=None,
         )
 
+    def _shared_price_attempts(
+        self, conn, *, chain_id: int, attempts: tuple[PricingAttemptResult, ...],
+    ) -> tuple[PricingAttemptResult, ...]:
+        """One fresh want-token price answers every queued request for that token and moment.
+
+        A Curve window opens hundreds of lots at once, each queueing the same
+        want-token price. Each request still gets its own fact and source link.
+        Requests already in flight finish on their own.
+        """
+        shared: list[PricingAttemptResult] = []
+        claimed = {attempt.job.id for attempt in attempts} | set(self._outstanding)
+        for attempt in attempts:
+            job = attempt.job
+            if attempt.fact_kind != "price" or attempt.capture_state != "fresh" or attempt.payload_json is None:
+                continue
+            for row in conn.execute(
+                """
+                SELECT * FROM pricing_capture_queue
+                 WHERE chain_id = ? AND entity_kind = 'want_token_price' AND token = ? AND event_timestamp = ?
+                """,
+                (chain_id, job.token, job.event_timestamp),
+            ).fetchall():
+                if int(row["id"]) not in claimed:
+                    claimed.add(int(row["id"]))
+                    shared.append(replace(attempt, job=_queue_job_from_row(row)))
+        return tuple(shared)
+
     def _commit_attempts(
         self,
         conn,
@@ -956,6 +1005,7 @@ class PricingCaptureRuntime:
         facts_written = 0
         retries = 0
         terminal_deletions = 0
+        attempts = attempts + self._shared_price_attempts(conn, chain_id=chain_id, attempts=attempts)
         for attempt in attempts:
             job = attempt.job
             queue_row = conn.execute(

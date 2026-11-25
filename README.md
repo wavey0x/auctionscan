@@ -52,6 +52,8 @@ uv --project backend run pytest
 - One long-running indexer process per network.
 - SQLite is the system of record.
 - `--reproject` rebuilds projected state from stored facts.
+- Yearn auctions are discovered through factories; Curve's fee burners (one per
+  chain, no factory) are listed under `auctions:` in `config.yaml`.
 - Public round links use `/round/{chain_id}/{auction_address}/{round_id}`.
   Round numbers are derived from indexed kick history; corrections to earlier
   history can renumber rounds, so these links follow the current numbering.

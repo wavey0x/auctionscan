@@ -143,7 +143,7 @@ def _build_runtime(
     monkeypatch.setattr(
         collection_module,
         "scan_auction_events",
-        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block: _window_events(
+        lambda _chain, _registry, _hydrator, _tracked_auctions, from_block, to_block, **_kwargs: _window_events(
             auction_events_by_block or {}, from_block, to_block, _chain
         ),
     )

@@ -23,6 +23,7 @@ from .observations import BlockReader, BranchChanged, MissingObservation
 from .pricing import (
     PricingCaptureRuntime,
     delete_orphaned_pricing_queue_rows,
+    enqueue_opened_round_pricing,
     enqueue_pricing_work,
     refresh_event_pricing,
 )
@@ -41,6 +42,7 @@ from .projections import (
     reconcile_round_statuses,
     rebuild_token_metadata,
     update_sync_state,
+    upsert_tracked_auction_seeds,
     upsert_tracked_factories,
 )
 from .facts import (
@@ -98,7 +100,7 @@ class IndexerRuntime:
                 self.sync_chain_once(max_blocks=max_blocks)
                 consecutive_failures = 0
                 state = self._load_sync_state_row()
-                if any(factory.enabled for factory in self._factory_seeds or ()) and state["latest_rpc_head"] is not None and int(state["last_live_processed"]) < int(state["latest_rpc_head"]):
+                if self._has_sources(self._factory_seeds or ()) and state["latest_rpc_head"] is not None and int(state["last_live_processed"]) < int(state["latest_rpc_head"]):
                     continue
             except Exception as exc:
                 consecutive_failures += 1
@@ -119,6 +121,21 @@ class IndexerRuntime:
 
     def reproject(self, *, takes_only: bool = False) -> int:
         return self.reproject_chain(takes_only=takes_only)
+
+    def _indexed_timestamp(self, block_number: int) -> int:
+        """When an indexed block was mined; -1 before the first batch.
+
+        Every batch keeps the headers it read, its tip included, so the block
+        before the next batch is always here once indexing has begun.
+        """
+        row = self.writer.fetchone(
+            "SELECT timestamp FROM indexed_blocks WHERE chain_id = ? AND block_number = ?",
+            (self.chain.config.chain_id, block_number),
+        )
+        return int(row["timestamp"]) if row is not None else -1
+
+    def _has_sources(self, factory_seeds) -> bool:
+        return any(factory.enabled for factory in factory_seeds) or bool(self.chain.config.auctions)
 
 
     def backfill_receiver_aliases(
@@ -190,7 +207,7 @@ class IndexerRuntime:
             self._verify_finality_anchors()
             confirmed_head = self._observed_finality.block_number
         factory_seeds = self._refresh_factory_seeds(self.discovery_chain, confirmed_head=confirmed_head)
-        if not any(factory.enabled for factory in factory_seeds):
+        if not self._has_sources(factory_seeds):
             # Do not advance an empty scan past history we have not discovered yet.
             return 0
         start_block = chain_start_block(chain.config, factory_seeds)
@@ -200,10 +217,18 @@ class IndexerRuntime:
                 (chain.config.chain_id,),
             )
         }
-        reset_from = min((factory.start_block for factory in factory_seeds
+        known_auction_seeds = {
+            row["auction_address"]: int(row["discovered_block"]) for row in self.writer.fetchall(
+                "SELECT auction_address, discovered_block FROM tracked_auctions WHERE chain_id = ? AND factory_address IS NULL",
+                (chain.config.chain_id,),
+            )
+        }
+        reset_from = min([factory.start_block for factory in factory_seeds
                           if factory.enabled and (factory.address not in known_factories
                           or not known_factories[factory.address]["active_flag"]
-                          or factory.start_block < int(known_factories[factory.address]["start_block"]))),
+                          or factory.start_block < int(known_factories[factory.address]["start_block"]))]
+                         + [seed.start_block for seed in chain.config.auctions
+                            if seed.start_block < known_auction_seeds.get(seed.address, seed.start_block + 1)],
                          default=None)
         previous_state = self.writer.fetchone("SELECT last_live_processed, last_confirmed_processed FROM sync_state WHERE chain_id = ?",
                                               (chain.config.chain_id,))
@@ -217,6 +242,11 @@ class IndexerRuntime:
             inserted_factories = upsert_tracked_factories(
                 conn, chain.config.chain_id, factory_seeds
             )
+            for seed in upsert_tracked_auction_seeds(conn, chain.config.chain_id, chain.config.auctions):
+                logger.info(
+                    "auction seeded network=%s chain_id=%d auction=%s version=%s start_block=%d",
+                    self.network_name, chain.config.chain_id, seed.address, seed.version, seed.start_block,
+                )
             if rewind:
                 if rewind_header is not None:
                     upsert_indexed_blocks(conn, [rewind_header])
@@ -310,7 +340,8 @@ class IndexerRuntime:
                         }
                     )
             auction_events = collection.scan_auction_events(
-                chain, self.abi_registry, self.hydrator, tracked_auctions, next_block, to_block
+                chain, self.abi_registry, self.hydrator, tracked_auctions, next_block, to_block,
+                conn=self.writer.connection,
             )
             prepared_events = sorted(
                 factory_events + auction_events,
@@ -336,6 +367,9 @@ class IndexerRuntime:
                 if number != to_block and not live_headers and chain.block_header(number).block_hash != header.block_hash:
                     raise BranchChanged(f"Canonical branch changed at block {number}")
 
+            # Windows that open between the last indexed block and this batch's tip are quoted now.
+            previous_tip_timestamp = self._indexed_timestamp(next_block - 1)
+
             def persist_batch(conn) -> tuple[list[PreparedEvent], list[PreparedEvent]]:
                 inserted_native_events = apply_batch_with_results(conn, prepared_events)
                 reader.persist(conn)
@@ -345,6 +379,8 @@ class IndexerRuntime:
                 refresh_event_pricing(conn, chain_id=chain.config.chain_id,
                                       events=inserted_native_events + inserted_take_events)
                 reconcile_round_statuses(conn, chain.config.chain_id, batch_tip.timestamp)
+                enqueue_opened_round_pricing(conn, chain_id=chain.config.chain_id,
+                                             after_timestamp=previous_tip_timestamp, until_timestamp=batch_tip.timestamp)
                 self._update_state(
                     conn,
                     chain_id=chain.config.chain_id,

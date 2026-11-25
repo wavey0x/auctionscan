@@ -24,6 +24,7 @@ import {
 import type { KickedDisplayMode } from "../../../shared/lib/format";
 import { useDenomination } from "../../../shared/lib/denomination";
 import { DEFAULT_PRICE_SOURCE, getRoundPricingBySource, resolvePriceSource, shouldShowPriceSourceSelector } from "../../../shared/lib/pricingSource";
+import { auctionLabel } from "../../../shared/lib/protocol";
 import { getRoundProgressMetrics, getSaleOutcome } from "../../../shared/lib/roundProgress";
 import { useChainsQuery } from "../../../shared/lib/chains";
 import { buildRoundPath, parseOccurrence, parseRoundId } from "../../../shared/lib/routes";
@@ -278,6 +279,40 @@ function LiveRow({
   );
 }
 
+/**
+ * A round whose window has not opened yet: what will be sold, where its price
+ * starts and settles, and when trading begins. The same shape as the live row.
+ */
+function UpcomingRow({ round, fromSymbol }: { round: RoundListItem; fromSymbol: string }) {
+  const metrics = getRoundProgressMetrics(progressInput(round));
+  const opensAt = Date.parse(round.kicked_at);
+  const opensIn = Number.isFinite(opensAt) ? Math.max(0, Math.floor((opensAt - Date.now()) / 1000)) : null;
+  const start = round.starting_price_per_unit;
+  const floor = round.floor_price_per_unit;
+
+  return (
+    <dl className="outcome outcome-end">
+      <OutcomeCell label="Lot" title={`${formatFullAmount(round.initial_available)} ${fromSymbol}`}>
+        {round.initial_available ? formatAmount(round.initial_available) : <span className="text-faint">—</span>}
+      </OutcomeCell>
+      <OutcomeCell
+        label="Starts at"
+        title={[start ? `Start ${formatPrice(start, 8)}` : null, floor ? `floor ${formatPrice(floor, 8)}` : null].filter(Boolean).join(" · ") || undefined}
+        sub={floor ? `floor ${formatPriceSignificant(floor, 4)}` : null}
+      >
+        {start ? formatPriceSignificant(start) : <span className="text-faint">—</span>}
+      </OutcomeCell>
+      <OutcomeCell
+        label="Opens in"
+        title={`Opens ${formatDateTime(round.kicked_at)} · ${metrics.timeDetail}`}
+        sub={metrics.scheduledDurationSeconds === null ? null : `for ${formatDuration(metrics.scheduledDurationSeconds)}`}
+      >
+        {opensIn === null ? <span className="text-faint">—</span> : opensIn > 0 ? formatDuration(opensIn) : "opening"}
+      </OutcomeCell>
+    </dl>
+  );
+}
+
 function DrawerSkeleton({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true">
@@ -459,6 +494,9 @@ export default function RoundModalContent({
   const wantSymbol = round.want_token_symbol || formatAddress(round.want_token, 6);
   const hasTakes = round.take_count > 0;
   const live = round.status === "live";
+  // A round still to come leads with its window, as a live one leads with what is open.
+  const upcoming = round.status === "scheduled";
+  const open = live || upcoming;
   // Once something has sold, the first figure is what the result is measured
   // on: the amount sold, valued at the market quote that PnL compares against.
   const offered = hasTakes ? round.sold_amount : round.initial_available ?? round.sold_amount;
@@ -469,7 +507,7 @@ export default function RoundModalContent({
   const pnlUsd = coerceFiniteNumber(roundPricing.total_auction_profit_usd);
 
   // Absence is only stated once a response has confirmed it, never while loading or failed.
-  const takesNote = takesQuery.data && !takesNotFound ? takes.length || (round.status === "live" ? "none yet" : "none") : null;
+  const takesNote = takesQuery.data && !takesNotFound ? takes.length || (open ? "none yet" : "none") : null;
 
   const takesSection = (
     <section className="sec" aria-label="Takes">
@@ -521,6 +559,7 @@ export default function RoundModalContent({
       chainId={chain}
       startingPricePerUnit={round.starting_price_per_unit}
       minimumPrice={round.minimum_price}
+      floorPrice={round.floor_price_per_unit}
       duration={round.auction_length}
       stepDuration={round.update_interval}
       decay={round.decay_percent}
@@ -529,16 +568,16 @@ export default function RoundModalContent({
   );
 
   // What the round achieved. A cell exists only once there is something to put
-  // in it: a live round shows this row after its first take, and a round that
-  // ended without one shows the lot alone. Each figure is given once, in the
+  // in it: a round still open shows this row after its first take, and a round
+  // that ended without one shows the lot alone. Each figure is given once, in the
   // round's tokens or in dollars; clicking one switches them all.
   const switchHint = inUsd ? "Click for token amounts" : "Click for dollar values";
   const paidUsd = round.total_actual_paid_usd;
   const paidCount = inUsd ? round.paid_usd_take_count : round.paid_take_count;
   const pnlCount = inUsd ? usdPricedTakes : pricedTakes;
   const pnlFigure = inUsd ? pnlUsd : pnlPercent;
-  const resultRow = !hasTakes && live ? null : (
-    <dl className={cn("outcome", live && "outcome-ruled outcome-end")}>
+  const resultRow = !hasTakes && open ? null : (
+    <dl className={cn("outcome", open && "outcome-ruled outcome-end")}>
       <OutcomeCell
         label={hasTakes ? "Sold" : "Lot"}
         title={`${formatFullAmount(offered)} ${fromSymbol}${offeredUsd ? ` · ${hasTakes ? "market quote at take time" : "market quote at kick"} ${formatUsd(offeredUsd)}` : ""}\n${switchHint}`}
@@ -609,7 +648,12 @@ export default function RoundModalContent({
             <span className="meta-item text-secondary">R{round.round_id}</span>
             <span className="meta-item reveal-row">
               {multiChain ? <ChainIcon chainId={round.chain_id} size="xs" /> : null}
-              <AuctionAddressValue address={round.auction_address} chainId={round.chain_id} showCowExplorerIcon />
+              <AuctionAddressValue
+                address={round.auction_address}
+                chainId={round.chain_id}
+                label={auctionLabel(round.protocol)}
+                showCowExplorerIcon
+              />
             </span>
           </div>
         </div>
@@ -642,10 +686,15 @@ export default function RoundModalContent({
             />
             {pricePanel}
           </>
+        ) : upcoming ? (
+          <>
+            <UpcomingRow round={round} fromSymbol={fromSymbol} />
+            {pricePanel}
+          </>
         ) : null}
 
         {resultRow}
-        {live ? null : (
+        {open ? null : (
           <RoundFacts
             round={round}
             fromSymbol={fromSymbol}
@@ -656,7 +705,7 @@ export default function RoundModalContent({
 
         {takesSection}
 
-        {live ? null : pricePanel}
+        {open ? null : pricePanel}
         {wide ? null : (
           <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
             <summary>

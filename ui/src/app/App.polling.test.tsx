@@ -18,7 +18,7 @@ vi.mock("../shared/api/client", () => ({
 const round: RoundListItem = {
   occurrence: { chain_id: 1, block_hash: `0x${"01".repeat(32)}`, tx_hash: `0x${"02".repeat(32)}`, log_index: 0 },
   chain_id: 1, auction_address: `0x${"aa".repeat(20)}`, round_id: 1,
-  status: "live", is_active: true,
+  status: "live", is_active: true, protocol: "yearn",
   from_token: `0x${"bb".repeat(20)}`, from_token_symbol: "BEFORE", from_token_name: "From token",
   from_token_decimals: 18, from_token_logo_url: null,
   want_token: `0x${"cc".repeat(20)}`, want_token_symbol: "WANT", want_token_name: "Want token",
@@ -41,7 +41,7 @@ afterEach(() => vi.useRealTimers());
 
 it("refreshes visible rounds without navigation or a window-focus event", async () => {
   vi.useFakeTimers();
-  const response = { as_of: {}, rounds: [round], total: 1, status_counts: { all: 1, live: 1, sold_out: 0, expired: 0, settled: 0 }, page: 1, per_page: 15, has_next: false };
+  const response = { as_of: {}, rounds: [round], total: 1, status_counts: { all: 1, scheduled: 0, live: 1, sold_out: 0, expired: 0, settled: 0 }, page: 1, per_page: 15, has_next: false };
   vi.mocked(api.getRounds).mockResolvedValue(response);
   const view = render(<App />);
   try {

@@ -5,8 +5,12 @@ import TokenValue from "./TokenValue";
 
 /**
  * The lot a round put up: amount and symbol, with its kick-time value in a
- * quieter figure. Where a symbol does not say which token it is, the token's
- * short address follows it and gives way first when the cell is tight.
+ * quieter figure. The value keeps one place, the far edge of the lot's
+ * measure and well clear of the next column, so the dollar figures of a list
+ * line up under the word `value` in the column's head; a lot with no quote
+ * leaves the place empty. Where a symbol does not say which
+ * token it is, the token's short address follows it and gives way first when
+ * the cell is tight.
  */
 export function RoundLotCell({ round, showUsd = true }: { round: RoundListItem; showUsd?: boolean }) {
   const lotUsd = round.kick_market_quote_usd ?? round.total_market_quote_usd ?? null;
@@ -20,7 +24,7 @@ export function RoundLotCell({ round, showUsd = true }: { round: RoundListItem; 
   ].filter(Boolean).join("\n");
 
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-2 whitespace-nowrap" title={title}>
+    <span className="lot-cell" title={title}>
       <TokenValue
         address={round.from_token}
         symbol={lotAmountLabel}
@@ -34,7 +38,7 @@ export function RoundLotCell({ round, showUsd = true }: { round: RoundListItem; 
           {`(${formatAddress(tokenAddress, 6, 0)})`}
         </span>
       ) : null}
-      {showUsd && lotUsd ? <span className="usd-note shrink-0">{formatCompactUsd(lotUsd)}</span> : null}
+      {showUsd && lotUsd ? <span className="usd-note lot-usd">{formatCompactUsd(lotUsd)}</span> : null}
     </span>
   );
 }

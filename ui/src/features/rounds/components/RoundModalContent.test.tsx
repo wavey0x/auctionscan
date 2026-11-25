@@ -176,19 +176,24 @@ it("adds the result to a live round once it has a take", async () => {
 const ended = { status: "expired", is_active: false, initial_available: "100", scheduled_end_at: "2026-09-18T12:00:00Z", end_at: "2026-09-18T12:00:00Z" } as const;
 
 it.each([
-  ["all but dust sold", { take_count: 2, paid_take_count: 2, available_amount: "0.000000000000000001", sold_amount: "100", paid_amount: "50" }],
-  ["40% sold", { take_count: 1, paid_take_count: 1, available_amount: "60", sold_amount: "40", paid_amount: "20" }],
-  ["nothing sold", { take_count: 0, available_amount: "100", sold_amount: "0" }],
-])("says an expired round left %s", async (statement, sales) => {
+  ["dust", ["Left", "dust"], { take_count: 2, paid_take_count: 2, available_amount: "0.000000000000000001", sold_amount: "100", paid_amount: "50" }],
+  ["part of its lot", ["Left", "60", "40% sold"], { take_count: 1, paid_take_count: 1, available_amount: "60", sold_amount: "40", paid_amount: "20" }],
+  ["its whole lot", ["Lot", "100"], { take_count: 0, available_amount: "100", sold_amount: "0" }],
+])("gives an expired round that left %s its timeline in cells", async (_left, figures, sales) => {
   const { container } = mountRound({ ...ended, ...sales });
   await settle();
   const text = container.textContent ?? "";
-  // The head says it expired; the facts line gives the figures without naming them.
-  expect(text).toContain("1d 0h");
-  expect(text).not.toContain("expired after");
-  expect(text).not.toContain("Kicked");
-  expect(text).toContain(statement);
+  // The head says it expired; the cells are labelled figures, not a sentence.
+  const cells = [...container.querySelectorAll(".outcome-cell")].map((cell) => cell.textContent ?? "");
+  expect(cells.some((cell) => cell.startsWith("Kicked"))).toBe(true);
+  expect(cells).toContain("Ran1d 0h");
+  const last = cells.at(-1)!;
+  for (const figure of figures) expect(sales.take_count > 0 ? last : cells[0]).toContain(figure);
+  // A round with no take has no Left cell: its Lot and the empty takes say it.
+  expect(cells.some((cell) => cell.startsWith("Left"))).toBe(sales.take_count > 0);
+  expect(text).not.toContain("nothing sold");
   expect(text).not.toContain("Time left");
+  expect(container.querySelector('[aria-label*="round workspace"]')).toBeNull();
   // A round that ended without a take has no result to report beyond its lot.
   expect(text.includes("Received")).toBe(sales.take_count > 0);
 });
@@ -255,8 +260,8 @@ it("gives each figure once and switches the whole round between tokens and dolla
   const { container } = mountRound(sold);
   await settle();
   const figures = () => [...container.querySelectorAll(".outcome-figure, .takes-table tbody td.num")].map((node) => node.textContent ?? "");
-  // Sold, Received and PnL, then the take's own sold, received, price and PnL.
-  expect(figures()).toHaveLength(7);
+  // Sold, Received and PnL, the timeline's Kicked and Sold in, then the take's own sold, received, price and PnL.
+  expect(figures()).toHaveLength(9);
   expect(figures().some((figure) => figure.includes("$"))).toBe(false);
   expect(container.querySelectorAll(".outcome-sub")).toHaveLength(0);
 

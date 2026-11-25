@@ -49,7 +49,6 @@
   --content: 1552px;
   --gutter: 24px;
   --drawer-width: 500px;
-  --drawer-wide: 1180px;
 }
 
 html.dark {
@@ -647,6 +646,10 @@ html.dark {
   }
 
   /* A header's unit: the token a column of bare figures is counted in. */
+  th .lot-usd {
+    @apply normal-case tracking-normal text-faint;
+  }
+
   .th-unit {
     @apply ml-1 normal-case tracking-normal text-faint;
   }
@@ -822,6 +825,18 @@ html.dark {
     font-variant-numeric: tabular-nums;
   }
 
+  /* A lot and its value: the value is held at the far edge of a fixed
+     measure, so the figures of a list line up whatever the symbols. The
+     column's head marks the same place, which names the figures and keeps
+     them from reading as the next column's. */
+  .lot-cell {
+    @apply flex min-w-0 max-w-[21rem] items-center gap-2 whitespace-nowrap;
+  }
+
+  .lot-usd {
+    @apply ml-auto mr-6 shrink-0 pl-1 text-secondary;
+  }
+
   /* ---------------------------------------------------------------- status */
 
   .status {
@@ -918,11 +933,6 @@ html.dark {
     background: var(--color-surface);
     box-shadow: var(--overlay-shadow);
     animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-    transition: width 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .drawer.is-wide {
-    width: min(var(--drawer-wide), calc(100vw - 16px));
   }
 
   .drawer:focus {
@@ -948,7 +958,7 @@ html.dark {
   }
 
   .drawer-meta {
-    @apply mt-0.5 flex h-[18px] min-w-0 items-center text-data text-tertiary;
+    @apply mt-0.5 flex h-[18px] min-w-0 items-center gap-3 text-data text-tertiary;
   }
 
   /* The line starts on the title's left edge, whichever mark the status has. */
@@ -958,12 +968,6 @@ html.dark {
 
   .drawer-meta .meta-item {
     @apply inline-flex min-w-0 items-center gap-1.5;
-  }
-
-  /* The item's own gap follows the dot, so its margins are uneven to sit it midway. */
-  .drawer-meta .meta-item::before {
-    content: "·";
-    @apply ml-2 mr-0.5 text-faint;
   }
 
   .drawer-meta .identity-link {
@@ -983,8 +987,8 @@ html.dark {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  /* A row with no facts line under it closes itself; one that follows a
-     section rather than the head is ruled off from it. */
+  /* The row closes itself; one that follows a section rather than the
+     head is ruled off from it. */
   .outcome-end {
     @apply pb-3.5;
   }
@@ -993,8 +997,14 @@ html.dark {
     @apply border-t border-divider-subtle;
   }
 
-  .drawer.is-wide .outcome {
-    grid-template-columns: repeat(4, minmax(0, 14rem));
+  /* The timeline under a result: the same columns at the weight of a table
+     cell, so the result above stays the one thing the eye lands on. */
+  .outcome-context {
+    @apply pt-3;
+  }
+
+  .outcome-context .outcome-figure {
+    @apply mt-0.5 text-data leading-[18px] text-secondary;
   }
 
   .outcome-cell {
@@ -1028,20 +1038,6 @@ html.dark {
   .figure-toggle:hover {
     text-decoration: underline;
     text-decoration-color: var(--color-tertiary);
-  }
-
-  .facts {
-    @apply flex min-h-[18px] flex-wrap items-center gap-x-2.5 gap-y-1 px-4 pb-3.5 pt-2.5 text-data text-tertiary;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .facts > span + span:not(.meter)::before {
-    content: "·";
-    @apply mr-2.5 text-faint;
-  }
-
-  .fact-value {
-    @apply text-secondary;
   }
 
   .sec {
@@ -1297,8 +1293,7 @@ html.dark {
   .scope-back { flex-basis: 100%; }
   .scope-sep { display: none; }
   .data-table tbody td { height: 44px; }
-  .drawer,
-  .drawer.is-wide {
+  .drawer {
     top: 64px;
     right: 0;
     bottom: 0;
@@ -1321,11 +1316,16 @@ html.dark {
   }
   .drawer-head { padding-top: 14px; }
   .drawer-title { flex-wrap: wrap; }
-  .wide-toggle { display: none; }
 }
 
 /* Columns drop by priority as the table narrows instead of scrolling. These
    sit after the component layer so they win over any element's own display. */
+/* A lot's value gives way before its symbol does: under this width the Lot
+   column cannot hold both, and the value is still on hover and in the round. */
+@container table (max-width: 1180px) {
+  .lot-usd { display: none; }
+}
+
 @container table (max-width: 1040px) {
   .col-xl { display: none !important; }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowRight, ChevronRight, Link2, Maximize2, Minimize2, X } from "lucide-react";
+import { ArrowRight, ChevronRight, Link2, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../../shared/api/client";
@@ -160,12 +160,13 @@ function progressInput(round: RoundListItem) {
 }
 
 /**
- * A finished round's timeline in bare figures: when it was kicked and how long
- * it ran. The head already says how it ended, so the line names neither; the
- * words are on hover. If the lot did not clear it adds what was left, because
- * an expiry is a fact about time, not about sales.
+ * A finished round's timeline, in the result row's columns but a quieter
+ * weight, because it is context for the result and not part of it: when it
+ * was kicked and how long it ran. If the lot did not clear, a third cell gives what was
+ * left, because an expiry is a fact about time, not about sales. A round with
+ * no take says so by showing its Lot and no result.
  */
-function RoundFacts({
+function RoundFactCells({
   round,
   fromSymbol,
   kickedDisplayMode,
@@ -178,29 +179,25 @@ function RoundFacts({
 }) {
   const metrics = getRoundProgressMetrics(progressInput(round));
   const elapsed = metrics.elapsedDurationLabel;
-  const ending = round.status === "sold_out" ? "Sold in" : round.status === "expired" ? "Expired after" : "Settled after";
   const outcome = getSaleOutcome(round);
   const leftTitle = `${metrics.soldDetail} · ${formatFullAmount(round.available_amount)} ${fromSymbol} left`;
 
   return (
-    <div className="facts">
-      <span>
-        <button type="button" className="fact-value underline-offset-4 hover:underline" title={`Kicked ${formatDateTime(round.kicked_at)}`} onClick={onToggleKicked}>
-          {renderKickedValue(round.kicked_at, kickedDisplayMode)}
-        </button>
-      </span>
-      {elapsed ? <span className="fact-value" title={`${ending} ${elapsed}`}>{elapsed}</span> : null}
-      {outcome?.kind === "none" ? (
-        <span>nothing sold</span>
-      ) : outcome?.kind === "dust" ? (
-        <span title={leftTitle}>all but dust sold</span>
+    <>
+      <OutcomeCell label="Kicked" title={`Kicked ${formatDateTime(round.kicked_at)}\nClick for ${kickedDisplayMode === "relative" ? "the date" : "time since"}`} onToggle={onToggleKicked}>
+        {renderKickedValue(round.kicked_at, kickedDisplayMode)}
+      </OutcomeCell>
+      <OutcomeCell label={round.status === "sold_out" ? "Sold in" : "Ran"}>
+        {elapsed ?? dash}
+      </OutcomeCell>
+      {outcome?.kind === "dust" ? (
+        <OutcomeCell label="Left" title={leftTitle}>dust</OutcomeCell>
       ) : outcome?.kind === "partial" ? (
-        <>
-          <span title={leftTitle}><span className="fact-value">{outcome.percent}%</span> sold</span>
-          <span title={leftTitle}><span className="fact-value">{formatAmount(round.available_amount)} {fromSymbol}</span> left</span>
-        </>
+        <OutcomeCell label="Left" title={leftTitle} note={`${outcome.percent}% sold`}>
+          {formatAmount(round.available_amount)}
+        </OutcomeCell>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -327,7 +324,7 @@ function DrawerSkeleton({ onClose }: { onClose: () => void }) {
         <ModalCloseButton onClose={onClose} />
       </header>
       <div className="drawer-scroll">
-        <div className="outcome">
+        <div className="outcome outcome-end">
           {Array.from({ length: 3 }).map((_, index) => (
             <div key={index} className="space-y-2.5 py-0.5">
               <span className="skeleton-bar w-10" />
@@ -336,7 +333,6 @@ function DrawerSkeleton({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div className="facts"><span className="skeleton-bar w-48" /></div>
         <div className="space-y-4 border-t border-divider-subtle px-4 pt-4">
           <span className="skeleton-bar w-14" />
           {Array.from({ length: 3 }).map((_, index) => (
@@ -354,12 +350,8 @@ function DrawerSkeleton({ onClose }: { onClose: () => void }) {
 
 export default function RoundModalContent({
   onClose,
-  wide = false,
-  onToggleWide,
 }: {
   onClose: () => void;
-  wide?: boolean;
-  onToggleWide?: () => void;
 }) {
   const { chainId, auctionAddress, roundId: roundIdParam } = useParams<{
     chainId: string;
@@ -547,7 +539,7 @@ export default function RoundModalContent({
     <DecayChart
       round={round}
       takes={takes}
-      height={wide ? 120 : 80}
+      height={80}
       livePrice={displayedLivePrice?.current_price ?? null}
       unit={`${wantSymbol} per ${fromSymbol}`}
     />
@@ -570,13 +562,15 @@ export default function RoundModalContent({
   // What the round achieved. A cell exists only once there is something to put
   // in it: a round still open shows this row after its first take, and a round
   // that ended without one shows the lot alone. Each figure is given once, in the
-  // round's tokens or in dollars; clicking one switches them all.
+  // round's tokens or in dollars; clicking one switches them all. A finished
+  // round's timeline follows on a quieter row of its own, under the same columns.
   const switchHint = inUsd ? "Click for token amounts" : "Click for dollar values";
   const paidUsd = round.total_actual_paid_usd;
   const paidCount = inUsd ? round.paid_usd_take_count : round.paid_take_count;
   const pnlCount = inUsd ? usdPricedTakes : pricedTakes;
   const pnlFigure = inUsd ? pnlUsd : pnlPercent;
   const resultRow = !hasTakes && open ? null : (
+    <>
     <dl className={cn("outcome", open && "outcome-ruled outcome-end")}>
       <OutcomeCell
         label={hasTakes ? "Sold" : "Lot"}
@@ -612,18 +606,21 @@ export default function RoundModalContent({
         </>
       ) : null}
     </dl>
+    {open ? null : (
+      <dl className="outcome outcome-context outcome-end">
+        <RoundFactCells
+          round={round}
+          fromSymbol={fromSymbol}
+          kickedDisplayMode={kickedDisplayMode}
+          onToggleKicked={() => setKickedDisplayMode(toggleKickedDisplayMode)}
+        />
+      </dl>
+    )}
+    </>
   );
 
   // While a round is live its price path leads; once it has ended, the takes do.
-  const pricePanel = wide ? (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,22rem)] border-t border-divider-subtle">
-      <div className="min-w-0 [&>.sec]:border-t-0">{chart}</div>
-      <section className="sec min-w-0 border-l border-t-0 border-divider-subtle">
-        <SectionHead>Details</SectionHead>
-        {settings}
-      </section>
-    </div>
-  ) : chart;
+  const pricePanel = chart;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -642,29 +639,22 @@ export default function RoundModalContent({
               <span className="truncate">{wantSymbol}</span>
             </span>
           </div>
-          {/* Its state, which round, and where it lives. The address reveals its utilities when pointed at. */}
+          {/* Its state, then where it lives and which round, as a row in the list gives them. The address reveals its utilities when pointed at. */}
           <div className="drawer-meta">
             <StatusBadge status={round.status} />
-            <span className="meta-item text-secondary">R{round.round_id}</span>
             <span className="meta-item reveal-row">
               {multiChain ? <ChainIcon chainId={round.chain_id} size="xs" /> : null}
               <AuctionAddressValue
                 address={round.auction_address}
                 chainId={round.chain_id}
                 label={auctionLabel(round.protocol)}
+                tag={`R${round.round_id}`}
                 showCowExplorerIcon
               />
             </span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {onToggleWide ? (
-            <span className="wide-toggle">
-              <IconButton label={wide ? "Narrow the round workspace" : "Expand the round workspace"} onClick={onToggleWide}>
-                {wide ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.6} /> : <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.6} />}
-              </IconButton>
-            </span>
-          ) : null}
           <ShareButton />
           <ModalCloseButton onClose={onClose} />
         </div>
@@ -694,30 +684,20 @@ export default function RoundModalContent({
         ) : null}
 
         {resultRow}
-        {open ? null : (
-          <RoundFacts
-            round={round}
-            fromSymbol={fromSymbol}
-            kickedDisplayMode={kickedDisplayMode}
-            onToggleKicked={() => setKickedDisplayMode(toggleKickedDisplayMode)}
-          />
-        )}
 
         {takesSection}
 
         {open ? null : pricePanel}
-        {wide ? null : (
-          <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
-            <summary>
-              {/* The same mark a row that opens in place ends in, beside the word it belongs to. */}
-              <SectionHead>
-                Details
-                <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", settingsOpen && "rotate-90")} strokeWidth={1.6} aria-hidden="true" />
-              </SectionHead>
-            </summary>
-            {settings}
-          </details>
-        )}
+        <details className="sec" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
+          <summary>
+            {/* The same mark a row that opens in place ends in, beside the word it belongs to. */}
+            <SectionHead>
+              Details
+              <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", settingsOpen && "rotate-90")} strokeWidth={1.6} aria-hidden="true" />
+            </SectionHead>
+          </summary>
+          {settings}
+        </details>
       </div>
     </div>
   );

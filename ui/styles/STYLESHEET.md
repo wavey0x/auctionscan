@@ -153,6 +153,12 @@ load only, so changing a filter never collapses the counts or swaps table geomet
   round as a quiet tag after the address (`0x4DCd…43Ef R66`). Curve's burner numbers every lot it
   has ever staged in one run, across every token, so its rows carry no number: a lot is known by
   its token. The number is still the round's name in the drawer and inside an auction.
+- A lot's kick-time dollar value follows it in a quiet figure held at one place, the far edge of
+  the lot's measure, so the values of a list line up and read down like a column. The Lot head
+  marks the same place with a faint `value`, which names the figures; they end 24px short of
+  Received so they are never read as its amount. A lot with no market quote leaves the place
+  empty rather than showing a dash. Where the table is under 1180px the column cannot hold both,
+  and the value gives way before the symbol does; it stays on hover and in the round.
 - Many burner tokens share a symbol (two dozen pool tokens are all `SPT-PT/IBT-f`), so a Curve lot
   states its token's short address after the symbol, `SPT-PT/IBT-f (0xFE8a…)`, in the quiet figure
   a named address uses. It gives way before the symbol when the cell is tight.
@@ -191,19 +197,19 @@ round's time meter is empty.
 - It reads top to bottom as a receipt, and says nothing twice. A finished round:
   1. **Head**, two lines that share one left edge. First the pair, each token with its logo; it has
      the line to itself, so names are not cut, and on a sheet too narrow for both it breaks after
-     the arrow, so the two logos stack on one edge. Beneath, the round's state, its number and the auction address (named, for Curve's burner; on a phone sheet the name drops its short address and copy control to stay whole); the address reveals
+     the arrow, so the two logos stack on one edge. Beneath, set apart by space and never by dots, the round's state and the auction address with the round as its quiet tag, as a list row gives them (named, for Curve's burner; on a phone sheet the name drops its short address and copy control to stay whole); the address reveals
      its utilities when pointed at. The version is a Details row, and the chain gets a mark only
      once there is more than one chain to tell apart.
   2. **Result**, one row: Sold, Received, PnL. Each is a label and one bare 15px figure, so the row
      reads as a sum: what went out, what came in, the difference. The head names the tokens in the
      order the figures follow. A cell exists only when it has something to say: a round that ended
      without a take shows its Lot alone.
-  3. **Facts**, one line of bare figures: when it was kicked and how long it ran
-     (`Nov 24 04:45 · 2h 30m`). The head already says how the round ended, so the line names
-     neither; the words are on hover. If the lot did not
-     clear it says what happened to it: `nothing sold`, `38% sold · 445K GROVE left`, or
-     `all but dust sold` when under 0.01% remained. An expiry is a fact about time, not about
-     sales, so it never stands without this.
+  3. **Timeline**, a row of its own under the same columns, never a sentence: Kicked (click for
+     the date or the time since) and Ran (Sold in, for a round that sold out). Its figures are
+     12px and secondary, the weight of a table cell: it is context for the result, not part of
+     it, so the 15px result stays the one thing the eye lands on. If a lot with takes did not clear, a Left cell
+     gives what remained beside its share sold (`445K` `38% sold`), or `dust` when under 0.01%
+     remained. A round with no take has no Left cell: its Lot and the empty takes say it.
   4. **Takes**, one line each: take, taker, time since the kick, received, PnL.
      Opening a row shows the rest. An empty list is `none` beside the heading.
   5. **Price**: the price path as a bare shape.
@@ -228,18 +234,15 @@ round's time meter is empty.
   on hover. A figure with no dollar value known is a dash.
 - **A take's transaction is always one click away.** The take's label is the link (`T3 ↗`): the
   outbound mark sits beside the number at every width, visible at rest rather than surfacing on
-  hover, phones included, and takes no column of its own. The expanded workspace also has a column
-  that spells the hash.
+  hover, phones included, and takes no column of its own.
 - A token is named once, in the head, beside its logo. Figures beneath it are bare, in the summary
-  and in rows of takes; the workspace's column headers carry the unit, and hovering a figure gives
-  the exact amount with its symbol. Logos appear again only in an opened
+  and in rows of takes; hovering a figure gives the exact amount with its symbol. Logos appear again only in an opened
   take. Dollar values in the drawer are written in full (`$1,627`), not compact. The live price is
   held to six significant digits so its width stays steady as it falls.
 - A take's time is its distance from the kick (`+9h 57m`), which is also its place on the price
   path; the timestamp is on hover and in the opened row.
-- The expand control widens it to an execution-review workspace (up to 1180px, remembered per
-  browser, never on a sheet): every take column (tx hash, taker, time, sold, received, price, PnL),
-  with the chart and the details side by side beneath.
+- The drawer has one width. It has no expand control: what a take row leaves out is in the row
+  once opened.
 - The price chart is a shape, not a figure to be read: the price stepping down from its start, the
   kick-time quote as a dashed line, each take as a dot, and a live round's present moment as a
   green dot. At rest it has no key, fill, axis, labels or grid.

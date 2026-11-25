@@ -381,7 +381,7 @@ export default function RoundsPage() {
                         Progress <em>{progressDisplayMode === "time" ? "time" : "sold"}</em>
                       </button>
                     </th>
-                    <th className="col-lo">Lot</th>
+                    <th className="col-lo"><span className="lot-cell">Lot <span className="lot-usd">value</span></span></th>
                     <th className="col-lo">Received</th>
                     <th className="num rcol-pnl">
                       <button

@@ -20,7 +20,8 @@ export default function DocsPage() {
           <li>At each take, we capture a quote for the exact amount that was sold.</li>
           <li>
             A quote we could not capture at the time is rebuilt later from the chain: Curve&apos;s
-            route for the amount, evaluated at the block before the event.
+            route for the amount, or for an LP token its withdrawal into one coin, evaluated at the
+            block before the event.
           </li>
           <li>Quotes are the primary benchmark because takes are sized executions, not spot marks.</li>
           <li>Token prices are secondary and mainly used to express values and deltas in USD.</li>

@@ -202,7 +202,7 @@ def _replay_pricing(raw: Any) -> ReplayPricingConfig | None:
         return None
     if not isinstance(raw, dict):
         raise ValueError("replay_pricing must be a mapping")
-    fields = ("curve_router", "crvusd", "crvusd_price_aggregator")
+    fields = ("curve_router", "crvusd", "crvusd_price_aggregator", "curve_meta_registry")
     missing = [name for name in fields if not raw.get(name)]
     if missing:
         raise ValueError(f"replay_pricing needs {', '.join(missing)}")

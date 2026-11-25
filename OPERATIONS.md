@@ -102,4 +102,5 @@ missed, for example takes indexed after an outage or a rewind. It holds the
 network's writer lock, so stop that indexer, run it, and start the indexer
 again; the API can keep serving. It needs an archive RPC and the prices
 service, commits as it goes and can be interrupted and rerun. `--auction`
-limits it to one auction.
+limits it to one auction. A failed replay is final until `--retry-failed`
+asks again, for when the method has improved.

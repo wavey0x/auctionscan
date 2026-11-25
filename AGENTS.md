@@ -87,12 +87,17 @@ Rules for this model:
   provider `curve`, `capture_state = 'fresh'` and zero lag, so projections
   select them after any live quote. A route must absorb the lot: if the lot
   fetches under half the price of a 1% slice at the same block (a crvUSD
-  LLAMMA hop holds only what its bands hold), there is no quote. Curve's
-  multi-path routes for some LP tokens cannot be expressed as one router
-  call and are not quoted either. A missing route, an unabsorbed lot or a
-  reverted call is recorded as a failed replay and not retried; network and
-  provider errors leave no fact. The contracts live in `config.yaml` under
-  `replay_pricing`
+  LLAMMA hop holds only what its bands hold), there is no quote. An LP lot
+  with no single route (none at all, or Curve's multi-path route, which one
+  router call cannot express) is priced as withdrawn into whichever of its
+  pool's coins fetches the most at that block (`calc_withdraw_one_coin`) and
+  that coin's route. A coin with no route of its own does not count, vault
+  tokens included: `previewRedeem` is book value, not a sale. The pool is the
+  MetaRegistry's, else the LP's `minter()`, else the LP itself. A missing
+  route, an unabsorbed lot or a reverted call is recorded as a failed replay
+  and not retried unless `--retry-failed` asks again, adding a new attempt
+  beside the old; network and provider errors leave no fact. The contracts
+  live in `config.yaml` under `replay_pricing`
 - projections store decoded values for query/API use
 - pricing projections rebuild from stored pricing facts, not from live repricing
 - the canonical parameter decoder lives in the indexer layer
@@ -281,9 +286,9 @@ Reproject intent:
 - `request_timeout_seconds`: RPC transport timeout, defaulting to 60.
 - `auctions`: singleton auctions no factory deploys (Curve burners), each with
   its deployment block as `start_block` and a factory-less version.
-- `replay_pricing`: the Curve Router NG, crvUSD and crvUSD price aggregator
-  that `--backfill-pricing` reads at past blocks. A network without it cannot
-  backfill pricing.
+- `replay_pricing`: the Curve Router NG, crvUSD, crvUSD price aggregator and
+  Curve MetaRegistry that `--backfill-pricing` reads at past blocks. A network
+  without it cannot backfill pricing.
 - `disabled: true` means no indexer process exists for that network. The API
   omits disabled networks from `/api/health`, and `--network` refuses them.
   Only `ethereum` is enabled; enabling a network means deploying an

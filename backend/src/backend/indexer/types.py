@@ -90,12 +90,14 @@ class ReplayPricingConfig:
     """Contracts that price a past block for --backfill-pricing.
 
     A Curve Router NG evaluates a route at the block; crvUSD and its USD price
-    aggregator value the result in dollars.
+    aggregator value the result in dollars; the MetaRegistry finds the pool
+    behind an LP token that has no route of its own.
     """
 
     curve_router: str
     crvusd: str
     crvusd_price_aggregator: str
+    curve_meta_registry: str
 
 
 @dataclass(frozen=True)

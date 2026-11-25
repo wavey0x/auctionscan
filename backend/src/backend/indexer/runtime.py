@@ -897,7 +897,7 @@ class IndexerRuntime:
                 "captured": captured, "first_missing": first_missing if complete < len(blocks) else None}
 
 
-    def backfill_pricing(self, *, auction: str | None = None) -> dict:
+    def backfill_pricing(self, *, auction: str | None = None, retry_failed: bool = False) -> dict:
         """Price confirmed takes and kicks that live capture missed, at their own blocks."""
         config = self.chain.config.replay_pricing
         if config is None:
@@ -913,7 +913,7 @@ class IndexerRuntime:
         )
         return pricing_replay.backfill_pricing(
             self.writer, chain_id=self.chain.config.chain_id, replayer=replayer,
-            confirmed_block=int(state["last_confirmed_processed"]), auction=auction,
+            confirmed_block=int(state["last_confirmed_processed"]), auction=auction, retry_failed=retry_failed,
         )
 
     def _mark_chain_error(self, exc: Exception) -> None:

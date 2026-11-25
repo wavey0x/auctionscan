@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from eth_abi import decode
 
@@ -8,9 +10,12 @@ from backend.indexer.config import _replay_pricing
 from backend.indexer.prices_api import PricesApiError
 from backend.indexer.pricing_projections import rebuild_pricing_projections
 from backend.indexer.pricing_replay import (
+    COINS_SELECTORS,
     GET_DY_SELECTOR,
     GET_DY_TYPES,
+    POOL_FROM_LP_SELECTOR,
     PRICE_SELECTOR,
+    WITHDRAW_SELECTORS,
     Replayer,
     ReplayFailed,
     backfill_pricing,
@@ -29,6 +34,7 @@ CONFIG = ReplayPricingConfig(
     curve_router="0x0000000000000000000000000000000000000f01",
     crvusd="0x0000000000000000000000000000000000000f02",
     crvusd_price_aggregator="0x0000000000000000000000000000000000000f03",
+    curve_meta_registry="0x0000000000000000000000000000000000000f06",
 )
 POOL = "0x0000000000000000000000000000000000000f04"
 NOW = 2_000_000_000
@@ -74,7 +80,9 @@ class FakeChain:
         if to == CONFIG.crvusd_price_aggregator:
             assert data == PRICE_SELECTOR
             return (99 * 10**16).to_bytes(32, "big")  # crvUSD at $0.99
-        assert to == CONFIG.curve_router and data[:4] == GET_DY_SELECTOR
+        if to != CONFIG.curve_router:
+            raise ReplayFailed("reverted", "no such function")  # the registry knows no pool, the lot is no pool
+        assert data[:4] == GET_DY_SELECTOR
         path, _params, amount, _pools = decode(GET_DY_TYPES, data[4:])
         if path[0] == DEFAULT_WANT_TOKEN:
             return (10**18).to_bytes(32, "big")  # one want unit buys one crvUSD
@@ -169,6 +177,59 @@ def test_a_route_that_cannot_absorb_the_lot_prices_nothing(tmp_path):
     assert writer.fetchone("SELECT market_quote_out_raw FROM take_pricing")["market_quote_out_raw"] is None
 
 
+LP_POOL = "0x0000000000000000000000000000000000000f07"
+VAULT = "0x0000000000000000000000000000000000000f08"  # coin 0: a vault with no route, worth more on paper
+COIN = "0x0000000000000000000000000000000000000f09"  # coin 1: routes to the want token
+
+
+class LpChain(FakeChain):
+    """The lot is an LP token of LP_POOL, which Curve cannot route but can withdraw from."""
+
+    def call(self, to: str, data: bytes, block_hash: str) -> bytes:
+        selector, args = data[:4], data[4:]
+        if to == CONFIG.curve_meta_registry and selector == POOL_FROM_LP_SELECTOR:
+            assert decode(["address"], args)[0] == DEFAULT_FROM_TOKEN
+            return encode_address(LP_POOL)
+        if to == LP_POOL and selector == COINS_SELECTORS[0]:
+            index = decode(["uint256"], args)[0]
+            if index > 1:
+                raise ReplayFailed("reverted", "no such coin")
+            return encode_address((VAULT, COIN)[index])
+        if to == LP_POOL and selector == WITHDRAW_SELECTORS[0]:
+            amount, index = decode(["uint256", "uint256"], args)
+            return (amount * 2 if index == 0 else amount).to_bytes(32, "big")
+        if to in (DEFAULT_FROM_TOKEN, COIN, VAULT):
+            raise ReplayFailed("reverted", "not that kind of contract")
+        if to == CONFIG.curve_router and decode(GET_DY_TYPES, data[4:])[0][0] == COIN:
+            return (decode(GET_DY_TYPES, data[4:])[2] // 10**12).to_bytes(32, "big")
+        return super().call(to, data, block_hash)
+
+
+def encode_address(address: str) -> bytes:
+    return bytes(12) + bytes.fromhex(address[2:])
+
+
+def test_an_lp_lot_without_a_route_is_withdrawn_into_its_best_coin(tmp_path):
+    writer, _ = _seed_pricing_db(tmp_path / "lp.sqlite3")
+    no_route = FakeClient(failures={DEFAULT_FROM_TOKEN: "NO_ROUTE", VAULT: "NO_ROUTE"})
+
+    # Without the pool, the lot has no price; a retry once the pool is known finds one.
+    assert _replay(writer, client=no_route)["take_quote"] == {"fresh": 0, "failed": 1, "deferred": 0}
+    assert _replay(writer, client=no_route, chain=LpChain())["targets"] == 0
+    replayer = Replayer(chain_id=1, config=CONFIG, client=no_route, reads=LpChain())
+    summary = backfill_pricing(writer, chain_id=1, replayer=replayer, confirmed_block=200, retry_failed=True, now=NOW)
+    assert summary["take_quote"] == {"fresh": 1, "failed": 0, "deferred": 0}
+
+    # 200 LP withdraws into 400 vault shares, which no route sells, or 200 COIN (200 WANT).
+    take = writer.fetchone("SELECT market_quote_out_raw, pricing_status FROM take_pricing")
+    assert (take["market_quote_out_raw"], take["pricing_status"]) == (str(200 * ONE_USDC), "priced")
+    fact = writer.fetchone("SELECT aggregate_response_json FROM pricing_quote_facts WHERE context_kind = 'take' AND capture_state = 'fresh'")
+    detail = json.loads(fact["aggregate_response_json"])
+    assert (detail["method"], detail["pool"], detail["coin_index"], detail["coin"]) == ("withdraw_one_coin", LP_POOL, 1, COIN)
+    # The earlier failure stays beside the new attempt.
+    assert writer.fetchone("SELECT COUNT(*) AS n FROM pricing_quote_facts WHERE context_kind = 'take'")["n"] == 2
+
+
 def test_window_open_block_is_the_last_block_before_it():
     chain = FakeChain()
     opens_at = 1_700_000_000 + 150
@@ -195,7 +256,8 @@ def test_router_arguments_follow_the_route_end_to_end():
 def test_replay_pricing_config_needs_every_contract():
     assert _replay_pricing(None) is None
     parsed = _replay_pricing({"curve_router": CONFIG.curve_router.upper().replace("0X", "0x"), "crvusd": CONFIG.crvusd,
-                              "crvusd_price_aggregator": CONFIG.crvusd_price_aggregator})
+                              "crvusd_price_aggregator": CONFIG.crvusd_price_aggregator,
+                              "curve_meta_registry": CONFIG.curve_meta_registry})
     assert parsed == CONFIG
     with pytest.raises(ValueError, match="crvusd_price_aggregator"):
         _replay_pricing({"curve_router": CONFIG.curve_router, "crvusd": CONFIG.crvusd})

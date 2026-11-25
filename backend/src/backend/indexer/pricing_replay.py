@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from eth_abi import encode
@@ -58,6 +59,14 @@ ZERO_ADDRESS = "0x" + "00" * 20
 GET_DY_TYPES = ["address[11]", "uint256[5][5]", "uint256", "address[5]"]
 GET_DY_SELECTOR = keccak(text=f"get_dy({','.join(GET_DY_TYPES)})")[:4]
 PRICE_SELECTOR = keccak(text="price()")[:4]
+ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+POOL_FROM_LP_SELECTOR = keccak(text="get_pool_from_lp_token(address)")[:4]
+MINTER_SELECTOR = keccak(text="minter()")[:4]
+# Curve pools index coins by uint256, the oldest stableswap pools by int128.
+COINS_SELECTORS = (keccak(text="coins(uint256)")[:4], keccak(text="coins(int128)")[:4])
+WITHDRAW_SELECTORS = (keccak(text="calc_withdraw_one_coin(uint256,uint256)")[:4],
+                      keccak(text="calc_withdraw_one_coin(uint256,int128)")[:4])
 
 
 class ReplayFailed(Exception):
@@ -143,8 +152,8 @@ class ReplayOutcome:
     price: Observation | None
 
 
-def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str = "") -> set[tuple]:
-    """Sources that already have a usable observation or a recorded replay."""
+def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str = "", retry_failed: bool = False) -> set[tuple]:
+    """Sources that already have a usable observation, or a recorded replay unless retrying failures."""
     return {
         tuple(row)
         for row in conn.execute(
@@ -152,15 +161,16 @@ def _covered(conn, table: str, *, chain_id: int, context_kind: str, extra: str =
             SELECT source_block_hash, source_tx_hash, source_log_index{', amount_in_raw' if table == 'pricing_quote_facts' else ''}
               FROM {table}
              WHERE chain_id = ? AND context_kind = ? {extra}
-               AND (capture_state = 'fresh' OR capture_origin = ?)
+               AND (capture_state = 'fresh' OR (capture_origin = ? AND NOT ?))
             """,
-            (chain_id, context_kind, REPLAY_ORIGIN),
+            (chain_id, context_kind, REPLAY_ORIGIN, retry_failed),
         )
     }
 
 
 def load_replay_targets(
     conn, *, chain_id: int, confirmed_block: int, before_timestamp: int, auction: str | None = None,
+    retry_failed: bool = False,
 ) -> list[ReplayTarget]:
     """Confirmed takes and kicks that live capture left without a quote or a want price.
 
@@ -172,9 +182,10 @@ def load_replay_targets(
     round_scope = "AND r.auction_address = ?" if auction else ""
     targets: list[ReplayTarget] = []
 
-    quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="take")
+    quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="take", retry_failed=retry_failed)
     quoted = {key[:3] for key in quoted}
-    priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="take", extra="AND price_role = 'want_token'")
+    priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="take", extra="AND price_role = 'want_token'",
+                      retry_failed=retry_failed)
     for row in conn.execute(
         f"""
         SELECT t.auction_address, t.round_id, t.take_seq, t.from_token, t.want_token, t.amount_taken_raw,
@@ -205,8 +216,9 @@ def load_replay_targets(
 
     # A kick quote prices the lot as finally offered, linked to the round's
     # first kick; a staged window's market is the block before it opens.
-    kick_quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="round_kick")
-    kick_priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="round_kick", extra="AND price_role = 'want_token'")
+    kick_quoted = _covered(conn, "pricing_quote_facts", chain_id=chain_id, context_kind="round_kick", retry_failed=retry_failed)
+    kick_priced = _covered(conn, "pricing_price_facts", chain_id=chain_id, context_kind="round_kick", extra="AND price_role = 'want_token'",
+                           retry_failed=retry_failed)
     for row in conn.execute(
         f"""
         SELECT r.auction_address, r.round_id, r.kicked_at, r.from_token, r.want_token, r.initial_available_raw,
@@ -283,6 +295,21 @@ def _uint(result: bytes, *, what: str) -> int:
     return int.from_bytes(result[:32], "big")
 
 
+def _address(result: bytes, *, what: str) -> str:
+    return "0x" + _uint(result, what=what).to_bytes(32, "big")[12:].hex()
+
+
+def _word(value: int | str) -> bytes:
+    return encode(["address" if isinstance(value, str) else "uint256"], [value])
+
+
+@dataclass(frozen=True)
+class LpPool:
+    pool: str
+    coins: tuple[str, ...]
+    withdraw_selector: bytes
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -299,6 +326,8 @@ class Replayer:
         self._headers: dict[int, tuple[str, int]] = {}
         self._usd_routes: dict[tuple[str, int], dict[str, Any]] = {}
         self._crvusd_prices: dict[str, int] = {}
+        self._coin_routes: dict[tuple[str, str], dict[str, Any] | None] = {}
+        self._pools: dict[str, LpPool | None] = {}
 
     def header(self, number: int) -> tuple[str, int]:
         with self._lock:
@@ -340,20 +369,126 @@ class Replayer:
                 self._crvusd_prices[block_hash] = cached
         return cached
 
+    def _call(self, to: str, data: bytes, block_hash: str) -> bytes | None:
+        """A read that may fail: None when the contract reverts or has nothing to say."""
+        try:
+            result = self.reads.call(to, data, block_hash)
+        except ReplayFailed:
+            return None
+        return result if len(result) >= 32 else None
+
+    def _lp_pool(self, token: str, block_hash: str) -> LpPool | None:
+        """The Curve pool behind an LP token: registered, its minter, or the token itself."""
+        with self._lock:
+            if token in self._pools:
+                return self._pools[token]
+        candidates = []
+        for data, to in ((POOL_FROM_LP_SELECTOR + _word(token), self.config.curve_meta_registry), (MINTER_SELECTOR, token)):
+            result = self._call(to, data, block_hash)
+            if result is not None and (address := _address(result, what="pool")) != ZERO_ADDRESS:
+                candidates.append(address)
+        candidates.append(token)
+        found = None
+        for pool in candidates:
+            for coins_selector, withdraw_selector in zip(COINS_SELECTORS, WITHDRAW_SELECTORS):
+                coins = []
+                for index in range(8):
+                    result = self._call(pool, coins_selector + _word(index), block_hash)
+                    if result is None:
+                        break
+                    coins.append(_address(result, what="coin"))
+                if len(coins) >= 2:
+                    found = LpPool(pool=pool, coins=tuple(coins), withdraw_selector=withdraw_selector)
+                    break
+            if found:
+                break
+        with self._lock:
+            self._pools[token] = found
+        return found
+
+    def _coin_route(self, coin: str, want: str, amount: int) -> dict[str, Any] | None:
+        key = (coin, want)
+        with self._lock:
+            if key in self._coin_routes:
+                return self._coin_routes[key]
+        try:
+            route, _ = self._route(token_in=coin, token_out=want, amount_in=str(amount))
+        except ReplayFailed:
+            route = None
+        with self._lock:
+            self._coin_routes[key] = route
+        return route
+
+    def _coin_value(self, coin: str, want: str, amount: int, block_hash: str) -> tuple[Callable[[int], int], dict[str, Any]] | None:
+        """How much want a coin amount fetches at the block: itself, or along today's route.
+
+        A vault coin's redemption value is not used: previewRedeem is book
+        value, and a vault can queue, cap or impair redemptions a taker needs.
+        """
+        coin = WETH if coin == ETH else coin
+        if coin == want:
+            return (lambda value: value), {"coin": coin}
+        route = self._coin_route(coin, want, amount)
+        if route is None:
+            return None
+        return (lambda value: self._get_dy(route, token_in=coin, token_out=want, amount=value, block_hash=block_hash)), {
+            "coin": coin, "route": route}
+
+    def _withdraw_path(self, target: ReplayTarget, *, amount: int, block_hash: str) -> tuple[Callable[[int], int], dict[str, Any]]:
+        """An LP lot withdrawn into whichever of its pool's coins fetches the most want."""
+        lp = self._lp_pool(target.from_token, block_hash)
+        if lp is None:
+            raise ReplayFailed("no_route", "not a Curve LP token")
+        best: tuple[int, Callable[[int], int], dict[str, Any]] | None = None
+        for index, coin in enumerate(lp.coins):
+            def withdraw(value: int, index: int = index) -> int:
+                result = self._call(lp.pool, lp.withdraw_selector + encode(["uint256", "uint256"], [value, index]), block_hash)
+                if result is None:
+                    raise ReplayFailed("no_route", f"pool {lp.pool} does not withdraw coin {index}")
+                return _uint(result, what="pool")
+
+            try:
+                withdrawn = withdraw(amount)
+                valued = self._coin_value(coin, target.want_token, withdrawn, block_hash) if withdrawn else None
+                if valued is None:
+                    continue
+                value_of, detail = valued
+                out = value_of(withdrawn)
+            except ReplayFailed:
+                continue
+            if best is None or out > best[0]:
+                best = (out, lambda value, value_of=value_of, withdraw=withdraw: value_of(withdraw(value)),
+                        {"method": "withdraw_one_coin", "pool": lp.pool, "coin_index": index, **detail})
+        if best is None:
+            raise ReplayFailed("no_route", f"no coin of pool {lp.pool} reaches the want token")
+        return best[1], best[2]
+
     def quote(self, target: ReplayTarget, *, block: int, block_hash: str) -> Observation:
+        """Today's route for the lot at the block; an LP lot Curve cannot route is withdrawn into one coin."""
         started = time.monotonic()
         payload: dict[str, Any] = {"origin": REPLAY_ORIGIN, "block_number": block, "block_hash": block_hash,
                                    "router": self.config.curve_router}
+        amount = int(target.amount_in_raw)
         try:
-            route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
-            payload.update(request_id=request_id, route=route)
-            amount = int(target.amount_in_raw)
-            amount_out = self._get_dy(route, token_in=target.from_token, token_out=target.want_token,
-                                      amount=amount, block_hash=block_hash)
+            try:
+                route, request_id = self._route(token_in=target.from_token, token_out=target.want_token, amount_in=target.amount_in_raw)
+                _router_route(route, from_token=target.from_token, to_token=target.want_token)
+                payload.update(request_id=request_id, route=route)
+
+                def value_of(value: int) -> int:
+                    return self._get_dy(route, token_in=target.from_token, token_out=target.want_token, amount=value, block_hash=block_hash)
+            except ReplayFailed as direct:
+                if direct.code not in ("no_route", "bad_route"):
+                    raise
+                try:
+                    value_of, detail = self._withdraw_path(target, amount=amount, block_hash=block_hash)
+                except ReplayFailed as fallback:
+                    raise ReplayFailed(direct.code, f"{direct}; {fallback}") from fallback
+                payload.update(detail)
+            amount_out = value_of(amount)
             probe = amount // PROBE_DIVISOR
             if probe > 0:
-                probe_out = self._get_dy(route, token_in=target.from_token, token_out=target.want_token,
-                                         amount=probe, block_hash=block_hash)
+                probe_out = value_of(probe)
                 payload["probe"] = {"amount_in": str(probe), "amount_out": str(probe_out)}
                 if amount_out * 2 * probe < probe_out * amount:
                     raise ReplayFailed("route_exhausted", f"the lot fetches {amount_out}, under half the price of {probe} ({probe_out})")
@@ -476,13 +611,17 @@ def persist_outcomes(conn, outcomes: list[ReplayOutcome], *, chain_id: int, now:
 
 def backfill_pricing(
     writer, *, chain_id: int, replayer: Replayer, confirmed_block: int, auction: str | None = None,
-    now: int | None = None, max_workers: int = DEFAULT_MAX_CONCURRENCY,
+    retry_failed: bool = False, now: int | None = None, max_workers: int = DEFAULT_MAX_CONCURRENCY,
 ) -> dict[str, Any]:
-    """Replay every missing quote and want price; resumable, commits as it goes."""
+    """Replay every missing quote and want price; resumable, commits as it goes.
+
+    A recorded failure is final unless retry_failed, for when the method has
+    learned something since; a new attempt is added beside the old one.
+    """
     now = int(time.time()) if now is None else now
     targets = load_replay_targets(
         writer.connection, chain_id=chain_id, confirmed_block=confirmed_block,
-        before_timestamp=now - DEFAULT_MAX_CAPTURE_LAG_SECONDS, auction=auction,
+        before_timestamp=now - DEFAULT_MAX_CAPTURE_LAG_SECONDS, auction=auction, retry_failed=retry_failed,
     )
     # Every staged lot sharing a window shares the block before it opens.
     opens: dict[int, int | None] = {}

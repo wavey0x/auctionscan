@@ -35,11 +35,13 @@ networks:
         start_block: 26385347
         version: curve-1
     # Prices a past block for --backfill-pricing: the router evaluates a Curve
-    # route at the block, and crvUSD's aggregator values crvUSD in dollars
+    # route at the block, crvUSD's aggregator values crvUSD in dollars, and the
+    # MetaRegistry finds the pool an LP lot without a route withdraws from
     replay_pricing:
       curve_router: "0x45312ea0eFf7E09C83CBE249fa1d7598c4C8cd4e" # CurveRouter v1.2, block 21143502
       crvusd: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"
       crvusd_price_aggregator: "0x18672b1b0c623a30089A280Ed9256379fb0E4E62" # AggregatorStablePrice
+      curve_meta_registry: "0xF98B45FA17DE75FB1aD0e7aFD971b0ca00e379fC"
 
   polygon:
     chain_id: 137

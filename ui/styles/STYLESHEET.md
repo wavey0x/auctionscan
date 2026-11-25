@@ -102,6 +102,9 @@ A filter offers only what is worth isolating, and only where there is a choice t
   one burner per chain selling every fee token, so its rows name the auction `Curve burner`
   rather than repeat one address.
 - **Chain** appears only once more than one chain is indexed.
+- A key keeps its width whatever its count: the count sits in a slot wide enough for `99,999`, so
+  changing a filter never moves a key or the groups after it. Groups stand 20px apart, further
+  than their own keys, so each reads as one control.
 - The total is the pager's summary beneath the table, not a chip.
 - The takers ranking offers the same **Protocol** group (and Chain once there is a choice). Choosing
   one narrows every figure in the ranking to that protocol's takes (volume, takes, auctions and
@@ -255,8 +258,10 @@ off.
 
 - Money in lists is compact at three significant digits (`formatCompactUsd`): `$23.4M`, `$6.70M`,
   `$161K`. The exact value is on hover.
-- PnL percent is signed with a true minus (`−0.24%`); in lists its USD delta follows in a quieter
-  figure, and in the round drawer one or the other is shown.
+- PnL percent is signed with a true minus (`−0.24%`). The rounds list and the round drawer state
+  one figure at a time, percent or USD: in the list the PnL header toggles between them, as the
+  Progress and Kicked headers do. Other lists follow the percent with its USD delta in a quieter
+  figure.
 - A figure computed from incomplete pricing carries a small `partial` note with the coverage on hover.
   The takers ranking is the exception: its volume is a bare figure with the coverage on hover only,
   because a note that sits on most rows of a ranking marks nothing.

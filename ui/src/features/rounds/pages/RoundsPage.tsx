@@ -104,6 +104,9 @@ function useAuctionScope(): { scope: AuctionScope | null; invalid: boolean } {
 /** Where the whole list was last left, so leaving an auction returns to it with its filters and page. */
 let lastListSearch = "";
 
+/** The PnL column states one figure at a time: the rate a round cleared at, or what that came to. */
+type PnlDisplayMode = "percent" | "usd";
+
 function lotSummary(round: RoundListItem): string {
   const amount = round.initial_available ?? round.sold_amount;
   return [formatAmount(amount), round.from_token_symbol].filter(Boolean).join(" ");
@@ -113,12 +116,14 @@ function RoundRow({
   round,
   rowProps,
   progressMode,
+  pnlMode,
   kickedMode,
   scoped,
 }: {
   round: RoundListItem;
   rowProps: ReturnType<ReturnType<typeof useRoundRows<RoundListItem>>["rowProps"]>;
   progressMode: RoundProgressMiniMode;
+  pnlMode: PnlDisplayMode;
   kickedMode: KickedDisplayMode;
   /** Within one auction a row is identified by its round alone, and the auction column is dropped. */
   scoped: boolean;
@@ -185,6 +190,7 @@ function RoundRow({
         <PnlValue
           percent={round.total_auction_profit_bps}
           usd={round.total_auction_profit_usd}
+          show={pnlMode}
           align="right"
           title={roundPnlCoverageTitle(round)}
         />
@@ -206,6 +212,7 @@ export default function RoundsPage() {
   const navigationType = useNavigationType();
   const [kickedDisplayMode, setKickedDisplayMode] = useState<KickedDisplayMode>("relative");
   const [progressDisplayMode, setProgressDisplayMode] = useState<RoundProgressMiniMode>("time");
+  const [pnlDisplayMode, setPnlDisplayMode] = useState<PnlDisplayMode>("percent");
   const filters = useMemo(() => readFilters(searchParams), [searchParams]);
   const { scope, invalid: scopeInvalid } = useAuctionScope();
   const scopeKey = scope ? `${scope.chainId}:${scope.address.toLowerCase()}` : null;
@@ -357,7 +364,16 @@ export default function RoundsPage() {
                     </th>
                     <th className="col-lo">Lot</th>
                     <th className="col-lo">Received</th>
-                    <th className="num rcol-pnl">PnL</th>
+                    <th className="num rcol-pnl">
+                      <button
+                        type="button"
+                        className="header-toggle"
+                        title={pnlDisplayMode === "percent" ? "Show PnL in USD" : "Show PnL as a percentage"}
+                        onClick={() => setPnlDisplayMode((current) => (current === "percent" ? "usd" : "percent"))}
+                      >
+                        PnL <em>{pnlDisplayMode === "percent" ? "%" : "$"}</em>
+                      </button>
+                    </th>
                     <th className={cn("col-md num rcol-kicked", kickedDisplayMode === "absolute" && "is-dated")}>
                       <button
                         type="button"
@@ -385,6 +401,7 @@ export default function RoundsPage() {
                         round={round}
                         rowProps={rowProps(round)}
                         progressMode={progressDisplayMode}
+                        pnlMode={pnlDisplayMode}
                         kickedMode={kickedDisplayMode}
                         scoped={tableScoped}
                       />

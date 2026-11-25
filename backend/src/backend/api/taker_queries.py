@@ -47,7 +47,7 @@ def _protocol_summaries(chain_id: int | None, protocol_sql: str, protocol_params
     versions that only a take's auction carries, so a protocol's totals are
     summed from its takes and their projected pricing.
     """
-    scope = f"""
+    scope = """
               FROM takes t
               JOIN auctions a
                 ON a.chain_id = t.chain_id

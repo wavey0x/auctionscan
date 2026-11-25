@@ -353,8 +353,9 @@ html.dark {
     @apply flex flex-col gap-2.5;
   }
 
+  /* Groups stand apart by more than their own keys do, so each reads as one control. */
   .filter-line {
-    @apply flex flex-wrap items-center gap-x-2 gap-y-1.5;
+    @apply flex flex-wrap items-center gap-x-5 gap-y-1.5;
   }
 
   /* A filter group is a flat segmented control: a hairline frame, the
@@ -380,8 +381,11 @@ html.dark {
     @apply bg-selected text-primary;
   }
 
+  /* A count has a slot of its own, wide enough for 99,999, so a key keeps
+     its width, and the keys after it their place, whatever the figure. */
   .chip-count {
-    @apply text-faint;
+    @apply inline-block text-faint;
+    min-width: 6ch;
     font-variant-numeric: tabular-nums;
   }
 
@@ -642,7 +646,7 @@ html.dark {
   .rounds-table .rcol-id { width: 88px; }
   .rounds-table .rcol-status { width: 94px; }
   .rounds-table .rcol-progress { width: 132px; }
-  .rounds-table .rcol-pnl { width: 124px; }
+  .rounds-table .rcol-pnl { width: 96px; }
   .rounds-table .rcol-kicked { width: 72px; }
   .rounds-table .rcol-kicked.is-dated { width: 104px; }
 

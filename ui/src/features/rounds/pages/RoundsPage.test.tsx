@@ -82,7 +82,7 @@ it("has no round column: a Yearn row carries its round on its auction, a burner'
   await mount();
   const table = screen.getByRole("region", { name: "Rounds" });
   expect(within(table).getAllByRole("columnheader").map((header) => header.textContent))
-    .toEqual(["Auction", "Status", "Progress time", "Lot", "Received", "PnL", "Kicked", "Open"]);
+    .toEqual(["Auction", "Status", "Progress time", "Lot", "Received", "PnL %", "Kicked", "Open"]);
 
   const [burnerRow, yearnRow] = within(table).getAllByRole("row").slice(1);
   // The burner counts every lot it ever staged in one run, so its number places nothing.
